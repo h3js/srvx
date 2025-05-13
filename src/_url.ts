@@ -38,7 +38,7 @@ export const FastURL: { new (url: string): URL } = /* @__PURE__ */ (() => {
       if (this.#parsedURL) {
         return this.#parsedURL.pathname;
       }
-      if (!this._pathname) {
+      if (this._pathname === undefined) {
         const url = this.#originalURL;
         const protoIndex = url.indexOf("://");
         if (protoIndex === -1) {
@@ -55,6 +55,7 @@ export const FastURL: { new (url: string): URL } = /* @__PURE__ */ (() => {
     }
 
     set pathname(value: string) {
+      this._pathname = undefined; // invalidate cache
       this._url.pathname = value;
     }
 
@@ -72,7 +73,7 @@ export const FastURL: { new (url: string): URL } = /* @__PURE__ */ (() => {
       if (this.#parsedURL) {
         return this.#parsedURL.search;
       }
-      if (!this._search) {
+      if (this._search === undefined) {
         const qIndex = this._urlqindex;
         if (qIndex === -1 || qIndex === this.#originalURL.length - 1) {
           this._search = "";
@@ -87,6 +88,8 @@ export const FastURL: { new (url: string): URL } = /* @__PURE__ */ (() => {
     }
 
     set search(value: string) {
+      this._search = undefined; // invalidate cache
+      this._query = undefined; // invalidate cache
       this._url.search = value;
     }
 
