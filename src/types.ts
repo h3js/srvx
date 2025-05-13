@@ -2,7 +2,6 @@ import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
-import type * as NodeStream from "node:stream";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 
