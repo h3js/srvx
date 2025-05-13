@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.7.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.0...v0.7.1)
+
+### 📦 Build
+
+- Fix `/types` subpath ([b40c165](https://github.com/h3js/srvx/commit/b40c165))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.7.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.6.0...v0.7.0)
