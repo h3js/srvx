@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.7.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.6.0...v0.7.0)
+
+### 🚀 Enhancements
+
+- **node:** Support http2 ([#58](https://github.com/h3js/srvx/pull/58))
+- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- Clone options and init `middleware: []` ([16798c1](https://github.com/h3js/srvx/commit/16798c1))
+
+### 🩹 Fixes
+
+- Add missing types for `node.upgrade` ([7f66ac3](https://github.com/h3js/srvx/commit/7f66ac3))
+- **url:** Always invalidate cached values ([059914d](https://github.com/h3js/srvx/commit/059914d))
+
+### 💅 Refactors
+
+- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+- Move node compat to `adapters/_node` ([e594009](https://github.com/h3js/srvx/commit/e594009))
+
+### 📦 Build
+
+- Migrate to obuild ([ff883cf](https://github.com/h3js/srvx/commit/ff883cf))
+
+### 🏡 Chore
+
+- Fix lint issues ([f16da88](https://github.com/h3js/srvx/commit/f16da88))
+- Update code style ([167c22c](https://github.com/h3js/srvx/commit/167c22c))
+- Update middleware example ([e72ad59](https://github.com/h3js/srvx/commit/e72ad59))
+- Remove unused import ([2f7a3c5](https://github.com/h3js/srvx/commit/2f7a3c5))
+- Update deps ([b86b092](https://github.com/h3js/srvx/commit/b86b092))
+- Update deno tests ([c5003af](https://github.com/h3js/srvx/commit/c5003af))
+
+### ✅ Tests
+
+- Add wpt setter tests for `FastURL` ([#66](https://github.com/h3js/srvx/pull/66))
+- Add more coverage for `FastURL` ([7e8ebd2](https://github.com/h3js/srvx/commit/7e8ebd2))
+
+#### ⚠️ Breaking Changes
+
+- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Oskar Lebuda <oskar.lebuda@enp.pl>
+
 ## v0.6.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.5.2...v0.6.0)
