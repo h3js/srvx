@@ -1,5 +1,3 @@
 {
-  "imports": {
-    "srvx": "./src/adapters/deno.ts"
-  }
+  "compilerOptions": {}
 }
