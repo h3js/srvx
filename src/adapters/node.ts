@@ -1,5 +1,5 @@
-import { sendNodeResponse } from "../_node-compat/send.ts";
-import { NodeRequest } from "../_node-compat/request.ts";
+import { sendNodeResponse } from "./_node/send.ts";
+import { NodeRequest } from "./_node/request.ts";
 import {
   fmtURL,
   resolveTLSOptions,
@@ -24,13 +24,12 @@ import type {
 
 export { FastURL } from "../_url.ts";
 
+export { NodeRequest } from "./_node/request.ts";
+export { NodeRequestHeaders, NodeResponseHeaders } from "./_node/headers.ts";
 export {
-  NodeResponse as FastResponse,
-  NodeRequest,
   NodeResponse,
-  NodeRequestHeaders,
-  NodeResponseHeaders,
-} from "../_node-compat/index.ts";
+  NodeResponse as FastResponse,
+} from "./_node/response.ts";
 
 export function serve(options: ServerOptions): Server {
   return new NodeServer(options);

@@ -1,6 +1,6 @@
 import { kNodeInspect } from "./_common.ts";
 
-import type { NodeServerRequest, NodeServerResponse } from "../types.ts";
+import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
 
 export const NodeRequestURL: {
   new (nodeCtx: { req: NodeServerRequest; res?: NodeServerResponse }): URL;

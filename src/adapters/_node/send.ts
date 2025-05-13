@@ -2,7 +2,7 @@ import { splitSetCookieString } from "cookie-es";
 
 import type { Readable as NodeReadable } from "node:stream";
 import type NodeHttp from "node:http";
-import type { NodeServerResponse } from "../types.ts";
+import type { NodeServerResponse } from "../../types.ts";
 import type { NodeResponse } from "./response.ts";
 
 export async function sendNodeResponse(

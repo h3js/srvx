@@ -7,7 +7,7 @@ import type {
   NodeServerResponse,
   ServerRequest,
   ServerRuntimeContext,
-} from "../types.ts";
+} from "../../types.ts";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
