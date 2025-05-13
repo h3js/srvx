@@ -1,7 +1,5 @@
 // *** This file should be only imported in the runtime adapters with Node.js compatibility. ***
 
-import { readFileSync } from "node:fs";
-
 import type { ServerOptions } from "./types.ts";
 
 export function resolvePortAndHost(opts: ServerOptions): {
@@ -97,5 +95,6 @@ function resolveCertOrKey(value?: unknown): undefined | string {
   if (value.startsWith("-----BEGIN ")) {
     return value;
   }
+  const { readFileSync } = process.getBuiltinModule("node:fs");
   return readFileSync(value, "utf8");
 }
