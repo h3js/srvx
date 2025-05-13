@@ -49,11 +49,6 @@ export interface ServerOptions {
   fetch: ServerHandler;
 
   /**
-   * Handle websocket upgrades.
-   */
-  upgrade?: ServerHandler;
-
-  /**
    * Handle lifecycle errors.
    *
    * @note This handler will set built-in Bun and Deno error handler.
@@ -252,10 +247,6 @@ export interface ServerRuntimeContext {
   node?: {
     req: NodeServerRequest;
     res?: NodeServerResponse;
-    upgrade?: {
-      socket: NodeStream.Duplex;
-      header: Buffer;
-    };
   };
 
   /**
