@@ -11,11 +11,11 @@ export function serve(options: ServerOptions): Server {
 
 class GenericServer implements Server {
   readonly runtime = "generic";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly fetch: ServerHandler;
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
     errorPlugin(this);

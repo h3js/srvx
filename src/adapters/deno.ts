@@ -18,7 +18,7 @@ export function serve(options: ServerOptions): DenoServer {
 
 class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly deno: Server["deno"] = {};
   readonly serveOptions:
     | Deno.ServeTcpOptions
@@ -29,7 +29,7 @@ class DenoServer implements Server<DenoFetchHandler> {
   #listeningInfo?: { hostname: string; port: number };
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
 

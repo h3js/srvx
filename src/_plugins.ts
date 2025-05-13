@@ -3,7 +3,6 @@ import type { ServerPlugin } from "./types.ts";
 export const errorPlugin: ServerPlugin = (server) => {
   const errorHandler = server.options.error;
   if (!errorHandler) return;
-  server.options.middleware ??= [];
   server.options.middleware.unshift((_req, next) => {
     try {
       const res = next();

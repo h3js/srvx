@@ -22,14 +22,14 @@ export function serve(options: ServerOptions): Server<ServiceWorkerHandler> {
 
 class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
   readonly runtime = "service-worker";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly fetch: ServiceWorkerHandler;
 
   #fetchListener?: (event: FetchEvent) => void | Promise<void>;
   #listeningPromise?: Promise<any>;
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this as any as Server);
     errorPlugin(this as unknown as Server);

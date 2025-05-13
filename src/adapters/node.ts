@@ -51,7 +51,7 @@ export function toNodeHandler(fetchHandler: FetchHandler): NodeHttpHandler {
 // https://nodejs.org/api/http2.html
 class NodeServer implements Server {
   readonly runtime = "node";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly node: Server["node"];
   readonly serveOptions: ServerOptions["node"];
   readonly fetch: ServerHandler;
@@ -60,7 +60,7 @@ class NodeServer implements Server {
   #listeningPromise?: Promise<void>;
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
     errorPlugin(this);

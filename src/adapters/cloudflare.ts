@@ -18,12 +18,12 @@ export function serve(
 
 class CloudflareServer implements Server<CloudflareFetchHandler> {
   readonly runtime = "cloudflare";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly serveOptions: CF.ExportedHandler;
   readonly fetch: CF.ExportedHandlerFetchHandler;
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this as any as Server);
     errorPlugin(this as unknown as Server);

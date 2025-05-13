@@ -19,13 +19,13 @@ export function serve(options: ServerOptions): BunServer {
 
 class BunServer implements Server<BunFetchHandler> {
   readonly runtime = "bun";
-  readonly options: ServerOptions;
+  readonly options: Server["options"];
   readonly bun: Server["bun"] = {};
   readonly serveOptions: bun.ServeOptions | bun.TLSServeOptions;
   readonly fetch: BunFetchHandler;
 
   constructor(options: ServerOptions) {
-    this.options = options;
+    this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
 

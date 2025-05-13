@@ -185,7 +185,7 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Server options
    */
-  readonly options: ServerOptions;
+  readonly options: ServerOptions & { middleware: ServerMiddleware[] };
 
   /**
    * Server URL address.
