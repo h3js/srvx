@@ -2,7 +2,6 @@ import { kNodeInspect } from "./_common.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { NodeRequestURL } from "./url.ts";
 
-import type NodeStream from "node:stream";
 import type {
   NodeServerRequest,
   NodeServerResponse,
@@ -13,10 +12,6 @@ import type {
 export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
-  upgrade?: {
-    socket: NodeStream.Duplex;
-    header: Buffer;
-  };
 };
 
 export const NodeRequest = /* @__PURE__ */ (() => {

@@ -65,28 +65,6 @@ function writeHead(
   }
 }
 
-export async function sendNodeUpgradeResponse(
-  socket: Duplex,
-  res: Response,
-): Promise<void> {
-  const head = [
-    `HTTP/1.1 ${res.status || 200} ${res.statusText || ""}`,
-    ...[...res.headers.entries()].map(
-      ([key, value]) =>
-        `${encodeURIComponent(key)}: ${encodeURIComponent(value)}`,
-    ),
-  ];
-  socket.write(head.join("\r\n") + "\r\n\r\n");
-  if (res.body) {
-    for await (const chunk of res.body) {
-      socket.write(chunk);
-    }
-  }
-  return new Promise<void>((resolve) => {
-    socket.end(resolve);
-  });
-}
-
 function endNodeResponse(nodeRes: NodeServerResponse) {
   return new Promise<void>((resolve) => nodeRes.end(resolve));
 }

@@ -15,17 +15,3 @@ export const errorPlugin: ServerPlugin = (server) => {
     }
   });
 };
-
-export const wsUpgradePlugin: ServerPlugin = (server) => {
-  const upgradeHandler = server.options.upgrade;
-  if (!upgradeHandler) {
-    return;
-  }
-  server.options.middleware ??= [];
-  server.options.middleware.unshift((req, next) => {
-    if (req.headers.get("upgrade") === "websocket") {
-      return upgradeHandler(req);
-    }
-    return next();
-  });
-};

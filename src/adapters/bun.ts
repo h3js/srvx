@@ -7,7 +7,6 @@ import {
   resolveTLSOptions,
 } from "../_utils.node.ts";
 import { wrapFetch } from "../_middleware.ts";
-import { wsUpgradePlugin } from "../_plugins.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -29,7 +28,6 @@ class BunServer implements Server<BunFetchHandler> {
     this.options = options;
 
     for (const plugin of options.plugins || []) plugin(this);
-    wsUpgradePlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
