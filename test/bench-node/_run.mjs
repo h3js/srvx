@@ -22,6 +22,8 @@ for (const name of [
   "node",
   "srvx",
   "srvx-fast",
+  all && "whatwg-node",
+  all && "whatwg-node-fast",
   all && "hono",
   all && "hono-fast",
   all && "remix",
