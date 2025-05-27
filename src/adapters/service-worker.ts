@@ -40,7 +40,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
       Object.defineProperties(request, {
         runtime: {
           enumerable: true,
-          value: { runtime: "service-worker", serviceWorker: { event } },
+          value: { name: "service-worker", serviceWorker: { event } },
         },
       });
       return Promise.resolve(fetchHandler(request));

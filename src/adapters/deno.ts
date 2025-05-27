@@ -39,7 +39,7 @@ class DenoServer implements Server<DenoFetchHandler> {
       Object.defineProperties(request, {
         runtime: {
           enumerable: true,
-          value: { runtime: "deno", deno: { info, server: this.deno?.server } },
+          value: { name: "deno", deno: { info, server: this.deno?.server } },
         },
         ip: {
           enumerable: true,

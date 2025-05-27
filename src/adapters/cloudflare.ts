@@ -34,7 +34,7 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
       Object.defineProperties(request, {
         runtime: {
           enumerable: true,
-          value: { runtime: "cloudflare", cloudflare: { env, context } },
+          value: { name: "cloudflare", cloudflare: { env, context } },
         },
         // TODO
         // ip: {

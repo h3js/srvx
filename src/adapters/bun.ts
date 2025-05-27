@@ -35,7 +35,7 @@ class BunServer implements Server<BunFetchHandler> {
       Object.defineProperties(request, {
         runtime: {
           enumerable: true,
-          value: { runtime: "bun", bun: { server } },
+          value: { name: "bun", bun: { server } },
         },
         ip: {
           enumerable: true,
