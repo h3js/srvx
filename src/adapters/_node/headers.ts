@@ -280,7 +280,7 @@ function _normalizeValue(
 
 function validateHeader(name: string): string {
   if (name[0] === ":") {
-    throw new TypeError("Invalid header name");
+    throw new TypeError(`${JSON.stringify(name)} is an invalid header name.`);
   }
   return name.toLowerCase();
 }
