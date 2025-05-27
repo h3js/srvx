@@ -72,6 +72,26 @@ export function addTests(opts: {
     expect(await response.text()).toBe("error: test error");
   });
 
+  test("abort request", async () => {
+    const controller = new AbortController();
+    const response = await fetch(url("/abort"), {
+      signal: controller.signal,
+    });
+    controller.abort();
+    expect(response.status).toBe(200);
+    await expect(response.text()).rejects.toThrow("aborted");
+
+    // Node.js http1 variant needs a bit of time to process the abort
+    if (opts.runtime === "node") {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    const { abortCount } = await fetch(url("/abort-count")).then((res) =>
+      res.json(),
+    );
+    expect(abortCount).toBe(1);
+  });
+
   describe("plugin", () => {
     test("intercept before handler", async () => {
       const response = await fetch(url("/"), {
