@@ -2,9 +2,12 @@
   "name": "srvx-playground",
   "version": "0.0.0",
   "scripts": {
-    "start": "node --watch ./app.mjs"
+    "start": "node --watch ./app.mjs",
+    "bun": "bun --watch ./app.mjs",
+    "deno": "deno run -A --watch ./app.mjs",
+    "node": "node --watch ./app.mjs"
   },
   "devDependencies": {
-    "srvx": "^0.1.4"
+    "srvx": "latest"
   }
 }
