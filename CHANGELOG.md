@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.7.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.1...v0.7.2)
+
+### 🚀 Enhancements
+
+- **node:** Call request abort signal ([#76](https://github.com/h3js/srvx/pull/76))
+
+### 🩹 Fixes
+
+- Match `runtime.name` ([3cfbbcb](https://github.com/h3js/srvx/commit/3cfbbcb))
+
+### 📖 Documentation
+
+- **guide/plugins:** Make middleware functions asynchronous ([#70](https://github.com/h3js/srvx/pull/70))
+- **guide/bundler:** Improve bundle usage explanation ([#73](https://github.com/h3js/srvx/pull/73))
+
+### 📦 Build
+
+- Update obuild ([85875b9](https://github.com/h3js/srvx/commit/85875b9))
+
+### 🏡 Chore
+
+- Add bench for `@whatwg-node/server` ([e14b292](https://github.com/h3js/srvx/commit/e14b292))
+- Update deps ([e6896aa](https://github.com/h3js/srvx/commit/e6896aa))
+- Update play:node command ([9da1d3e](https://github.com/h3js/srvx/commit/9da1d3e))
+
+### ❤️ Contributors
+
+- Colin Ozanne ([@finxol](https://github.com/finxol))
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Markthree ([@markthree](https://github.com/markthree))
+
 ## v0.7.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.0...v0.7.1)
