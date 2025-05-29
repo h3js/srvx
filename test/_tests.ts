@@ -1,3 +1,5 @@
+import { execa } from "execa";
+import * as http from "node:http";
 import { describe, expect, test } from "vitest";
 
 export function addTests(opts: {
@@ -38,6 +40,14 @@ export function addTests(opts: {
     expect(response.headers.get("content-type")).toMatch(/^application\/json/);
     expect(response.headers.get("x-req-foo")).toBe("bar");
     expect(response.headers.get("x-req-bar")).toBe("baz");
+  });
+
+  test("response headers mutated", async () => {
+    const response = await fetch(url("/headers/response/mutation"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-ignored")).toBeNull();
+    expect(response.headers.get("x-test-header-1")).toBe("1");
+    expect(response.headers.get("x-test-header-2")).toBe("2");
   });
 
   test("POST works (binary body)", async () => {
@@ -134,6 +144,23 @@ export function addTests(opts: {
       const res = await fetch(url("/response/Uint8Array"));
       expect(res.status).toBe(200);
       expect(await res.text()).toEqual("hello!");
+    });
+  });
+
+  describe("response cloning", () => {
+    test("clone simple response", async () => {
+      const response = await fetch(url("/clone-response"));
+      expect(response.status).toBe(200);
+    });
+
+    test("clone with headers", async () => {
+      const response = await fetch(url("/clone-response"), {
+        headers: {
+          "x-clone-with-headers": "true",
+        },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-clone-with-headers")).toBe("true");
     });
   });
 }

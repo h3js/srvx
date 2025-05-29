@@ -64,6 +64,19 @@ export const fixture: (
             },
           );
         }
+        case "/headers/response/mutation": {
+          const headers: Record<string, string> = {
+            "x-test-header-1": "1",
+          };
+          const res = new _Response("", {
+            headers: headers,
+          });
+
+          res.headers.set("x-test-header-2", "2");
+          headers["x-ignored-mutation"] = "true";
+
+          return res;
+        }
         case "/body/binary": {
           return new _Response(req.body);
         }
@@ -120,6 +133,13 @@ export const fixture: (
               },
             }) as any,
           );
+        }
+        case "/clone-response": {
+          const res = new _Response("", {});
+          if (req.headers.get("x-clone-with-headers") === "true") {
+            res.headers.set("x-clone-with-headers", "true");
+          }
+          return res.clone();
         }
         case "/abort": {
           req.signal.addEventListener("abort", () => {
