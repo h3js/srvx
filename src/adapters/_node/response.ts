@@ -78,13 +78,8 @@ export const NodeResponse: {
       const headers: NodeHttp.OutgoingHttpHeader[] = [];
 
       const headersInit = this.#init?.headers;
-      if (headersInit) {
-        const headerEntries = Array.isArray(headersInit)
-          ? headersInit
-          : headersInit.entries
-            ? (headersInit as Headers).entries()
-            : Object.entries(headersInit);
-        for (const [key, value] of headerEntries) {
+      if (this.#headersObj) {
+        for (const [key, value] of this.#headersObj) {
           if (key === "set-cookie") {
             for (const setCookie of splitSetCookieString(value)) {
               headers.push(["set-cookie", setCookie]);
@@ -93,9 +88,13 @@ export const NodeResponse: {
             headers.push([key, value]);
           }
         }
-      }
-      if (this.#headersObj) {
-        for (const [key, value] of this.#headersObj) {
+      } else if (headersInit) {
+        const headerEntries = Array.isArray(headersInit)
+          ? headersInit
+          : headersInit.entries
+            ? (headersInit as Headers).entries()
+            : Object.entries(headersInit);
+        for (const [key, value] of headerEntries) {
           if (key === "set-cookie") {
             for (const setCookie of splitSetCookieString(value)) {
               headers.push(["set-cookie", setCookie]);
@@ -139,6 +138,8 @@ export const NodeResponse: {
       // Free up memory
       this.#body = undefined;
       this.#init = undefined;
+      this.#headersObj = undefined;
+      this.#responseObj = undefined;
 
       return {
         status,
@@ -160,12 +161,23 @@ export const NodeResponse: {
       if (this.#responseObj) {
         return this.#responseObj.clone();
       }
+      if (this.#headersObj) {
+        return new globalThis.Response(this.#body, {
+          ...this.#init,
+          headers: new Headers(this.#headersObj),
+        });
+      }
       return new globalThis.Response(this.#body, this.#init);
     }
 
     get #response(): globalThis.Response {
       if (!this.#responseObj) {
-        this.#responseObj = new globalThis.Response(this.#body, this.#init);
+        this.#responseObj = this.#headersObj
+          ? new globalThis.Response(this.#body, {
+              ...this.#init,
+              headers: new Headers(this.#headersObj),
+            })
+          : new globalThis.Response(this.#body, this.#init);
         // Free up memory
         this.#body = undefined;
         this.#init = undefined;
