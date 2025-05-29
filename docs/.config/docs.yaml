@@ -2,7 +2,7 @@
 
 name: srvx
 shortDescription: Universal Server API
-description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js.
+description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js and more.
 github: h3js/srvx
 themeColor: red
 landing:
