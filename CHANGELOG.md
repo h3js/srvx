@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.7.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.2...v0.7.3)
+
+### 🩹 Fixes
+
+- **node:** Only use `req.headers` in `FastResponse` when initialized ([#79](https://github.com/h3js/srvx/pull/79))
+
+### 💅 Refactors
+
+- Include invalid header name in error message ([d0bf7dc](https://github.com/h3js/srvx/commit/d0bf7dc))
+
+### 🏡 Chore
+
+- Add `--watch` to playground scripts ([222580e](https://github.com/h3js/srvx/commit/222580e))
+- Add `erasableSyntaxOnly` option to compiler options ([#77](https://github.com/h3js/srvx/pull/77))
+- Update undocs ([5d263b1](https://github.com/h3js/srvx/commit/5d263b1))
+- Build docs native dep ([7c8b337](https://github.com/h3js/srvx/commit/7c8b337))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Dirk De Visser <github@dirkdevisser.nl>
+- Wind <hi@productdevbook.com>
+
 ## v0.7.2
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.1...v0.7.2)
