@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.7.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.4...v0.7.5)
+
+### 💅 Refactors
+
+- Remove unnecessary `__PURE__` ([699a100](https://github.com/h3js/srvx/commit/699a100))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.7.4
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.3...v0.7.4)
