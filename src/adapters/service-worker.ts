@@ -88,6 +88,9 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
         ) {
           return;
         }
+        Object.defineProperty(event.request, "waitUntil", {
+          value: event.waitUntil.bind(event),
+        });
         const response = await this.fetch(event.request, event);
         if (response.status !== 404) {
           event.respondWith(response);

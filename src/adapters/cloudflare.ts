@@ -32,6 +32,7 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
 
     this.fetch = (request, env, context) => {
       Object.defineProperties(request, {
+        waitUntil: { value: context.waitUntil.bind(context) },
         runtime: {
           enumerable: true,
           value: { name: "cloudflare", cloudflare: { env, context } },

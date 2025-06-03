@@ -1,10 +1,11 @@
 import type { DenoFetchHandler, Server, ServerOptions } from "../types.ts";
 import {
+  createWaitUntil,
   fmtURL,
   printListening,
   resolvePortAndHost,
   resolveTLSOptions,
-} from "../_utils.node.ts";
+} from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 
 export { FastURL } from "../_url.ts";
@@ -28,6 +29,8 @@ class DenoServer implements Server<DenoFetchHandler> {
   #listeningPromise?: Promise<void>;
   #listeningInfo?: { hostname: string; port: number };
 
+  #wait: ReturnType<typeof createWaitUntil>;
+
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
@@ -35,8 +38,11 @@ class DenoServer implements Server<DenoFetchHandler> {
 
     const fetchHandler = wrapFetch(this);
 
+    this.#wait = createWaitUntil();
+
     this.fetch = (request, info) => {
       Object.defineProperties(request, {
+        waitUntil: { value: this.#wait.waitUntil },
         runtime: {
           enumerable: true,
           value: { name: "deno", deno: { info, server: this.deno?.server } },
@@ -104,8 +110,10 @@ class DenoServer implements Server<DenoFetchHandler> {
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
-  close(): Promise<void | undefined> {
-    // TODO: closeAll is not supported
-    return Promise.resolve(this.deno?.server?.shutdown());
+  async close(): Promise<void> {
+    await Promise.all([
+      this.#wait.wait(),
+      Promise.resolve(this.deno?.server?.shutdown()),
+    ]);
   }
 }

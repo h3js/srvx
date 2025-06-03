@@ -1,5 +1,3 @@
-import { execa } from "execa";
-import * as http from "node:http";
 import { describe, expect, test } from "vitest";
 
 export function addTests(opts: {
