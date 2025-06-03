@@ -3,11 +3,8 @@ import type { Server, ServerOptions, ServerRequest } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
-export const FastURL: typeof globalThis.URL = /* @__PURE__ */ (() =>
-  globalThis.URL)();
-
-export const FastResponse: typeof globalThis.Response = /* @__PURE__ */ (() =>
-  globalThis.Response)();
+export const FastURL: typeof globalThis.URL = URL;
+export const FastResponse: typeof globalThis.Response = Response;
 
 export type ServiceWorkerHandler = (
   request: ServerRequest,
