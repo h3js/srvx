@@ -5,7 +5,8 @@ import {
   resolveTLSOptions,
   printListening,
   resolvePortAndHost,
-} from "../_utils.node.ts";
+  createWaitUntil,
+} from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
@@ -58,6 +59,8 @@ class NodeServer implements Server {
 
   #listeningPromise?: Promise<void>;
 
+  #wait: ReturnType<typeof createWaitUntil>;
+
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
@@ -66,11 +69,14 @@ class NodeServer implements Server {
 
     const fetchHandler = (this.fetch = wrapFetch(this));
 
+    this.#wait = createWaitUntil();
+
     const handler = (
       nodeReq: NodeServerRequest,
       nodeRes: NodeServerResponse,
     ) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
+      request.waitUntil = this.#wait.waitUntil;
       const res = fetchHandler(request);
       return res instanceof Promise
         ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
@@ -154,16 +160,19 @@ class NodeServer implements Server {
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
-  close(closeAll?: boolean): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      const server = this.node?.server;
-      if (!server) {
-        return resolve();
-      }
-      if (closeAll && "closeAllConnections" in server) {
-        server.closeAllConnections();
-      }
-      server.close((error?: Error) => (error ? reject(error) : resolve()));
-    });
+  async close(closeAll?: boolean): Promise<void> {
+    await Promise.all([
+      this.#wait.wait(),
+      new Promise<void>((resolve, reject) => {
+        const server = this.node?.server;
+        if (!server) {
+          return resolve();
+        }
+        if (closeAll && "closeAllConnections" in server) {
+          server.closeAllConnections();
+        }
+        server.close((error?: Error) => (error ? reject(error) : resolve()));
+      }),
+    ]);
   }
 }

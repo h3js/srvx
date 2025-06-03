@@ -5,7 +5,8 @@ import {
   printListening,
   resolvePortAndHost,
   resolveTLSOptions,
-} from "../_utils.node.ts";
+  createWaitUntil,
+} from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 
 export { FastURL } from "../_url.ts";
@@ -24,6 +25,8 @@ class BunServer implements Server<BunFetchHandler> {
   readonly serveOptions: bun.ServeOptions | bun.TLSServeOptions;
   readonly fetch: BunFetchHandler;
 
+  #wait: ReturnType<typeof createWaitUntil>;
+
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
@@ -31,8 +34,11 @@ class BunServer implements Server<BunFetchHandler> {
 
     const fetchHandler = wrapFetch(this);
 
+    this.#wait = createWaitUntil();
+
     this.fetch = (request, server) => {
       Object.defineProperties(request, {
+        waitUntil: { value: this.#wait.waitUntil },
         runtime: {
           enumerable: true,
           value: { name: "bun", bun: { server } },
@@ -98,7 +104,10 @@ class BunServer implements Server<BunFetchHandler> {
     return Promise.resolve(this);
   }
 
-  close(closeAll?: boolean): Promise<void> {
-    return Promise.resolve(this.bun?.server?.stop(closeAll));
+  async close(closeAll?: boolean): Promise<void> {
+    await Promise.all([
+      this.#wait.wait(),
+      Promise.resolve(this.bun?.server?.stop(closeAll)),
+    ]);
   }
 }

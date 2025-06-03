@@ -281,6 +281,11 @@ export interface ServerRequest extends Request {
    * IP address of the client.
    */
   ip?: string | undefined;
+
+  /**
+   * Tell the runtime about an ongoing operation that shouldn't close until the promise resolves.
+   */
+  waitUntil?: (promise: Promise<unknown>) => void | Promise<void>;
 }
 
 // ----------------------------------------------------------------------------

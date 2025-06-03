@@ -98,3 +98,19 @@ function resolveCertOrKey(value?: unknown): undefined | string {
   const { readFileSync } = process.getBuiltinModule("node:fs");
   return readFileSync(value, "utf8");
 }
+
+export function createWaitUntil() {
+  const promises = new Set<Promise<any>>();
+  return {
+    waitUntil: (promise: Promise<any>): void => {
+      promises.add(
+        promise.catch(console.error).finally(() => {
+          promises.delete(promise);
+        }),
+      );
+    },
+    wait: (): Promise<any> => {
+      return Promise.all(promises);
+    },
+  };
+}
