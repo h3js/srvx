@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.7.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.3...v0.7.4)
+
+### 🚀 Enhancements
+
+- Universal `request.waitUntil` ([#81](https://github.com/h3js/srvx/pull/81))
+
+### 📦 Build
+
+- Remove small side-effects from `service-worker` ([2ed12a9](https://github.com/h3js/srvx/commit/2ed12a9))
+
+### 🏡 Chore
+
+- Update undocs ([b872621](https://github.com/h3js/srvx/commit/b872621))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.7.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.2...v0.7.3)
