@@ -3,8 +3,11 @@ import type { Server, ServerOptions, ServerRequest } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
-export const FastURL: typeof globalThis.URL = URL;
-export const FastResponse: typeof globalThis.Response = Response;
+export const FastURL: typeof globalThis.URL = /* @__PURE__ */ (() =>
+  globalThis.URL)();
+
+export const FastResponse: typeof globalThis.Response = /* @__PURE__ */ (() =>
+  globalThis.Response)();
 
 export type ServiceWorkerHandler = (
   request: ServerRequest,
@@ -14,7 +17,8 @@ export type ServiceWorkerHandler = (
 const isBrowserWindow =
   typeof window !== "undefined" && typeof navigator !== "undefined";
 
-const isServiceWorker = typeof self !== "undefined" && "skipWaiting" in self;
+const isServiceWorker = /* @__PURE__ */ (() =>
+  typeof self !== "undefined" && "skipWaiting" in self)();
 
 export function serve(options: ServerOptions): Server<ServiceWorkerHandler> {
   return new ServiceWorkerServer(options);
