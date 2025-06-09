@@ -1,3 +1,4 @@
+import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
