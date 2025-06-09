@@ -8,7 +8,6 @@
   "sideEffects": false,
   "type": "module",
   "exports": {
-    "./types": "./dist/types.d.mts",
     "./deno": "./dist/adapters/deno.mjs",
     "./bun": "./dist/adapters/bun.mjs",
     "./node": "./dist/adapters/node.mjs",
