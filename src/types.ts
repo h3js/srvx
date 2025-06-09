@@ -5,7 +5,9 @@ import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 
+// Utils
 type MaybePromise<T> = T | Promise<T>;
+type IsAny<T> = 0 extends 1 & T ? true : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
@@ -266,8 +268,10 @@ export interface ServerRuntimeContext {
    * Underlying Cloudflare request context.
    */
   cloudflare?: {
-    env: unknown;
     context: CF.ExecutionContext;
+    env: IsAny<typeof import("cloudflare:workers")> extends true
+      ? Record<string, unknown>
+      : typeof import("cloudflare:workers").env;
   };
 }
 
