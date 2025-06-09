@@ -1,3 +1,4 @@
+/// <reference types="./cf.d.ts" />
 import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeHttp2 from "node:http2";
@@ -5,7 +6,9 @@ import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 
+// Utils
 type MaybePromise<T> = T | Promise<T>;
+type IsAny<T> = 0 extends 1 & T ? true : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
@@ -266,8 +269,10 @@ export interface ServerRuntimeContext {
    * Underlying Cloudflare request context.
    */
   cloudflare?: {
-    env: unknown;
     context: CF.ExecutionContext;
+    env: IsAny<typeof import("cloudflare:workers")> extends true
+      ? typeof import("cloudflare:workers").env
+      : Record<string, unknown>;
   };
 }
 
