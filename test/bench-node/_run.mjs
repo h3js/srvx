@@ -18,7 +18,7 @@ const results = [];
 
 const all = process.argv.includes("--all");
 
-for (const name of [
+const names = [
   "node",
   "srvx",
   "srvx-fast",
@@ -27,7 +27,13 @@ for (const name of [
   all && "hono",
   all && "hono-fast",
   all && "remix",
-].filter(Boolean)) {
+]
+  .filter(Boolean)
+  .sort(() => (Math.random() > 0.5 ? 1 : -1));
+
+console.log("Running benchmarks for:", names.join(", "));
+
+for (const name of names) {
   process.stdout.write(`${name}...`);
   const entry = new URL(`${name}.mjs`, import.meta.url);
   const worker = new Worker(entry, { type: "module" });
