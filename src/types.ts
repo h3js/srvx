@@ -270,8 +270,8 @@ export interface ServerRuntimeContext {
   cloudflare?: {
     context: CF.ExecutionContext;
     env: IsAny<typeof import("cloudflare:workers")> extends true
-      ? typeof import("cloudflare:workers").env
-      : Record<string, unknown>;
+      ? Record<string, unknown>
+      : typeof import("cloudflare:workers").env;
   };
 }
 
