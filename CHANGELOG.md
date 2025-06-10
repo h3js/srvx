@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.8.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.7.5...v0.8.0)
+
+### 💅 Refactors
+
+- Improve `IsAny` type helper ([a0f5c7e](https://github.com/h3js/srvx/commit/a0f5c7e))
+
+### 📦 Build
+
+- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+
+### 🌊 Types
+
+- Allow augmenting `req.runtime.cloudflare.env` ([#84](https://github.com/h3js/srvx/pull/84))
+
+### 🏡 Chore
+
+- Update deps ([168bfe1](https://github.com/h3js/srvx/commit/168bfe1))
+- Add readme for benchmarks ([d451ffa](https://github.com/h3js/srvx/commit/d451ffa))
+- Update results ([3b7d0cf](https://github.com/h3js/srvx/commit/3b7d0cf))
+- Shuffle bench order ([535e4f2](https://github.com/h3js/srvx/commit/535e4f2))
+
+#### ⚠️ Breaking Changes
+
+- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.7.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.4...v0.7.5)
