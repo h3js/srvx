@@ -7,7 +7,11 @@ import type * as CF from "@cloudflare/workers-types";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
-type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsAny<T> = Equal<T, any> extends true ? true : false;
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
+    ? true
+    : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
