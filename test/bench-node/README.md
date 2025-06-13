@@ -1,4 +1,4 @@
-# Node.js Cmpatibility Benchmarks
+# Node.js Compatibility Benchmarks
 
 Simple benchmarks primarily focus on how closely we can approach native `node:http` performance while using a web standards compatibility layer.
 
