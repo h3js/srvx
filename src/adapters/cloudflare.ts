@@ -38,12 +38,12 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
           value: { name: "cloudflare", cloudflare: { env, context } },
         },
         // TODO
-        // ip: {
-        //   enumerable: true,
-        //   get() {
-        //     return;
-        //   },
-        // },
+        ip: {
+          enumerable: true,
+          get() {
+            return request.headers.get("cf-connecting-ip");
+          },
+        },
       });
       return fetchHandler(request as unknown as Request) as unknown as
         | CF.Response
