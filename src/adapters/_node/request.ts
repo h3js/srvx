@@ -15,13 +15,27 @@ export type NodeRequestContext = {
 };
 
 export const NodeRequest = /* @__PURE__ */ (() => {
-  const _Request = class Request {
+  const unsupportedGetters = [
+    "cache",
+    "credentials",
+    "destination",
+    "integrity",
+    "keepalive",
+    "mode",
+    "redirect",
+    "referrer",
+    "referrerPolicy",
+  ] as const;
+
+  const _Request = class Request
+    implements Omit<ServerRequest, (typeof unsupportedGetters)[number]>
+  {
     #url?: InstanceType<typeof NodeRequestURL>;
     #headers?: InstanceType<typeof NodeRequestHeaders>;
     #bodyUsed: boolean = false;
     #abortSignal?: AbortController;
     #hasBody: boolean | undefined;
-    #bodyBytes?: Promise<Uint8Array>;
+    #bodyBytes?: Promise<Uint8Array<ArrayBuffer>>;
     #blobBody?: Promise<Blob>;
     #formDataBody?: Promise<FormData>;
     #jsonBody?: Promise<any>;
@@ -50,8 +64,8 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#headers;
     }
 
-    clone() {
-      return new _Request({ ...this._node });
+    clone(): ServerRequest {
+      return new _Request({ ...this._node }) as unknown as ServerRequest;
     }
 
     get _url() {
@@ -146,7 +160,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#bodyStream;
     }
 
-    bytes(): Promise<Uint8Array> {
+    bytes(): Promise<Uint8Array<ArrayBuffer>> {
       if (!this.#bodyBytes) {
         const _bodyStream = this.body;
         this.#bodyBytes = _bodyStream
@@ -215,6 +229,13 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       };
     }
   };
+
+  for (const key of unsupportedGetters) {
+    Object.defineProperty(_Request.prototype, key, {
+      enumerable: true,
+      configurable: false,
+    });
+  }
 
   Object.setPrototypeOf(_Request.prototype, globalThis.Request.prototype);
 
