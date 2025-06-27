@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.8.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.0...v0.8.1)
+
+### 🚀 Enhancements
+
+- **cloudflare:** Add request.ip ([#89](https://github.com/h3js/srvx/pull/89))
+
+### 🩹 Fixes
+
+- **node:** Add unsupported getters ([36615dc](https://github.com/h3js/srvx/commit/36615dc))
+
+### 📖 Documentation
+
+- Update ([#88](https://github.com/h3js/srvx/pull/88))
+
+### 🏡 Chore
+
+- Update deps ([b660bf4](https://github.com/h3js/srvx/commit/b660bf4))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Huseeiin ([@huseeiin](https://github.com/huseeiin))
+- Vlad Sirenko ([@sirenkovladd](https://github.com/sirenkovladd))
+
 ## v0.8.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.7.5...v0.8.0)
