@@ -162,12 +162,12 @@ export const NodeResponse: {
         return this.#responseObj.clone();
       }
       if (this.#headersObj) {
-        return new globalThis.Response(this.#body, {
+        return new _Response(this.#body, {
           ...this.#init,
-          headers: new Headers(this.#headersObj),
+          headers: this.#headersObj,
         });
       }
-      return new globalThis.Response(this.#body, this.#init);
+      return new _Response(this.#body, this.#init);
     }
 
     get #response(): globalThis.Response {
@@ -175,7 +175,7 @@ export const NodeResponse: {
         this.#responseObj = this.#headersObj
           ? new globalThis.Response(this.#body, {
               ...this.#init,
-              headers: new Headers(this.#headersObj),
+              headers: this.#headersObj,
             })
           : new globalThis.Response(this.#body, this.#init);
         // Free up memory
