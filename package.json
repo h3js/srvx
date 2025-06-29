@@ -25,6 +25,9 @@
     }
   },
   "types": "./dist/types.d.mts",
+  "bin": {
+    "srvx": "./dist/cli.mjs"
+  },
   "files": [
     "dist"
   ],
