@@ -1,5 +1,4 @@
-#!/bin/sh
-//bin/true; (command -v bun && bun $0 $@) || (command -v deno && deno -A $0 $@)|| (command -v node && node $0 $@) || exit 1
+#!/usr/bin/env node
 
 import { serve, type ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
