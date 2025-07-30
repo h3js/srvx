@@ -2,41 +2,75 @@
 
 import type { ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { fork } from "node:child_process";
+
+// Colors support for terminal output
+const c = (code: number) => (text: string) => `\u001B[${code}m${text}\u001B[0m`;
+const cyan = c(36);
+const yellow = c(33);
+const green = c(32);
+const bold = c(1);
+const magenta = c(35);
+const gray = c(90);
 
 setupProcessErrorHandlers();
-main();
 
-async function main() {
+const args = process.argv.slice(2);
+const options = parseArgs(args);
+
+if (process.send) {
+  // Running in child process
+  await serve();
+} else {
+  // Handle version flag
+  if (options._version) {
+    console.log(await version());
+    process.exit(0);
+  }
+  // Handle help flag
+  if (options._help || !options._entry) {
+    console.log(help());
+    process.exit(options._help ? 0 : 1);
+  }
+  // Fork a child process to run the server
+  console.log(
+    gray(`${cyan(options._entry)} ${gray("(watching for changes)")}`),
+  );
+  const child = fork(fileURLToPath(import.meta.url), args, {
+    execArgv: [...process.execArgv, "--watch"],
+  });
+  child.on("error", (error) => {
+    console.error("Error in child process:", error);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code}`);
+      process.exit(code);
+    }
+  });
+}
+
+async function serve() {
   try {
-    // Parse command line arguments (skip executable and script name)
-    const args = process.argv.slice(2);
-    const options = parseArgs(args);
-
-    // Handle version flag
-    if (options._version) {
-      console.log(await version());
-      process.exit(0);
-    }
-
-    // Handle help flag
-    if (options._help || !options._entry) {
-      console.log(help());
-      process.exit(options._help ? 0 : 1);
-    }
-
     // Load server entry file and create a new server instance
     const { serve } = await import("srvx");
     const server = await serve(await loadEntry(options)).ready();
 
     // Keep the process alive with proper cleanup
-    const cleanup = async () => {
-      console.log("\nShutting down server...");
-      await server.close();
+    const cleanup = () => {
+      // TODO: force close seems not working properly
+      server.close(true).catch(() => {});
       process.exit(0);
     };
-    process.on("SIGINT", cleanup);
+    // Handle Ctrl+C
+    process.on("SIGINT", () => {
+      console.log(gray("\r  \nStopping server..."));
+      cleanup();
+    });
+    // Handle termination signal (watcher)
     process.on("SIGTERM", cleanup);
   } catch (error) {
     console.error(error);
@@ -44,17 +78,12 @@ async function main() {
   }
 }
 
-// ---- internals ----
-
 type CLIOptions = Partial<ServerOptions> & {
   _entry: string;
   _help?: boolean;
   _version?: boolean;
 };
 
-/**
- * Parse command line arguments using Node.js util.parseArgs
- */
 function parseArgs(args: string[]): CLIOptions {
   const { values, positionals } = parseNodeArgs({
     args,
@@ -121,18 +150,20 @@ async function version() {
   const { default: pkg } = await import("../package.json", {
     with: { type: "json" },
   });
-  return `srvx v${pkg.version}`;
+  return `srvx v${pkg.version}\n${runtime()}`;
+}
+
+function runtime() {
+  if (process.versions.bun) {
+    return `bun v${process.versions.bun}`;
+  } else if (process.versions.deno) {
+    return `deno v${process.versions.deno}`;
+  } else {
+    return `node v${process.versions.node}`;
+  }
 }
 
 function help(): string {
-  const c = (code: number) => (text: string) =>
-    `\u001B[${code}m${text}\u001B[0m`;
-  const cyan = c(36);
-  const yellow = c(33);
-  const green = c(32);
-  const bold = c(1);
-  const magenta = c(35);
-  const gray = c(90);
   return `
 ${bold(cyan("Usage:"))} srvx [options] ${yellow("<entry>")}
 
