@@ -5,9 +5,6 @@ import { parseArgs as parseNodeArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-// @ts-expect-error
-import { version } from "../package.json" with { type: "json" };
-
 setupProcessErrorHandlers();
 main();
 
@@ -19,13 +16,13 @@ async function main() {
 
     // Handle version flag
     if (options._version) {
-      console.log(`srvx v${version}`);
+      console.log(await version());
       process.exit(0);
     }
 
     // Handle help flag
     if (options._help || !options._entry) {
-      console.log(showHelp());
+      console.log(help());
       process.exit(options._help ? 0 : 1);
     }
 
@@ -120,7 +117,14 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
   }
 }
 
-function showHelp(): string {
+async function version() {
+  const { default: pkg } = await import("../package.json", {
+    with: { type: "json" },
+  });
+  return `srvx v${pkg.version}`;
+}
+
+function help(): string {
   const c = (code: number) => (text: string) =>
     `\u001B[${code}m${text}\u001B[0m`;
   const cyan = c(36);
