@@ -61,7 +61,7 @@ async function serve() {
 
     // Keep the process alive with proper cleanup
     const cleanup = () => {
-      // TODO: force close seems not working properly
+      // TODO: force close seems not working properly (when fixed, we should await for it)
       server.close(true).catch(() => {});
       process.exit(0);
     };
