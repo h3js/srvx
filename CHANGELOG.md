@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.1...v0.8.2)
+
+### 🚀 Enhancements
+
+- **node:** Export `sendNodeResponse` ([add088f](https://github.com/h3js/srvx/commit/add088f))
+
+### 🔥 Performance
+
+- **node:** Use fast response for `.clone()` in fast paths ([e1e5a89](https://github.com/h3js/srvx/commit/e1e5a89))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.0...v0.8.1)

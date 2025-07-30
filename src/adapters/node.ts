@@ -32,6 +32,8 @@ export {
   NodeResponse as FastResponse,
 } from "./_node/response.ts";
 
+export { sendNodeResponse } from "./_node/send.ts";
+
 export function serve(options: ServerOptions): Server {
   return new NodeServer(options);
 }
