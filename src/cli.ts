@@ -1,53 +1,50 @@
 #!/usr/bin/env node
 
-import { serve, type ServerOptions } from "srvx";
+import type { ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
-import packageMetadata from "../package.json" with { type: "json" };
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-// Handle uncaught exceptions
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught exception:", error);
-  process.exit(1);
-});
+// @ts-expect-error
+import { version } from "../package.json" with { type: "json" };
 
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled rejection:", reason);
-  process.exit(1);
-});
+setupProcessErrorHandlers();
+main();
 
-try {
-  // Parse command line arguments (skip executable and script name)
-  const args = process.argv.slice(2);
-  const options = parseArgs(args);
+async function main() {
+  try {
+    // Parse command line arguments (skip executable and script name)
+    const args = process.argv.slice(2);
+    const options = parseArgs(args);
 
-  // Handle help flag
-  if (options._help) {
-    console.log(showHelp());
-    process.exit(0);
+    // Handle version flag
+    if (options._version) {
+      console.log(`srvx v${version}`);
+      process.exit(0);
+    }
+
+    // Handle help flag
+    if (options._help || !options._entry) {
+      console.log(showHelp());
+      process.exit(options._help ? 0 : 1);
+    }
+
+    // Load server entry file and create a new server instance
+    const { serve } = await import("srvx");
+    const server = await serve(await loadEntry(options)).ready();
+
+    // Keep the process alive with proper cleanup
+    const cleanup = async () => {
+      console.log("\nShutting down server...");
+      await server.close();
+      process.exit(0);
+    };
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
   }
-
-  // Handle version flag
-  if (options._version) {
-    console.log(`srvx v${packageMetadata.version}`);
-    process.exit(0);
-  }
-
-  // Load server entry file and create a new server instance
-  const server = await serve(await loadEntry(options)).ready();
-
-  // Keep the process alive with proper cleanup
-  const cleanup = async () => {
-    console.log("\nShutting down server...");
-    await server.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
-} catch (error) {
-  console.error(error);
-  process.exit(1);
 }
 
 // ---- internals ----
@@ -64,6 +61,7 @@ type CLIOptions = Partial<ServerOptions> & {
 function parseArgs(args: string[]): CLIOptions {
   const { values, positionals } = parseNodeArgs({
     args,
+    allowPositionals: true,
     options: {
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -73,11 +71,9 @@ function parseArgs(args: string[]): CLIOptions {
       cert: { type: "string" },
       key: { type: "string" },
     },
-    allowPositionals: true,
   });
 
   return {
-    ...values,
     _entry: positionals[0] || "",
     _help: values.help,
     _version: values.version,
@@ -87,9 +83,6 @@ function parseArgs(args: string[]): CLIOptions {
   };
 }
 
-/**
- * Load server entry file
- */
 async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
   try {
     // Convert to file:// URL for consistent imports
@@ -127,49 +120,60 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
   }
 }
 
-/**
- * Display help message
- */
 function showHelp(): string {
+  const c = (code: number) => (text: string) =>
+    `\u001B[${code}m${text}\u001B[0m`;
+  const cyan = c(36);
+  const yellow = c(33);
+  const green = c(32);
+  const bold = c(1);
+  const magenta = c(35);
+  const gray = c(90);
   return `
-Usage: srvx [options] <file>
+${bold(cyan("Usage:"))} srvx [options] ${yellow("<entry>")}
 
-Start an HTTP server with the specified handler file.
+Start an HTTP server with the specified entry file.
 
-Arguments:
-  <file>                   The JavaScript/TypeScript file to serve
+${bold("Arguments:")}
+  ${yellow("<entry>")}                  Server entry to serve
 
-Options:
-  -p, --port <port>        Port to listen on (default: 3000)
-  -H, --host <host>        Host to bind to (default: all interfaces)
-      --https              Enable HTTPS
-      --cert <file>        TLS certificate file
-      --key <file>         TLS private key file
-  -h, --help               Show this help message
-  -v, --version            Show version number
+${bold("Options:")}
+  ${green("-p, --port")} ${yellow("<port>")}        Port to listen on (default: ${yellow("3000")})
+  ${green("-H, --host")} ${yellow("<host>")}        Host to bind to (default: all interfaces)
+      ${green("--https")}              Enable HTTPS
+      ${green("--cert")} ${yellow("<file>")}        TLS certificate file
+      ${green("--key")}  ${yellow("<file>")}        TLS private key file
+  ${green("-h, --help")}               Show this help message
+  ${green("-v, --version")}            Show version number
 
-Examples:
-  srvx server.js                    # Start server with default settings
-  srvx --port=8080 server.js        # Start server on port 8080
-  srvx --host=localhost server.js   # Bind to localhost only
-  srvx --https --cert=cert.pem --key=key.pem server.js  # HTTPS server
+${bold("Examples:")}
+  srvx server.js                    ${gray("# Start server with default options")}
+  srvx --port=8080 server.ts        ${gray("# Start server on port 8080")}
+  srvx --host=localhost server.js   ${gray("# Bind to localhost only")}
+  srvx --https --cert=cert.pem --key=key.pem server.js  ${gray("# HTTPS server")}
 
-The handler file should export a default object with a 'fetch' function:
+The entry file should export a default object with a ${cyan("fetch")} method:
 
-  export default {
-    fetch(request) {
-      return new Response("Hello from srvx!");
-    }
+${magenta("export default ")} {
+  ${cyan("port")}: ${yellow("3000")},
+  ${cyan("fetch")}(request) {
+    ${magenta("return")} new Response(${green('"Hello, World!"')});
   }
+}
 
-Or with additional configuration:
-
-  export default {
-    port: 3000,
-    host: 'localhost',
-    fetch(request) {
-      return new Response("Configured server!");
-    }
-  }
+➤ Documentation: ${cyan("https://srvx.h3.dev")}
+➤ Report issues: ${cyan("https://github.com/h3js/srvx/issues")}
 `.trim();
+}
+
+function setupProcessErrorHandlers() {
+  process.on("uncaughtException", (error) => {
+    console.error("Uncaught exception:", error);
+    process.exit(1);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled rejection:", reason);
+    process.exit(1);
+  });
 }
