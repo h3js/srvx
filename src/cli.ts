@@ -151,10 +151,10 @@ ${bold("Options:")}
   ${green("-v, --version")}            Show version number
 
 ${bold("Examples:")}
-  srvx server.js                    ${gray("# Start server with default options")}
-  srvx --port=8080 server.ts        ${gray("# Start server on port 8080")}
-  srvx --host=localhost server.js   ${gray("# Bind to localhost only")}
-  srvx --https --cert=cert.pem --key=key.pem server.js  ${gray("# HTTPS server")}
+  srvx server.mjs                    ${gray("# Start server with default options")}
+  srvx --port=8080 server.mjs        ${gray("# Start server on port 8080")}
+  srvx --host=localhost server.mjs   ${gray("# Bind to localhost only")}
+  srvx --https --cert=cert.pem --key=key.pem server.mjs  ${gray("# HTTPS server")}
 
 The entry file should export a default object with a ${cyan("fetch")} method:
 
