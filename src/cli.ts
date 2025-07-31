@@ -1,4 +1,4 @@
-import type { ServerOptions, ServerPlugin } from "srvx";
+import type { ServerMiddleware, ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, extname, join, relative, resolve } from "node:path";
@@ -104,14 +104,14 @@ async function serve() {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       },
-      plugins: [
-        ...(entry.plugins || []),
+      middleware: [
         options._static
           ? serveStatic({
               dir: options._static,
             })
           : undefined,
-      ].filter(Boolean) as ServerPlugin[],
+        ...(entry.middleware || []),
+      ].filter(Boolean) as ServerMiddleware[],
       ...entry,
     }).ready();
 

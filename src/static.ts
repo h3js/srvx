@@ -1,4 +1,4 @@
-import type { ServerPlugin } from "./types.ts";
+import type { ServerMiddleware } from "./types.ts";
 import type { Transform } from "node:stream";
 
 import { extname, join, resolve } from "node:path";
@@ -36,53 +36,50 @@ const COMMON_MIME_TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-export const serveStatic = (options: ServeStaticOptions): ServerPlugin => {
+export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const dir = resolve(options.dir) + "/";
 
-  return (server) => {
-    server.options.middleware.push(async (req, next) => {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        return next();
-      }
-      const path = new URL(req.url).pathname.slice(1).replace(/\/$/, "");
-      let paths: string[];
-      if (path === "") {
-        paths = ["index.html"];
-      } else if (extname(path) === "") {
-        paths = [`${path}.html`, `${path}/index.html`];
-      } else {
-        paths = [path];
-      }
-      for (const path of paths) {
-        const filePath = join(dir, path);
-        if (!filePath.startsWith(dir)) {
-          continue;
-        }
-        const fileStat = await stat(filePath).catch(() => null);
-        if (fileStat?.isFile()) {
-          const headers: HeadersInit = {
-            "Content-Length": fileStat.size.toString(),
-            "Content-Type":
-              COMMON_MIME_TYPES[extname(filePath)] ||
-              "application/octet-stream",
-          };
-          let stream: ReadStream | Transform = createReadStream(filePath);
-          const acceptEncoding = req.headers.get("accept-encoding") || "";
-          if (acceptEncoding.includes("br")) {
-            headers["Content-Encoding"] = "br";
-            delete headers["Content-Length"];
-            headers["Vary"] = "Accept-Encoding";
-            stream = stream.pipe(createBrotliCompress());
-          } else if (acceptEncoding.includes("gzip")) {
-            headers["Content-Encoding"] = "gzip";
-            delete headers["Content-Length"];
-            headers["Vary"] = "Accept-Encoding";
-            stream = stream.pipe(createGzip());
-          }
-          return new FastResponse(stream as any, { headers });
-        }
-      }
+  return async (req, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       return next();
-    });
+    }
+    const path = new URL(req.url).pathname.slice(1).replace(/\/$/, "");
+    let paths: string[];
+    if (path === "") {
+      paths = ["index.html"];
+    } else if (extname(path) === "") {
+      paths = [`${path}.html`, `${path}/index.html`];
+    } else {
+      paths = [path];
+    }
+    for (const path of paths) {
+      const filePath = join(dir, path);
+      if (!filePath.startsWith(dir)) {
+        continue;
+      }
+      const fileStat = await stat(filePath).catch(() => null);
+      if (fileStat?.isFile()) {
+        const headers: HeadersInit = {
+          "Content-Length": fileStat.size.toString(),
+          "Content-Type":
+            COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream",
+        };
+        let stream: ReadStream | Transform = createReadStream(filePath);
+        const acceptEncoding = req.headers.get("accept-encoding") || "";
+        if (acceptEncoding.includes("br")) {
+          headers["Content-Encoding"] = "br";
+          delete headers["Content-Length"];
+          headers["Vary"] = "Accept-Encoding";
+          stream = stream.pipe(createBrotliCompress());
+        } else if (acceptEncoding.includes("gzip")) {
+          headers["Content-Encoding"] = "gzip";
+          delete headers["Content-Length"];
+          headers["Vary"] = "Accept-Encoding";
+          stream = stream.pipe(createGzip());
+        }
+        return new FastResponse(stream as any, { headers });
+      }
+    }
+    return next();
   };
 };
