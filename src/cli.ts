@@ -1,8 +1,9 @@
 import type { ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { fork } from "node:child_process";
+import { existsSync } from "node:fs";
 
 // Colors support for terminal output
 const _c = (c: number) => (t: string) => `\u001B[${c}m${t}\u001B[0m`;
@@ -36,11 +37,7 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     process.exit(0);
   }
   // Handle help flag
-  if (
-    options._help ||
-    !["dev", "start"].includes(options._command) ||
-    !options._entry
-  ) {
+  if (options._help || !["dev", "start"].includes(options._command)) {
     console.log(help(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
@@ -129,6 +126,29 @@ type CLIOptions = Partial<ServerOptions> & {
 
 async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
   try {
+    // Guess entry if not provided
+    if (!opts._entry || extname(opts._entry) === "") {
+      const baseDir = resolve(opts._entry || ".");
+      let foundEntry: string | undefined;
+      // prettier-ignore
+      const defaultEntries = ["server", "src/server", "app","src/app", "index", "src/index"];
+      const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs"];
+      for (const entry of defaultEntries) {
+        for (const ext of defaultExts) {
+          const entryPath = resolve(baseDir, `${entry}${ext}`);
+          if (existsSync(entryPath)) {
+            foundEntry = entryPath;
+            break;
+          }
+        }
+        if (foundEntry) break;
+      }
+      if (!foundEntry) {
+        throw `No entry file found in ${c.cyan(baseDir)}.\nPlease specify an entry file or ensure one of the default entries exists in the directory (${defaultEntries.map((e) => c.cyan(e)).join(", ")}).`;
+      }
+      opts._entry = foundEntry;
+    }
+
     // Convert to file:// URL for consistent imports
     const entryURL = opts._entry.startsWith("file://")
       ? opts._entry
@@ -147,7 +167,7 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
         return { ...defaultExport, ...opts, fetch: defaultExport.fetch };
       }
     }
-    throw `Default export must be an object with a ${c.cyan("fetch")} function.\n\n${c.bold("Example:")}\n\n${example()}`;
+    throw `Default export must be an object with a ${c.cyan("fetch")} function.\n\n${c.bold("Example:")}\n\n${example()}\n`;
   } catch (error) {
     console.error(c.red(`${c.bold(opts._entry)}`));
     if (error instanceof Error) {
@@ -242,7 +262,7 @@ ${c.bold("USAGE")}
 ${c.bold(c.gray("// server.ts"))}
 ${example()}
 
-${c.gray("# srvx dev|start [options] <entry>")}
+${c.gray("# srvx dev|start [options] [<entry>]")}
 ${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} ./server.ts                    ${c.gray("# Start server with default options")}
 ${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --port=8080 ./server.ts        ${c.gray("# Start server on port 8080")}
 ${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --host=localhost ./server.ts   ${c.gray("# Bind to localhost only")}
