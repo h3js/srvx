@@ -12,6 +12,7 @@ const c = {
   red: _c(31),
   green: _c(32),
   yellow: _c(33),
+  blue: _c(34),
   magenta: _c(35),
   cyan: _c(36),
   gray: _c(90),
@@ -28,13 +29,13 @@ if (process.send) {
   await serve();
   console.log(
     c.gray(
-      `${c.bold(c.magenta("λ"))} Request handler: ${c.cyan("./" + relative(".", options._entry))} ${c.gray("(watching for changes)")}`,
+      `${c.bold(c.green("λ"))} Request handler: ${c.cyan("./" + relative(".", options._entry))} ${c.gray("(watching for changes)")}`,
     ),
   );
   if (options._static) {
     console.log(
       c.gray(
-        `${c.bold(c.yellow("🗀"))} Serving static files from ${c.cyan("./" + relative(".", options._static) + "/")}`,
+        `${c.bold(c.magenta("🗀"))} Serving static files from ${c.cyan("./" + relative(".", options._static) + "/")}`,
       ),
     );
   }
