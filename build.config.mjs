@@ -9,6 +9,7 @@ export default defineBuildConfig({
       input: [
         "src/types.ts",
         "src/cli.ts",
+        "src/static.ts",
         ...[
           "deno",
           "bun",

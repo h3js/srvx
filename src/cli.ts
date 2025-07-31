@@ -1,7 +1,7 @@
-import type { ServerOptions } from "srvx";
+import type { ServerOptions, ServerPlugin } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { extname, resolve } from "node:path";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 
@@ -26,6 +26,18 @@ const options = parseArgs(args);
 if (process.send) {
   setupProcessErrorHandlers();
   await serve();
+  console.log(
+    c.gray(
+      `${c.bold(c.magenta("λ"))} Request handler: ${c.cyan("./" + relative(".", options._entry))} ${c.gray("(watching for changes)")}`,
+    ),
+  );
+  if (options._static) {
+    console.log(
+      c.gray(
+        `${c.bold(c.yellow("🗀"))} Serving static files from ${c.cyan("./" + relative(".", options._static) + "/")}`,
+      ),
+    );
+  }
 }
 
 export async function main(mainOpts: MainOpts): Promise<void> {
@@ -43,9 +55,6 @@ export async function main(mainOpts: MainOpts): Promise<void> {
   }
   if (options._dev) {
     // Fork a child process to run the server with watch mode
-    console.log(
-      c.gray(`${c.cyan(options._entry)} ${c.gray("(watching for changes)")}`),
-    );
     const isNode = !process.versions.bun && !process.versions.deno;
     const child = fork(fileURLToPath(import.meta.url), args, {
       execArgv: [
@@ -80,6 +89,12 @@ async function serve() {
   try {
     // Load server entry file and create a new server instance
     const { serve } = await import("srvx");
+    const { serveStatic } = await import("srvx/static");
+    const entry = await loadEntry(options);
+
+    const staticDir = join(dirname(options._entry), options._static);
+    options._static = existsSync(staticDir) ? staticDir : "";
+
     const server = await serve({
       error: (error) => {
         console.error(error);
@@ -88,7 +103,15 @@ async function serve() {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       },
-      ...(await loadEntry(options)),
+      plugins: [
+        ...(entry.plugins || []),
+        options._static
+          ? serveStatic({
+              dir: options._static,
+            })
+          : undefined,
+      ].filter(Boolean) as ServerPlugin[],
+      ...entry,
     }).ready();
 
     // Keep the process alive with proper cleanup
@@ -120,6 +143,7 @@ type CLIOptions = Partial<ServerOptions> & {
   _dev: boolean;
   _command: string;
   _entry: string;
+  _static: string;
   _help?: boolean;
   _version?: boolean;
 };
@@ -223,6 +247,7 @@ function parseArgs(args: string[]): CLIOptions {
       version: { type: "boolean", short: "v" },
       port: { type: "string", short: "p" },
       host: { type: "string", short: "H" },
+      static: { type: "string", short: "s" },
       tls: { type: "boolean" },
       cert: { type: "string" },
       key: { type: "string" },
@@ -234,6 +259,7 @@ function parseArgs(args: string[]): CLIOptions {
     _command: positionals[0] || "",
     _entry: positionals[1] || "",
     _help: values.help,
+    _static: values.static || "public",
     _version: values.version,
     port: values.port ? Number.parseInt(values.port, 10) : undefined,
     hostname: values.host,
@@ -276,6 +302,7 @@ ${c.bold("OPTIONS")}
 
   ${c.green("-p, --port")} ${c.yellow("<port>")}        Port to listen on (default: ${c.yellow("3000")})
   ${c.green("-H, --host")} ${c.yellow("<host>")}        Host to bind to (default: all interfaces)
+  ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
       ${c.green("--tls")}                Enable TLS (HTTPS/HTTP2)
       ${c.green("--cert")} ${c.yellow("<file>")}        TLS certificate file
       ${c.green("--key")}  ${c.yellow("<file>")}        TLS private key file
