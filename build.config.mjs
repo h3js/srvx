@@ -8,6 +8,7 @@ export default defineBuildConfig({
       type: "bundle",
       input: [
         "src/types.ts",
+        "src/cli.ts",
         ...[
           "deno",
           "bun",
