@@ -15,6 +15,7 @@
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
     "./cli": "./dist/cli.mjs",
+    "./static": "./dist/static.mjs",
     ".": {
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
