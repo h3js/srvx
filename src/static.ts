@@ -1,8 +1,11 @@
 import type { ServerPlugin } from "./types.ts";
+import type { Transform } from "node:stream";
+
 import { extname, join, resolve } from "node:path";
 import { stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, ReadStream } from "node:fs";
 import { FastResponse } from "srvx";
+import { createGzip, createBrotliCompress } from "node:zlib";
 
 export interface ServeStaticOptions {
   dir: string;
@@ -57,16 +60,26 @@ export const serveStatic = (options: ServeStaticOptions): ServerPlugin => {
         }
         const fileStat = await stat(filePath).catch(() => null);
         if (fileStat?.isFile()) {
-          const stream = createReadStream(filePath);
-          return new FastResponse(stream as any, {
-            headers: {
-              "Content-Length": fileStat.size.toString(),
-              "Content-Type":
-                COMMON_MIME_TYPES[extname(filePath)] ||
-                "application/octet-stream",
-            },
-            status: 200,
-          });
+          const headers: HeadersInit = {
+            "Content-Length": fileStat.size.toString(),
+            "Content-Type":
+              COMMON_MIME_TYPES[extname(filePath)] ||
+              "application/octet-stream",
+          };
+          let stream: ReadStream | Transform = createReadStream(filePath);
+          const acceptEncoding = req.headers.get("accept-encoding") || "";
+          if (acceptEncoding.includes("br")) {
+            headers["Content-Encoding"] = "br";
+            delete headers["Content-Length"];
+            headers["Vary"] = "Accept-Encoding";
+            stream = stream.pipe(createBrotliCompress());
+          } else if (acceptEncoding.includes("gzip")) {
+            headers["Content-Encoding"] = "gzip";
+            delete headers["Content-Length"];
+            headers["Vary"] = "Accept-Encoding";
+            stream = stream.pipe(createGzip());
+          }
+          return new FastResponse(stream as any, { headers });
         }
       }
       return next();
