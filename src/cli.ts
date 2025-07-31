@@ -48,11 +48,17 @@ export async function main(mainOpts: MainOpts): Promise<void> {
   console.log(
     c.gray(`${c.cyan(options._entry)} ${c.gray("(watching for changes)")}`),
   );
+  const isNode = !process.versions.bun && !process.versions.deno;
   const child = fork(fileURLToPath(import.meta.url), args, {
     execArgv: [
       ...process.execArgv,
       "--watch",
-      options._entry.endsWith(".ts") ? "--experimental-strip-types" : "",
+      isNode ? "--disable-warning=ExperimentalWarning" : "",
+      isNode
+        ? options._entry.endsWith(".ts")
+          ? "--experimental-strip-types"
+          : ""
+        : "",
     ].filter(Boolean),
   });
   child.on("error", (error) => {
@@ -123,28 +129,21 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       : pathToFileURL(resolve(opts._entry)).href;
 
     // Import the user file
-    const userModule = await import(entryURL);
-    const defaultExport = userModule.default;
-
-    if (!defaultExport) {
-      throw new TypeError("File must have a default export");
+    const entryModule = await import(entryURL);
+    const defaultExport = entryModule.default;
+    if (defaultExport) {
+      // If default export is a function, treat it as fetch handler
+      if (typeof defaultExport === "function") {
+        return { ...opts, fetch: defaultExport };
+      }
+      // If default export is an object, parse it
+      if (typeof defaultExport?.fetch === "function") {
+        return { ...defaultExport, ...opts, fetch: defaultExport.fetch };
+      }
     }
-
-    // If default export is a function, treat it as fetch handler
-    if (typeof defaultExport === "function") {
-      return { ...opts, fetch: defaultExport };
-    }
-
-    // If default export is an object, parse it
-    if (typeof defaultExport?.fetch === "function") {
-      return { ...defaultExport, ...opts, fetch: defaultExport.fetch };
-    }
-
-    throw new Error(
-      `"Default export must be an object with a ${c.cyan("fetch")} function. ${c.bold("Example:")}\n${example()}`,
-    );
+    throw `Default export must be an object with a ${c.cyan("fetch")} function.\n\n${c.bold("Example:")}\n\n${example()}`;
   } catch (error) {
-    console.error(c.red(`Error in ${c.bold(opts._entry)}`));
+    console.error(c.red(`${c.bold(opts._entry)}`));
     if (error instanceof Error) {
       Error.captureStackTrace?.(error, serve);
     }
@@ -217,10 +216,11 @@ function parseArgs(args: string[]): CLIOptions {
 }
 
 function example() {
+  const useTs = !options._entry /* help */ || options._entry.endsWith(".ts");
   return `${c.magenta("export default ")} {
   ${c.gray("// https://srvx.h3.dev/guide/options")}
   ${c.cyan("port")}: ${c.yellow("3000")},
-  ${c.cyan("fetch")}(request: Request) {
+  ${c.cyan("fetch")}(request${useTs ? ": Request" : ""}) {
     ${c.magenta("return")} new Response(${c.green('"Hello, World!"')});
   }
 }`;
