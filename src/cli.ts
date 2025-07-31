@@ -44,33 +44,39 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     console.log(help(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
-  // Fork a child process to run the server
-  console.log(
-    c.gray(`${c.cyan(options._entry)} ${c.gray("(watching for changes)")}`),
-  );
-  const isNode = !process.versions.bun && !process.versions.deno;
-  const child = fork(fileURLToPath(import.meta.url), args, {
-    execArgv: [
-      ...process.execArgv,
-      "--watch",
-      isNode ? "--disable-warning=ExperimentalWarning" : "",
-      isNode
-        ? options._entry.endsWith(".ts")
-          ? "--experimental-strip-types"
-          : ""
-        : "",
-    ].filter(Boolean),
-  });
-  child.on("error", (error) => {
-    console.error("Error in child process:", error);
-    process.exit(1);
-  });
-  child.on("exit", (code) => {
-    if (code !== 0) {
-      console.error(`Child process exited with code ${code}`);
-      process.exit(code);
-    }
-  });
+  if (options._dev) {
+    // Fork a child process to run the server with watch mode
+    console.log(
+      c.gray(`${c.cyan(options._entry)} ${c.gray("(watching for changes)")}`),
+    );
+    const isNode = !process.versions.bun && !process.versions.deno;
+    const child = fork(fileURLToPath(import.meta.url), args, {
+      execArgv: [
+        ...process.execArgv,
+        "--watch",
+        isNode ? "--disable-warning=ExperimentalWarning" : "",
+        isNode
+          ? options._entry.endsWith(".ts")
+            ? "--experimental-strip-types"
+            : ""
+          : "",
+      ].filter(Boolean),
+    });
+    child.on("error", (error) => {
+      console.error("Error in child process:", error);
+      process.exit(1);
+    });
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        console.error(`Child process exited with code ${code}`);
+        process.exit(code);
+      }
+    });
+  } else {
+    // Start the server directly in the current process
+    console.log(c.gray(`${c.cyan(options._entry)}`));
+    await serve();
+  }
 }
 
 async function serve() {
