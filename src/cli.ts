@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import type { ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,6 +8,7 @@ import { fork } from "node:child_process";
 const _c = (c: number) => (t: string) => `\u001B[${c}m${t}\u001B[0m`;
 const c = {
   bold: _c(1),
+  red: _c(31),
   green: _c(32),
   yellow: _c(33),
   magenta: _c(35),
@@ -19,29 +18,29 @@ const c = {
     `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`,
 } as const;
 
-setupProcessErrorHandlers();
-
 const args = process.argv.slice(2);
 const options = parseArgs(args);
 
+// Running in a child process
 if (process.send) {
-  await serve(); // Forked process
-} else {
-  await main({
-    command: "srvx",
-    docs: "https://srvx.h3.dev",
-    issues: "https://github.com/h3js/srvx/issues",
-  });
+  setupProcessErrorHandlers();
+  await serve();
 }
 
 export async function main(mainOpts: MainOpts): Promise<void> {
+  setupProcessErrorHandlers();
+
   // Handle version flag
   if (options._version) {
     console.log(await version());
     process.exit(0);
   }
   // Handle help flag
-  if (options._help || !options._entry) {
+  if (
+    options._help ||
+    !["dev", "start"].includes(options._command) ||
+    !options._entry
+  ) {
     console.log(help(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
@@ -72,7 +71,16 @@ async function serve() {
   try {
     // Load server entry file and create a new server instance
     const { serve } = await import("srvx");
-    const server = await serve(await loadEntry(options)).ready();
+    const server = await serve({
+      error: (error) => {
+        console.error(error);
+        return new Response(renderError(error, options._dev), {
+          status: 500,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      },
+      ...(await loadEntry(options)),
+    }).ready();
 
     // Keep the process alive with proper cleanup
     const cleanup = () => {
@@ -100,6 +108,8 @@ type MainOpts = {
 };
 
 type CLIOptions = Partial<ServerOptions> & {
+  _dev: boolean;
+  _command: string;
   _entry: string;
   _help?: boolean;
   _version?: boolean;
@@ -130,16 +140,36 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       return { ...defaultExport, ...opts, fetch: defaultExport.fetch };
     }
 
-    throw new TypeError(
-      "Default export must be a function or an object with a 'fetch' function",
+    throw new Error(
+      `"Default export must be an object with a ${c.cyan("fetch")} function. ${c.bold("Example:")}\n${example()}`,
     );
   } catch (error) {
-    throw new Error(
-      `Failed to load file: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    console.error(c.red(`Error loading ${c.bold(opts._entry)}!`));
+    if (error instanceof Error) {
+      Error.captureStackTrace?.(error, serve);
+    }
+    throw error;
   }
+}
+
+function renderError(error: unknown, dev?: boolean): string {
+  let html = `<!DOCTYPE html><html><head><title>Server Error</title></head><body>`;
+  if (dev) {
+    html += /* html */ `
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f8f9fa; color: #333; }
+      h1 { color: #dc3545; }
+      pre { background: #fff; padding: 10px; border-radius: 5px; overflow: auto; }
+      code { font-family: monospace; }
+      #error { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 70vh; }
+    </style>
+    <div id="error"><h1>Server Error</h1><pre>${error instanceof Error ? error.stack || error.message : String(error)}</pre></div>
+    `;
+  } else {
+    html += `<h1>Server Error</h1><p>Something went wrong while processing your request.</p>`;
+  }
+
+  return html;
 }
 
 async function version() {
@@ -175,7 +205,9 @@ function parseArgs(args: string[]): CLIOptions {
   });
 
   return {
-    _entry: positionals[0] || "",
+    _dev: positionals[0] === "dev",
+    _command: positionals[0] || "",
+    _entry: positionals[1] || "",
     _help: values.help,
     _version: values.version,
     port: values.port ? Number.parseInt(values.port, 10) : undefined,
@@ -184,26 +216,31 @@ function parseArgs(args: string[]): CLIOptions {
   };
 }
 
-function help(mainOpts: MainOpts): string {
-  const command = mainOpts.command;
-  return `
-${c.cyan(command)} - Start an HTTP server with the specified entry file
-
-${c.bold("USAGE")}
-
-${c.bold(c.gray("// server.ts"))}
-${c.magenta("export default ")} {
+function example() {
+  return `${c.magenta("export default ")} {
+  ${c.gray("// https://srvx.h3.dev/guide/options")}
   ${c.cyan("port")}: ${c.yellow("3000")},
   ${c.cyan("fetch")}(request: Request) {
     ${c.magenta("return")} new Response(${c.green('"Hello, World!"')});
   }
+}`;
 }
 
-${c.gray("$")} ${c.cyan(command)} ${c.gray("[options]")} ${c.yellow("<entry>")}
-${c.gray("$")} ${c.cyan(command)} server.ts                    ${c.gray("# Start server with default options")}
-${c.gray("$")} ${c.cyan(command)} --port=8080 server.ts        ${c.gray("# Start server on port 8080")}
-${c.gray("$")} ${c.cyan(command)} --host=localhost server.ts   ${c.gray("# Bind to localhost only")}
-${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem server.ts  ${c.gray("# HTTP2 server with TLS")}
+function help(mainOpts: MainOpts): string {
+  const command = mainOpts.command;
+  return `
+${c.cyan(command)} - Start an HTTP server with the specified entry file.
+
+${c.bold("USAGE")}
+
+${c.bold(c.gray("// server.ts"))}
+${example()}
+
+${c.gray("# srvx dev|start [options] <entry>")}
+${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} ./server.ts                    ${c.gray("# Start server with default options")}
+${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --port=8080 ./server.ts        ${c.gray("# Start server on port 8080")}
+${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --host=localhost ./server.ts   ${c.gray("# Bind to localhost only")}
+${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --tls --cert=cert.pem --key=key.pem ./server.ts  ${c.gray("# HTTP2 server with TLS")}
 
 ${c.bold("ARGUMENTS")}
 

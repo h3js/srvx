@@ -14,6 +14,7 @@
     "./cloudflare": "./dist/adapters/cloudflare.mjs",
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
+    "./cli": "./dist/cli.mjs",
     ".": {
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
@@ -25,9 +26,7 @@
     }
   },
   "types": "./dist/types.d.mts",
-  "bin": {
-    "srvx": "./dist/cli.mjs"
-  },
+  "bin": "./bin/srvx.mjs",
   "files": [
     "dist"
   ],

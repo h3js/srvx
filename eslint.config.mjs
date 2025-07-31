@@ -7,5 +7,6 @@ export default unjs({
     "unicorn/no-nested-ternary": "off",
     "unicorn/prefer-top-level-await": "off",
     "unicorn/prefer-ternary": "off",
+    "unicorn/no-process-exit": "off",
   },
 });
