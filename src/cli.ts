@@ -144,7 +144,7 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       `"Default export must be an object with a ${c.cyan("fetch")} function. ${c.bold("Example:")}\n${example()}`,
     );
   } catch (error) {
-    console.error(c.red(`Error loading ${c.bold(opts._entry)}!`));
+    console.error(c.red(`Error loading ${c.bold(opts._entry)}`));
     if (error instanceof Error) {
       Error.captureStackTrace?.(error, serve);
     }
