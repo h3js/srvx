@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { Colors as c } from "./_utils.cli.ts";
 
 // prettier-ignore
-const defaultEntries = ["server", "src/server", "app","src/app", "index", "src/index"];
+const defaultEntries = ["server", "src/server", "index", "src/index"];
 const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs"];
 
 const args = process.argv.slice(2);
@@ -203,13 +203,13 @@ function renderError(error: unknown, prod?: boolean): string {
 function printInfo() {
   console.log(
     c.gray(
-      `${c.bold(c.gray("λ"))} Server handler: ${c.cyan("./" + relative(".", options._entry))} ${options._prod ? "" : c.gray("(watching for changes)")}`,
+      `${c.bold(c.gray("λ"))} Server entry: ${c.cyan("./" + relative(".", options._entry))} ${options._prod ? "" : c.gray("(watching for changes)")}`,
     ),
   );
   if (options._static) {
     console.log(
       c.gray(
-        `${c.bold(c.gray("🗀"))} Serving static assets from ${c.cyan("./" + relative(".", options._static) + "/")}`,
+        `${c.bold(c.gray("⊟"))} Static files: ${c.cyan("./" + relative(".", options._static) + "/")}`,
       ),
     );
   }
@@ -265,9 +265,7 @@ function example() {
   const useTs = !options._entry /* help */ || options._entry.endsWith(".ts");
   return `${c.bold(c.gray("// server.ts"))}
 ${c.magenta("export default")} {
-  ${c.gray("// https://srvx.h3.dev/guide/options")}
-  ${c.cyan("port")}: ${c.yellow("3000")},
-  ${c.cyan("fetch")}(request${useTs ? ": Request" : ""}) {
+  ${c.cyan("fetch")}(req${useTs ? ": Request" : ""}) {
     ${c.magenta("return")} new Response(${c.green('"Hello, World!"')});
   }
 }`;
@@ -281,11 +279,10 @@ ${c.cyan(command)} - Start an HTTP server with the specified entry file.
 ${c.bold("USAGE")}
 ${existsSync(options._entry) ? "" : `\n${example()}\n`}
 ${c.gray("# srvx [options] [entry]")}
-${c.gray("$")} ${c.cyan(command)}                     ${c.gray("# Start development server")}
-${c.gray("$")} ${c.cyan(command)} --prod              ${c.gray("# Start production server (no watch, no debug)")}
+${c.gray("$")} ${c.cyan(command)} ${c.gray("./server.ts")}         ${c.gray("# Start development server")}
+${c.gray("$")} ${c.cyan(command)} --prod              ${c.gray("# Start production  server")}
 ${c.gray("$")} ${c.cyan(command)} --port=8080         ${c.gray("# Listen on port 8080")}
 ${c.gray("$")} ${c.cyan(command)} --host=localhost    ${c.gray("# Bind to localhost only")}
-${c.gray("$")} ${c.cyan(command)} ./entry.ts          ${c.gray("# Custom entry file")}
 ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
 ${c.bold("ARGUMENTS")}
@@ -299,9 +296,9 @@ ${c.bold("OPTIONS")}
   ${c.green("-H, --host")} ${c.yellow("<host>")}        Host to bind to (default: all interfaces)
   ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
   ${c.green("--prod")}                   Run in production mode (no watch, no debug)
-      ${c.green("--tls")}                Enable TLS (HTTPS/HTTP2)
-      ${c.green("--cert")} ${c.yellow("<file>")}        TLS certificate file
-      ${c.green("--key")}  ${c.yellow("<file>")}        TLS private key file
+  ${c.green("--tls")}                    Enable TLS (HTTPS/HTTP2)
+  ${c.green("--cert")} ${c.yellow("<file>")}            TLS certificate file
+  ${c.green("--key")}  ${c.yellow("<file>")}            TLS private key file
   ${c.green("-h, --help")}               Show this help message
   ${c.green("-v, --version")}            Show server and runtime versions
 
