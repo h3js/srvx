@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { main } from "srvx/cli";
+import { main } from "../dist/cli.mjs";
 
 await main({
   command: "srvx",
