@@ -7,6 +7,6 @@
     "dev": "srvx"
   },
   "devDependencies": {
-    "srvx": "npm:srvx-nightly"
+    "srvx": "latest"
   }
 }
