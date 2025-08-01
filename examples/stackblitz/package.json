@@ -6,6 +6,6 @@
     "start": "srvx dev"
   },
   "devDependencies": {
-    "srvx": "npx:srvx-nightly"
+    "srvx": "npm:srvx-nightly"
   }
 }
