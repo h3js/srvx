@@ -49,12 +49,14 @@ $ bunx --bun srvx
 
 <!-- automd:examples -->
 
-| Example       | Source                                                                               | Try                                                            |
-| ------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| `h3`          | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                   | `npx giget gh:h3js/srvx/examples/h3 srvx-h3`                   |
-| `hello-world` | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world srvx-hello-world` |
-| `hono`        | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)               | `npx giget gh:h3js/srvx/examples/hono srvx-hono`               |
-| `websocket`   | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)     | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket`     |
+| Example          | Source                                                                                     | Try                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `elysia`         | [examples/elysia](https://github.com/h3js/srvx/tree/main/examples/elysia/)                 | `npx giget gh:h3js/srvx/examples/elysia srvx-elysia`                 |
+| `h3`             | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                         | `npx giget gh:h3js/srvx/examples/h3 srvx-h3`                         |
+| `hello-world`    | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/)       | `npx giget gh:h3js/srvx/examples/hello-world srvx-hello-world`       |
+| `hono`           | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)                     | `npx giget gh:h3js/srvx/examples/hono srvx-hono`                     |
+| `service-worker` | [examples/service-worker](https://github.com/h3js/srvx/tree/main/examples/service-worker/) | `npx giget gh:h3js/srvx/examples/service-worker srvx-service-worker` |
+| `websocket`      | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)           | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket`           |
 
 <!-- /automd -->
 

@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-elysia",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx --prod",
+    "dev": "srvx"
+  },
+  "devDependencies": {
+    "elysia": "^1.3.8",
+    "srvx": "npm:srvx-nightly"
+  }
+}

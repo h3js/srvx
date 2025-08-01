@@ -1,5 +1,4 @@
-import { serve } from "../node_modules/srvx/dist/adapters/service-worker.mjs";
-// import { serve } from "https://esm.sh/srvx@0.5";
+import { serve } from "https://esm.sh/srvx";
 
 serve({
   serviceWorker: { url: import.meta.url },
