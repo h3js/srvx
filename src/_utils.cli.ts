@@ -23,4 +23,6 @@ export const Colors = {
   | "gray"
   | "url",
   (text: string) => string
->;
+> & {
+  url: (title: string, url: string) => string;
+};
