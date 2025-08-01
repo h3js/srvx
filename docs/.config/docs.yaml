@@ -5,6 +5,7 @@ shortDescription: Universal Server
 description: Based on web standards. Works with Node.js, Deno and Bun.
 github: h3js/srvx
 themeColor: orange
+automd: true
 socials:
   discord: "https://discord.h3.dev"
 sponsors:

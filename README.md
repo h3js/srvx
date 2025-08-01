@@ -43,18 +43,18 @@ $ bunx --bun srvx dev
 
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**
 
-## Examples
+## Starter Examples
 
 [➤ Online Playground](https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs)
 
 <!-- automd:examples -->
 
-| Example       | Source                                          | Try                                           |
-| ------------- | ----------------------------------------------- | --------------------------------------------- |
-| `h3`          | [examples/h3](./examples/h3/)                   | `npx giget gh:h3js/srvx/examples/h3`          |
-| `hello-world` | [examples/hello-world](./examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world` |
-| `hono`        | [examples/hono](./examples/hono/)               | `npx giget gh:h3js/srvx/examples/hono`        |
-| `websocket`   | [examples/websocket](./examples/websocket/)     | `npx giget gh:h3js/srvx/examples/websocket`   |
+| Example       | Source                                                                               | Try                                           |
+| ------------- | ------------------------------------------------------------------------------------ | --------------------------------------------- |
+| `h3`          | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                   | `npx giget gh:h3js/srvx/examples/h3`          |
+| `hello-world` | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world` |
+| `hono`        | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)               | `npx giget gh:h3js/srvx/examples/hono`        |
+| `websocket`   | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)     | `npx giget gh:h3js/srvx/examples/websocket`   |
 
 <!-- /automd -->
 

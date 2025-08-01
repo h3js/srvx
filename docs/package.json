@@ -6,6 +6,8 @@
     "build": "undocs build"
   },
   "devDependencies": {
+    "automd": "^0.4.0",
+    "mdbox": "^0.1.1",
     "undocs": "^0.3.10"
   },
   "packageManager": "pnpm@10.7.0"
