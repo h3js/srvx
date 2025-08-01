@@ -148,12 +148,6 @@ importers:
         specifier: link:../..
         version: link:../..
 
-  playground:
-    devDependencies:
-      srvx:
-        specifier: link:..
-        version: link:..
-
 packages:
 
   '@ampproject/remapping@2.3.0':
