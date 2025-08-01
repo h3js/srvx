@@ -28,19 +28,14 @@ const server = serve({
 
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**
 
-## Development
-
-<details>
-
-<summary>local development</summary>
+## Contribution
 
 - Clone this repository
 - Install the latest LTS version of [Node.js](https://nodejs.org/en/)
 - Enable [Corepack](https://github.com/nodejs/corepack) using `corepack enable`
 - Install dependencies using `pnpm install`
+- **Prepare stub mode using `pnpm build --stub`**
 - Run interactive tests using `pnpm dev`
-
-</details>
 
 ## License
 
