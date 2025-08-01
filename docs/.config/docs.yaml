@@ -15,7 +15,7 @@ landing:
     playOnline:
       label: Play Online
       icon: i-heroicons-play
-      to: https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?file=server.mjs
+      to: https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs
   heroCode:
     lang: js
     title: "server.ts"

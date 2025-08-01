@@ -36,7 +36,7 @@ $ npx srvx dev
 
 ## Examples
 
-[➤ Online Playground](https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?file=server.mjs)
+[➤ Online Playground](https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs)
 
 <!-- automd:examples -->
 
