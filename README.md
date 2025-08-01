@@ -1,36 +1,43 @@
-# 💥 srvx
+# λ srvx
 
-<!-- automd:badges color=yellow -->
+<!-- automd:badges color=yellow packagephobia -->
 
 [![npm version](https://img.shields.io/npm/v/srvx?color=yellow)](https://npmjs.com/package/srvx)
 [![npm downloads](https://img.shields.io/npm/dm/srvx?color=yellow)](https://npm.chart.dev/srvx)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/srvx?color=yellow)](https://bundlephobia.com/package/srvx)
+[![install size](https://badgen.net/packagephobia/install/srvx?color=yellow)](https://packagephobia.com/result?p=srvx)
 
 <!-- /automd -->
 
-Universal Server API based on web platform standards. Works with [Deno](https://deno.com/), [Bun](https://bun.sh/) and [Node.js](https://nodejs.org/en).
+Universal Server based on web standards. Works with [Deno](https://deno.com/), [Bun](https://bun.sh/) and [Node.js](https://nodejs.org/en).
 
-- ✅ Seamless runtime integration with identical usage ([handler](https://srvx.h3.dev/guide/handler) and [instance](https://srvx.h3.dev/guide/server))
-- ✅ Zero overhead [Deno](https://deno.com/) and [Bun](https://bun.sh/) support
-- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with ~native perf and [fast response](https://srvx.h3.dev/guide/node#fast-response) support
+- ✅ Zero dependency
+- ✅ Full featured CLI with watcher, error handler, serve static and logger
+- ✅ Seamless runtime integration with same API ([handler](https://srvx.h3.dev/guide/handler) and [instance](https://srvx.h3.dev/guide/server)).
+- ✅ Zero overhead [Deno](https://deno.com/) and [Bun](https://bun.sh/) support.
+- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance.
 
 ## Quick start
 
 ```js
-import { serve } from "srvx";
-
-const server = serve({
+// server.ts
+export default {
   port: 3000,
-  fetch(request) {
+  fetch(request: Request) {
     return new Response("👋 Hello there!");
   },
-});
+};
+```
+
+```bash
+$ npx srvx dev
 ```
 
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**
 
 ## Examples
 
-[➤Online Playground](https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs)
+[➤ Online Playground](https://stackblitz.com/edit/h3js-srvx-ekbf1eyb?file=server.mjs&startScript=dev)
 
 <!-- automd:examples -->
 

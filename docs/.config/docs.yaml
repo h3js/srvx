@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://unpkg.com/undocs/schema/config.json
 
 name: srvx
-shortDescription: Universal Server API
+shortDescription: Universal Server
 description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js and more.
 github: h3js/srvx
 themeColor: red
@@ -15,16 +15,15 @@ landing:
     playOnline:
       label: Play Online
       icon: i-heroicons-play
-      to: https://stackblitz.com/github/h3js/srvx/tree/main/playground?file=app.mjs
+      to: https://stackblitz.com/edit/h3js-srvx-ekbf1eyb?file=server.mjs&startScript=dev
   heroCode:
     lang: js
-    title: "server.mjs"
+    title: "server.ts"
     content: |
-      import { serve } from "srvx";
-
-      serve({
+      // npx srvx dev
+      export default {
         port: 3000,
-        fetch(request) {
+        fetch(request: Request) {
           return new Response("👋 Hello there!");
         },
-      });
+      };
