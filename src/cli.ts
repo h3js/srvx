@@ -102,7 +102,7 @@ async function serve() {
     };
     // Handle Ctrl+C
     process.on("SIGINT", () => {
-      console.log(c.gray("\r  Stopping server..."));
+      console.log(c.gray("\rStopping server..."));
       cleanup();
     });
     // Handle termination signal (watcher)
