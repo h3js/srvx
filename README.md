@@ -30,15 +30,15 @@ Then, run the server using your favorite runtime:
 
 ```bash
 # Node.js
-$ npx srvx dev       # npm
-$ pnpx srvx dev      # pnpm
-$ yarn dlx srvx dev  # yarn
+$ npx srvx       # npm
+$ pnpx srvx      # pnpm
+$ yarn dlx srvx  # yarn
 
 # Deno
-$ deno -A npm:srvx dev
+$ deno -A npm:srvx
 
 # Bun
-$ bunx --bun srvx dev
+$ bunx --bun srvx
 ```
 
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**

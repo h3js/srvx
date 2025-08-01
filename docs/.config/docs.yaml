@@ -28,11 +28,11 @@ landing:
       };
 
       /*
-      Node.js: $ npx srvx dev
-               $ pnpx srvx dev
-               $ yarn dlx srvx dev
-      Deno:    $ deno -A npm:srvx dev
-      Bun:     $ bunx --bun srvx dev
+      Node.js: $ npx srvx
+               $ pnpx srvx
+               $ yarn dlx srvx
+      Deno:    $ deno -A npm:srvx
+      Bun:     $ bunx --bun srvx
       */
   features:
     - title: "Node.js Compatibility"
