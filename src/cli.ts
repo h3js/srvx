@@ -4,21 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
-
-// Colors support for terminal output
-const _c = (c: number) => (t: string) => `\u001B[${c}m${t}\u001B[0m`;
-const c = {
-  bold: _c(1),
-  red: _c(31),
-  green: _c(32),
-  yellow: _c(33),
-  blue: _c(34),
-  magenta: _c(35),
-  cyan: _c(36),
-  gray: _c(90),
-  url: (title: string, url: string) =>
-    `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`,
-} as const;
+import { Colors as c } from "./_utils.cli.ts";
 
 const args = process.argv.slice(2);
 const options = parseArgs(args);
@@ -91,6 +77,7 @@ async function serve() {
     // Load server entry file and create a new server instance
     const { serve } = await import("srvx");
     const { serveStatic } = await import("srvx/static");
+    const { log } = await import("srvx/log");
     const entry = await loadEntry(options);
 
     const staticDir = join(dirname(options._entry), options._static);
@@ -105,6 +92,7 @@ async function serve() {
         });
       },
       middleware: [
+        log(),
         options._static
           ? serveStatic({
               dir: options._static,

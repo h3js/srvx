@@ -10,6 +10,7 @@ export default defineBuildConfig({
         "src/types.ts",
         "src/cli.ts",
         "src/static.ts",
+        "src/log.ts",
         ...[
           "deno",
           "bun",

@@ -16,6 +16,7 @@
     "./service-worker": "./dist/adapters/service-worker.mjs",
     "./cli": "./dist/cli.mjs",
     "./static": "./dist/static.mjs",
+    "./log": "./dist/log.mjs",
     ".": {
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
