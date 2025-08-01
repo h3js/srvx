@@ -29,7 +29,7 @@ export async function main(mainOpts: MainOpts): Promise<void> {
   }
   // Handle help flag
   if (options._help) {
-    console.log(help(mainOpts));
+    console.log(usage(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
   if (options._prod) {
@@ -292,7 +292,7 @@ ${c.magenta("export default")} {
 }`;
 }
 
-function help(mainOpts: MainOpts): string {
+export function usage(mainOpts: MainOpts): string {
   const command = mainOpts.command;
   return `
 ${c.cyan(command)} - Start an HTTP server with the specified entry path.

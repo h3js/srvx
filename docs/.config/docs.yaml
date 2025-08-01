@@ -1,30 +1,48 @@
 # yaml-language-server: $schema=https://unpkg.com/undocs/schema/config.json
 
 name: srvx
-shortDescription: Universal Server API
-description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js and more.
+shortDescription: Universal Server
+description: Based on web standards. Works with Node.js, Deno and Bun.
 github: h3js/srvx
-themeColor: red
+themeColor: orange
+# automd: true
 socials:
   discord: "https://discord.h3.dev"
 sponsors:
   api: "https://sponsors.pi0.io/sponsors.json"
 landing:
-  contributors: true
+  # contributors: true
   heroLinks:
     playOnline:
       label: Play Online
       icon: i-heroicons-play
-      to: https://stackblitz.com/github/h3js/srvx/tree/main/playground?file=app.mjs
+      to: https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs
   heroCode:
-    lang: js
-    title: "server.mjs"
+    lang: ts
+    title: "server.ts"
     content: |
-      import { serve } from "srvx";
+      export default {
+        fetch(req: Request) {
+          return Response.json({ hello: "world!" })
+        }
+      };
 
-      serve({
-        port: 3000,
-        fetch(request) {
-          return new Response("👋 Hello there!");
-        },
-      });
+      /*
+      Node.js: $ npx srvx
+               $ pnpx srvx
+               $ yarn dlx srvx
+      Deno:    $ deno -A npm:srvx
+      Bun:     $ bunx --bun srvx
+      */
+  features:
+    - title: "Node.js Compatibility"
+      description: "[Node.js compatibility](https://srvx.h3.dev/guide/node) with up to [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance."
+      icon: "akar-icons:node-fill"
+
+    - title: "Web Standards"
+      description: "Based on Web standards. Natively adopts when running in [Deno](https://deno.com/) and [Bun](https://bun.sh/)."
+      icon: "arcticons:emoji-web"
+
+    - title: "Development Experience"
+      description: "Built-in CLI with **watcher**, **logger**, **error handler**, and **static file serving**."
+      icon: "hugeicons:happy"
