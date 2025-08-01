@@ -28,8 +28,11 @@
     }
   },
   "types": "./dist/types.d.mts",
-  "bin": "./bin/srvx.mjs",
+  "bin": {
+    "srvx": "./bin/srvx.mjs"
+  },
   "files": [
+    "bin",
     "dist"
   ],
   "scripts": {
