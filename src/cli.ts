@@ -6,6 +6,10 @@ import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 import { Colors as c } from "./_utils.cli.ts";
 
+// prettier-ignore
+const defaultEntries = ["server", "src/server", "app","src/app", "index", "src/index"];
+const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs"];
+
 const args = process.argv.slice(2);
 const options = parseArgs(args);
 
@@ -13,18 +17,6 @@ const options = parseArgs(args);
 if (process.send) {
   setupProcessErrorHandlers();
   await serve();
-  console.log(
-    c.gray(
-      `${c.bold(c.green("λ"))} Request handler: ${c.cyan("./" + relative(".", options._entry))} ${c.gray("(watching for changes)")}`,
-    ),
-  );
-  if (options._static) {
-    console.log(
-      c.gray(
-        `${c.bold(c.magenta("🗀"))} Serving static files from ${c.cyan("./" + relative(".", options._static) + "/")}`,
-      ),
-    );
-  }
 }
 
 export async function main(mainOpts: MainOpts): Promise<void> {
@@ -36,11 +28,14 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     process.exit(0);
   }
   // Handle help flag
-  if (options._help || !["dev", "start"].includes(options._command)) {
+  if (options._help) {
     console.log(help(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
-  if (options._dev) {
+  if (options._prod) {
+    // Start the server directly in the current process
+    await serve();
+  } else {
     // Fork a child process to run the server with watch mode
     const isNode = !process.versions.bun && !process.versions.deno;
     const child = fork(fileURLToPath(import.meta.url), args, {
@@ -65,10 +60,6 @@ export async function main(mainOpts: MainOpts): Promise<void> {
         process.exit(code);
       }
     });
-  } else {
-    // Start the server directly in the current process
-    console.log(c.gray(`${c.cyan(options._entry)}`));
-    await serve();
   }
 }
 
@@ -86,7 +77,7 @@ async function serve() {
     const server = await serve({
       error: (error) => {
         console.error(error);
-        return new Response(renderError(error, options._dev), {
+        return new Response(renderError(error, options._prod), {
           status: 500,
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
@@ -103,6 +94,8 @@ async function serve() {
       ...entry,
     }).ready();
 
+    printInfo();
+
     // Keep the process alive with proper cleanup
     const cleanup = () => {
       // TODO: force close seems not working properly (when fixed, we should await for it)
@@ -111,7 +104,7 @@ async function serve() {
     };
     // Handle Ctrl+C
     process.on("SIGINT", () => {
-      console.log(c.gray("\r  \nStopping server..."));
+      console.log(c.gray("\r  Stopping server..."));
       cleanup();
     });
     // Handle termination signal (watcher)
@@ -129,9 +122,8 @@ type MainOpts = {
 };
 
 type CLIOptions = Partial<ServerOptions> & {
-  _dev: boolean;
-  _command: string;
   _entry: string;
+  _prod: boolean;
   _static: string;
   _help?: boolean;
   _version?: boolean;
@@ -143,9 +135,6 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
     if (!opts._entry || extname(opts._entry) === "") {
       const baseDir = resolve(opts._entry || ".");
       let foundEntry: string | undefined;
-      // prettier-ignore
-      const defaultEntries = ["server", "src/server", "app","src/app", "index", "src/index"];
-      const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs"];
       for (const entry of defaultEntries) {
         for (const ext of defaultExts) {
           const entryPath = resolve(baseDir, `${entry}${ext}`);
@@ -190,9 +179,11 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
   }
 }
 
-function renderError(error: unknown, dev?: boolean): string {
+function renderError(error: unknown, prod?: boolean): string {
   let html = `<!DOCTYPE html><html><head><title>Server Error</title></head><body>`;
-  if (dev) {
+  if (prod) {
+    html += `<h1>Server Error</h1><p>Something went wrong while processing your request.</p>`;
+  } else {
     html += /* html */ `
     <style>
       body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f8f9fa; color: #333; }
@@ -203,11 +194,24 @@ function renderError(error: unknown, dev?: boolean): string {
     </style>
     <div id="error"><h1>Server Error</h1><pre>${error instanceof Error ? error.stack || error.message : String(error)}</pre></div>
     `;
-  } else {
-    html += `<h1>Server Error</h1><p>Something went wrong while processing your request.</p>`;
   }
 
   return html;
+}
+
+function printInfo() {
+  console.log(
+    c.gray(
+      `${c.bold(c.gray("λ"))} Server handler: ${c.cyan("./" + relative(".", options._entry))} ${options._prod ? "" : c.gray("(watching for changes)")}`,
+    ),
+  );
+  if (options._static) {
+    console.log(
+      c.gray(
+        `${c.bold(c.gray("🗀"))} Serving static assets from ${c.cyan("./" + relative(".", options._static) + "/")}`,
+      ),
+    );
+  }
 }
 
 async function version() {
@@ -234,6 +238,7 @@ function parseArgs(args: string[]): CLIOptions {
     options: {
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
+      prod: { type: "boolean" },
       port: { type: "string", short: "p" },
       host: { type: "string", short: "H" },
       static: { type: "string", short: "s" },
@@ -244,9 +249,8 @@ function parseArgs(args: string[]): CLIOptions {
   });
 
   return {
-    _dev: positionals[0] === "dev",
-    _command: positionals[0] || "",
-    _entry: positionals[1] || "",
+    _entry: positionals[0] || "",
+    _prod: values.prod ?? process.env.NODE_ENV === "production",
     _help: values.help,
     _static: values.static || "public",
     _version: values.version,
@@ -258,7 +262,8 @@ function parseArgs(args: string[]): CLIOptions {
 
 function example() {
   const useTs = !options._entry /* help */ || options._entry.endsWith(".ts");
-  return `${c.magenta("export default ")} {
+  return `${c.bold(c.gray("// server.ts"))}
+${c.magenta("export default")} {
   ${c.gray("// https://srvx.h3.dev/guide/options")}
   ${c.cyan("port")}: ${c.yellow("3000")},
   ${c.cyan("fetch")}(request${useTs ? ": Request" : ""}) {
@@ -273,25 +278,26 @@ function help(mainOpts: MainOpts): string {
 ${c.cyan(command)} - Start an HTTP server with the specified entry file.
 
 ${c.bold("USAGE")}
-
-${c.bold(c.gray("// server.ts"))}
-${example()}
-
-${c.gray("# srvx dev|start [options] [<entry>]")}
-${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} ./server.ts                    ${c.gray("# Start server with default options")}
-${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --port=8080 ./server.ts        ${c.gray("# Start server on port 8080")}
-${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --host=localhost ./server.ts   ${c.gray("# Bind to localhost only")}
-${c.gray("$")} ${c.cyan(command)} ${c.magenta("dev")} --tls --cert=cert.pem --key=key.pem ./server.ts  ${c.gray("# HTTP2 server with TLS")}
+${existsSync(options._entry) ? "" : `\n${example()}\n`}
+${c.gray("# srvx [options] [entry]")}
+${c.gray("$")} ${c.cyan(command)}                     ${c.gray("# Start development server")}
+${c.gray("$")} ${c.cyan(command)} --prod              ${c.gray("# Start production server (no watch, no debug)")}
+${c.gray("$")} ${c.cyan(command)} --port=8080         ${c.gray("# Listen on port 8080")}
+${c.gray("$")} ${c.cyan(command)} --host=localhost    ${c.gray("# Bind to localhost only")}
+${c.gray("$")} ${c.cyan(command)} ./entry.ts          ${c.gray("# Custom entry file")}
+${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
 ${c.bold("ARGUMENTS")}
 
-  ${c.yellow("<entry>")}                  Server entry to serve
+  ${c.yellow("<entry>")}                  Server entry to serve.
+                           Default: ${defaultEntries.map((e) => c.cyan(e)).join(", ")} ${c.gray(`(${defaultExts.join(",")})`)}
 
 ${c.bold("OPTIONS")}
 
   ${c.green("-p, --port")} ${c.yellow("<port>")}        Port to listen on (default: ${c.yellow("3000")})
   ${c.green("-H, --host")} ${c.yellow("<host>")}        Host to bind to (default: all interfaces)
   ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
+  ${c.green("--prod")}                   Run in production mode (no watch, no debug)
       ${c.green("--tls")}                Enable TLS (HTTPS/HTTP2)
       ${c.green("--cert")} ${c.yellow("<file>")}        TLS certificate file
       ${c.green("--key")}  ${c.yellow("<file>")}        TLS private key file
@@ -302,6 +308,7 @@ ${c.bold("ENVIRONMENT")}
 
   ${c.green("PORT")}                     Override port
   ${c.green("HOST")}                     Override host
+  ${c.green("NODE_ENV")}                 Set to ${c.yellow("production")} for production mode.
 
 ➤ ${c.url("Documentation", mainOpts.docs || "https://srvx.h3.dev")}
 ➤ ${c.url("Report issues", mainOpts.issues || "https://github.com/h3js/srvx/issues")}
