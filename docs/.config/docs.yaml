@@ -4,7 +4,7 @@ name: srvx
 shortDescription: Universal Server
 description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js and more.
 github: h3js/srvx
-themeColor: red
+themeColor: orange
 socials:
   discord: "https://discord.h3.dev"
 sponsors:
@@ -15,7 +15,7 @@ landing:
     playOnline:
       label: Play Online
       icon: i-heroicons-play
-      to: https://stackblitz.com/edit/h3js-srvx-ekbf1eyb?file=server.mjs&startScript=dev
+      to: https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?file=server.mjs
   heroCode:
     lang: js
     title: "server.ts"
