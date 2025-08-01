@@ -1,0 +1,11 @@
+{
+  "name": "srvx-examples-stackblitz",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx dev"
+  },
+  "devDependencies": {
+    "srvx": "npx:srvx-nightly"
+  }
+}

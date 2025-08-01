@@ -20,7 +20,7 @@ importers:
         version: 4.20250627.0
       '@hono/node-server':
         specifier: ^1.14.4
-        version: 1.14.4(hono@4.7.7)
+        version: 1.14.4(hono@4.8.10)
       '@mitata/counters':
         specifier: ^0.0.8
         version: 0.0.8
@@ -90,6 +90,36 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@24.0.4)(jiti@2.4.2)
+
+  examples/h3:
+    devDependencies:
+      h3:
+        specifier: beta
+        version: 2.0.0-beta.3
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
+  examples/hello-world:
+    devDependencies:
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
+  examples/hono:
+    devDependencies:
+      hono:
+        specifier: latest
+        version: 4.8.10
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
+  examples/stackblitz:
+    devDependencies:
+      srvx:
+        specifier: link:../..
+        version: link:../..
 
   playground:
     devDependencies:
@@ -1514,6 +1544,9 @@ packages:
       picomatch:
         optional: true
 
+  fetchdts@0.1.5:
+    resolution: {integrity: sha512-GCxyHdCCUm56atms+sIjOsAENvhebk3HAM1CfzgKCgMRjPUylpkkPmNknsaXe1gDRqM3cJbMhpkXMhCzXSE+Jg==}
+
   figures@6.1.0:
     resolution: {integrity: sha512-d+l3qxjSesT4V7v2fh+QnmFnUWv9lSpjarhShNTgBOfA0ttejbQUAlHLitbjkoRiDulW0OPoQPYIGhIC8ohejg==}
     engines: {node: '>=18'}
@@ -1587,12 +1620,21 @@ packages:
   graphemer@1.4.0:
     resolution: {integrity: sha512-EtKwoO6kxCL9WO5xipiHTZlSzBm7WLT627TqC/uVRd0HKmq8NXyebnNYxDoBi7wt8eTWrUrKXCOVaFq9x1kgag==}
 
+  h3@2.0.0-beta.3:
+    resolution: {integrity: sha512-AW9ry5z/YOmzuY0R1jk5jwc7jkGkeSOzyQ0+4qzVGdqY6I2JrslzKjAmcqUjfB6f+kdyIvUGOompt/Dl3MI+FA==}
+    engines: {node: '>=20.11.1'}
+    peerDependencies:
+      crossws: ^0.4.1
+    peerDependenciesMeta:
+      crossws:
+        optional: true
+
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
 
-  hono@4.7.7:
-    resolution: {integrity: sha512-2PCpQRbN87Crty8/L/7akZN3UyZIAopSoRxCwRbJgUuV1+MHNFHzYFxZTg4v/03cXUm+jce/qa2VSBZpKBm3Qw==}
+  hono@4.8.10:
+    resolution: {integrity: sha512-DRMYbR3aFk6YET1FCSAFbgF2cWYTz5j0YAFYPECx9fmrbKBDAYnWU+YCgRTpOaatxMYN6e68U/2IG39zRP4W/A==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -2037,6 +2079,9 @@ packages:
     resolution: {integrity: sha512-x8H8aPvD+xbl0Do8oez5f5o8eMS3trfCghc4HhLAnCkj7Vl0d1JWGs0UF/D886zLW2rOj2QymV/JcSSsw+XDNg==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
     hasBin: true
+
+  rou3@0.7.3:
+    resolution: {integrity: sha512-KKenF/hB2iIhS1ohj226LT+/8uKCBpSMqeS4V1UPN9vad99uLoyIhrULRRB1skaB40LQHcBlSsAi3sT8MaoDDQ==}
 
   run-applescript@7.0.0:
     resolution: {integrity: sha512-9by4Ij99JUr/MCFBUkDKLWK3G9HVXmabKz9U5MlIAIuvuzkiOicRYs8XJLxX+xahD+mLiiCYDqF9dKAgtzKP1A==}
@@ -2517,9 +2562,9 @@ snapshots:
 
   '@fastify/busboy@3.1.1': {}
 
-  '@hono/node-server@1.14.4(hono@4.7.7)':
+  '@hono/node-server@1.14.4(hono@4.8.10)':
     dependencies:
-      hono: 4.7.7
+      hono: 4.8.10
 
   '@humanfs/core@0.19.1': {}
 
@@ -3588,6 +3633,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.2
 
+  fetchdts@0.1.5: {}
+
   figures@6.1.0:
     dependencies:
       is-unicode-supported: 2.1.0
@@ -3665,9 +3712,16 @@ snapshots:
 
   graphemer@1.4.0: {}
 
+  h3@2.0.0-beta.3:
+    dependencies:
+      cookie-es: 2.0.0
+      fetchdts: 0.1.5
+      rou3: 0.7.3
+      srvx: 'link:'
+
   has-flag@4.0.0: {}
 
-  hono@4.7.7: {}
+  hono@4.8.10: {}
 
   html-escaper@2.0.2: {}
 
@@ -4159,6 +4213,8 @@ snapshots:
       '@rollup/rollup-win32-ia32-msvc': 4.44.1
       '@rollup/rollup-win32-x64-msvc': 4.44.1
       fsevents: 2.3.3
+
+  rou3@0.7.3: {}
 
   run-applescript@7.0.0: {}
 

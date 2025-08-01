@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-h3",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx start",
+    "dev": "srvx dev"
+  },
+  "devDependencies": {
+    "srvx": "npx:srvx-nightly",
+    "h3": "beta"
+  }
+}

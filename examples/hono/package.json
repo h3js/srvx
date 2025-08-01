@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-hono",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx start",
+    "dev": "srvx dev"
+  },
+  "devDependencies": {
+    "srvx": "npx:srvx-nightly",
+    "hono": "latest"
+  }
+}
