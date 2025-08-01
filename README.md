@@ -4,7 +4,6 @@
 
 [![npm version](https://img.shields.io/npm/v/srvx?color=yellow)](https://npmjs.com/package/srvx)
 [![npm downloads](https://img.shields.io/npm/dm/srvx?color=yellow)](https://npm.chart.dev/srvx)
-[![bundle size](https://img.shields.io/bundlephobia/minzip/srvx?color=yellow)](https://bundlephobia.com/package/srvx)
 [![install size](https://badgen.net/packagephobia/install/srvx?color=yellow)](https://packagephobia.com/result?p=srvx)
 
 <!-- /automd -->
