@@ -1,5 +1,9 @@
 // Colors support for terminal output
-const _c = (c: number) => (t: string) => `\u001B[${c}m${t}\u001B[0m`;
+const noColor =
+  globalThis.process?.env?.NO_COLOR === "1" ||
+  globalThis.process?.env?.TERM === "dumb";
+const _c = (c: number) => (t: string) =>
+  noColor ? t : `\u001B[${c}m${t}\u001B[0m`;
 
 export const Colors = {
   bold: _c(1),
@@ -11,7 +15,9 @@ export const Colors = {
   cyan: _c(36),
   gray: _c(90),
   url: (title: string, url: string) =>
-    `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`,
+    noColor
+      ? `${title} (${url})`
+      : `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`,
 } as Record<
   | "bold"
   | "red"

@@ -5,9 +5,20 @@ import { fileURLToPath } from "node:url";
 export default {
   input: ["README.md", "docs/**/*.md"],
   generators: {
+    cliUsage: {
+      async generate(_ctx) {
+        process.env.NO_COLOR = "1";
+        const { usage } = await import("./src/cli.js");
+        delete process.env.NO_COLOR;
+        const _usage = usage({ command: "srvx", docs: "", issues: "" });
+        return {
+          contents: md.codeBlock(_usage, "sh"),
+        };
+      },
+    },
     examples: {
       async generate(_ctx) {
-        let examples = [];
+        const examples: string[][] = [];
         for await (const dir of glob(
           fileURLToPath(new URL("examples/*", import.meta.url)),
         )) {

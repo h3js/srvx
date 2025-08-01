@@ -49,12 +49,12 @@ $ bunx --bun srvx dev
 
 <!-- automd:examples -->
 
-| Example       | Source                                                                               | Try                                           |
-| ------------- | ------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `h3`          | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                   | `npx giget gh:h3js/srvx/examples/h3`          |
+| Example | Source | Try |
+| --- | --- | --- |
+| `h3` | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/) | `npx giget gh:h3js/srvx/examples/h3` |
 | `hello-world` | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world` |
-| `hono`        | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)               | `npx giget gh:h3js/srvx/examples/hono`        |
-| `websocket`   | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)     | `npx giget gh:h3js/srvx/examples/websocket`   |
+| `hono` | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/) | `npx giget gh:h3js/srvx/examples/hono` |
+| `websocket` | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/) | `npx giget gh:h3js/srvx/examples/websocket` |
 
 <!-- /automd -->
 
