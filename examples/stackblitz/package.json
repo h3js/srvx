@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "srvx dev"
+    "start": "srvx start",
+    "dev": "srvx dev"
   },
   "devDependencies": {
     "srvx": "npm:srvx-nightly"
