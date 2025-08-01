@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.8.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.2...v0.8.3)
+
+### 🚀 Enhancements
+
+- Experimental cli ([#91](https://github.com/h3js/srvx/pull/91))
+- **cli:** Auto detect entry ([6d9011d](https://github.com/h3js/srvx/commit/6d9011d))
+- Basic serve static ([#93](https://github.com/h3js/srvx/pull/93))
+- Basic logger ([#94](https://github.com/h3js/srvx/pull/94))
+- **cli:** Support `.env` and `.env.local` in dev mode ([4cdd246](https://github.com/h3js/srvx/commit/4cdd246))
+
+### 💅 Refactors
+
+- Convert `serveStatic` to middleware ([c0f5bac](https://github.com/h3js/srvx/commit/c0f5bac))
+- Simplify cli usage ([a30db56](https://github.com/h3js/srvx/commit/a30db56))
+- **cli:** Minor tweaks ([0d86c7a](https://github.com/h3js/srvx/commit/0d86c7a))
+- **cli:** Support serve static only ([20171c2](https://github.com/h3js/srvx/commit/20171c2))
+
+### 📖 Documentation
+
+- Prepare for `0.8.3` release ([#95](https://github.com/h3js/srvx/pull/95))
+
+### 📦 Build
+
+- Fix nightly releases ([2069b15](https://github.com/h3js/srvx/commit/2069b15))
+- Fix cli bin script ([30db25c](https://github.com/h3js/srvx/commit/30db25c))
+
+### 🏡 Chore
+
+- Add CODEOWNERS ([e748bd3](https://github.com/h3js/srvx/commit/e748bd3))
+- Update contribution section ([534a2bb](https://github.com/h3js/srvx/commit/534a2bb))
+- Add examples ([79d14a2](https://github.com/h3js/srvx/commit/79d14a2))
+- Fix typo ([45894fe](https://github.com/h3js/srvx/commit/45894fe))
+- Add websocket example ([6d1c1aa](https://github.com/h3js/srvx/commit/6d1c1aa))
+- Add `.npmrc` ([2493291](https://github.com/h3js/srvx/commit/2493291))
+- List examples in readme ([a4eb14b](https://github.com/h3js/srvx/commit/a4eb14b))
+- Update stackblitz ([b5ef3c9](https://github.com/h3js/srvx/commit/b5ef3c9))
+- Add local `srvx` command ([d497e0c](https://github.com/h3js/srvx/commit/d497e0c))
+- Add elysia example ([843408c](https://github.com/h3js/srvx/commit/843408c))
+- Apply automated updates ([23d7015](https://github.com/h3js/srvx/commit/23d7015))
+- Add service-worker example ([061fa31](https://github.com/h3js/srvx/commit/061fa31))
+- Remove old playground ([1c249be](https://github.com/h3js/srvx/commit/1c249be))
+- **cli:** Remove extra space ([3934b3b](https://github.com/h3js/srvx/commit/3934b3b))
+
+### 🤖 CI
+
+- Enable nightly channel ([b0a0a2b](https://github.com/h3js/srvx/commit/b0a0a2b))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Hong Minhee (洪 民憙) ([@dahlia](https://github.com/dahlia))
+
 ## v0.8.2
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.1...v0.8.2)
