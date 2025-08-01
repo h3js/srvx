@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  id-token: write
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -32,3 +35,14 @@ jobs:
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+      - name: nightly release
+        if: |
+          github.event_name == 'push' &&
+          !contains(github.event.head_commit.message, '[skip-release]') &&
+          !startsWith(github.event.head_commit.message, 'docs')
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc &&
+          pnpm changelogen --canary nightly --publish --publishTag beta
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
