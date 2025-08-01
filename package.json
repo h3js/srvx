@@ -53,6 +53,7 @@
     "play:node": "pnpm node-ts --watch playground/app.mjs",
     "play:sw": "pnpm build && pnpx serve playground",
     "release": "pnpm test && changelogen --release && npm publish && git push --follow-tags",
+    "srvx": "./bin/srvx.mjs",
     "test": "pnpm lint && pnpm test:types && vitest run --coverage",
     "test:types": "tsc --noEmit --skipLibCheck"
   },
