@@ -31,7 +31,7 @@ export default {
               `https://github.com/h3js/srvx/tree/main/examples/${name}/`,
               `examples/${name}`,
             ),
-            `\`npx giget gh:h3js/srvx/examples/${name}\``,
+            `\`npx giget gh:h3js/srvx/examples/${name} srvx-${name}\``,
           ]);
         }
         return {
