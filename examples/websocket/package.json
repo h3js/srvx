@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-websocket",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx start",
+    "dev": "srvx dev"
+  },
+  "devDependencies": {
+    "srvx": "npm:srvx-nightly",
+    "crossws": "latest"
+  }
+}
