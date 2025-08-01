@@ -2,7 +2,7 @@
 
 name: srvx
 shortDescription: Universal Server
-description: Based on web platform standards. Works seamlessly with Node.js, Deno and Bun.
+description: Based on web standards. Works with Node.js, Deno and Bun.
 github: h3js/srvx
 themeColor: orange
 socials:
@@ -34,12 +34,12 @@ landing:
       Bun:     $ bunx --bun srvx dev
       */
   features:
-    - title: "Node.js compatibility"
+    - title: "Node.js Compatibility"
       description: "[Node.js compatibility](https://srvx.h3.dev/guide/node) with up to [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance."
       icon: "akar-icons:node-fill"
 
     - title: "Web Standards"
-      description: "Based on Web Platform Standard APIs. Natively adopts when running in [Deno](https://deno.com/) and [Bun](https://bun.sh/)."
+      description: "Based on Web standards. Natively adopts when running in [Deno](https://deno.com/) and [Bun](https://bun.sh/)."
       icon: "arcticons:emoji-web"
 
     - title: "Development Experience"
