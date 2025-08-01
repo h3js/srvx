@@ -37,18 +37,19 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     await serve();
   } else {
     // Fork a child process to run the server with watch mode
-    const isNode = !process.versions.bun && !process.versions.deno;
+    const isBun = !!process.versions.bun;
+    const isDeno = !!process.versions.deno;
+    const isNode = !isBun && !isDeno;
+    const runtimeArgs: string[] = [];
+    if (isNode || isDeno) {
+      runtimeArgs.push(
+        ...[".env", ".env.local"]
+          .filter((f) => existsSync(f))
+          .map((f) => `--env-file=${f}`),
+      );
+    }
     const child = fork(fileURLToPath(import.meta.url), args, {
-      execArgv: [
-        ...process.execArgv,
-        "--watch",
-        isNode ? "--disable-warning=ExperimentalWarning" : "",
-        isNode
-          ? options._entry.endsWith(".ts")
-            ? "--experimental-strip-types"
-            : ""
-          : "",
-      ].filter(Boolean),
+      execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
     });
     child.on("error", (error) => {
       console.error("Error in child process:", error);
