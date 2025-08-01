@@ -2,9 +2,9 @@ import { Colors as c } from "./_utils.cli.ts";
 import type { ServerMiddleware } from "./types.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface LoggingOptions {}
+export interface LogOptions {}
 
-export const log = (_options: LoggingOptions = {}): ServerMiddleware => {
+export const log = (_options: LogOptions = {}): ServerMiddleware => {
   return async (req, next) => {
     const start = performance.now();
     const res = await next();
