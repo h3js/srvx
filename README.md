@@ -13,23 +13,32 @@ Universal Server based on web standards. Works with [Deno](https://deno.com/), [
 - ✅ Zero dependency
 - ✅ Full featured CLI with watcher, error handler, serve static and logger
 - ✅ Seamless runtime integration with same API ([handler](https://srvx.h3.dev/guide/handler) and [instance](https://srvx.h3.dev/guide/server)).
+- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with up to [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance.
 - ✅ Zero overhead [Deno](https://deno.com/) and [Bun](https://bun.sh/) support.
-- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance.
 
 ## Quick start
 
 ```js
-// server.ts
 export default {
-  port: 3000,
-  fetch(request: Request) {
-    return new Response("👋 Hello there!");
+  fetch(req: Request) {
+    return Response.json({ hello: "world!" });
   },
 };
 ```
 
+Then, run the server using your favorite runtime:
+
 ```bash
-$ npx srvx dev
+# Node.js
+$ npx srvx dev       # npm
+$ pnpx srvx dev      # pnpm
+$ yarn dlx srvx dev  # yarn
+
+# Deno
+$ deno -A npm:srvx dev
+
+# Bun
+$ bunx --bun srvx dev
 ```
 
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**

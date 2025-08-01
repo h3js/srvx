@@ -2,7 +2,7 @@
 
 name: srvx
 shortDescription: Universal Server
-description: Based on web platform standards and works seamlessly with Deno, Bun and Node.js and more.
+description: Based on web platform standards. Works seamlessly with Node.js, Deno and Bun.
 github: h3js/srvx
 themeColor: orange
 socials:
@@ -10,20 +10,38 @@ socials:
 sponsors:
   api: "https://sponsors.pi0.io/sponsors.json"
 landing:
-  contributors: true
+  # contributors: true
   heroLinks:
     playOnline:
       label: Play Online
       icon: i-heroicons-play
       to: https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs
   heroCode:
-    lang: js
+    lang: ts
     title: "server.ts"
     content: |
-      // npx srvx dev
       export default {
-        port: 3000,
-        fetch(request: Request) {
-          return new Response("👋 Hello there!");
-        },
+        fetch(req: Request) {
+          return Response.json({ hello: "world!" })
+        }
       };
+
+      /*
+      Node.js: $ npx srvx dev
+               $ pnpx srvx dev
+               $ yarn dlx srvx dev
+      Deno:    $ deno -A npm:srvx dev
+      Bun:     $ bunx --bun srvx dev
+      */
+  features:
+    - title: "Node.js compatibility"
+      description: "[Node.js compatibility](https://srvx.h3.dev/guide/node) with up to [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance."
+      icon: "akar-icons:node-fill"
+
+    - title: "Web Standards"
+      description: "Based on Web Platform Standard APIs. Natively adopts when running in [Deno](https://deno.com/) and [Bun](https://bun.sh/)."
+      icon: "arcticons:emoji-web"
+
+    - title: "Development Experience"
+      description: "Built-in CLI with **watcher**, **logger**, **error handler**, and **static file serving**."
+      icon: "hugeicons:happy"
