@@ -34,12 +34,13 @@ const server = serve({
 
 <!-- automd:examples -->
 
-| Example       | Source                                          | Try                                           |
-| ------------- | ----------------------------------------------- | --------------------------------------------- |
-| `h3`          | [examples/h3](./examples/h3/)                   | `npx giget gh:h3js/srvx/examples/h3`          |
+| Example | Source | Try |
+| --- | --- | --- |
+| `elysia` | [examples/elysia](./examples/elysia/) | `npx giget gh:h3js/srvx/examples/elysia` |
+| `h3` | [examples/h3](./examples/h3/) | `npx giget gh:h3js/srvx/examples/h3` |
 | `hello-world` | [examples/hello-world](./examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world` |
-| `hono`        | [examples/hono](./examples/hono/)               | `npx giget gh:h3js/srvx/examples/hono`        |
-| `websocket`   | [examples/websocket](./examples/websocket/)     | `npx giget gh:h3js/srvx/examples/websocket`   |
+| `hono` | [examples/hono](./examples/hono/) | `npx giget gh:h3js/srvx/examples/hono` |
+| `websocket` | [examples/websocket](./examples/websocket/) | `npx giget gh:h3js/srvx/examples/websocket` |
 
 <!-- /automd -->
 
