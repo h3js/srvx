@@ -50,7 +50,7 @@ export function printListening(
     additionalInfo = `\u001B[2m${additionalInfo}\u001B[0m`; // ANSI dim
   }
 
-  console.log(`\n${listeningOn} ${url}${additionalInfo}`);
+  console.log(`${listeningOn} ${url}${additionalInfo}`);
 }
 
 export function resolveTLSOptions(opts: ServerOptions):
