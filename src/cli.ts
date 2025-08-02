@@ -173,7 +173,13 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       ...opts,
     };
   } catch (error) {
-    console.error(c.red(`${c.bold(opts._entry)}`));
+    if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
+      console.error(
+        c.red(
+          `\n\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
+        ),
+      );
+    }
     if (error instanceof Error) {
       Error.captureStackTrace?.(error, serve);
     }
