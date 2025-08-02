@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.4...v0.8.5)
+
+### 🩹 Fixes
+
+- **cli:** Only add `--experimental-strip-types` flag to the safe range ([d00aa93](https://github.com/h3js/srvx/commit/d00aa93))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.4
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.3...v0.8.4)
