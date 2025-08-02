@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.8.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.3...v0.8.4)
+
+### 🚀 Enhancements
+
+- **cli:** Better hint for typescript support and Node.js version ([8c710af](https://github.com/h3js/srvx/commit/8c710af))
+
+### 🩹 Fixes
+
+- **cli:** Backward compatibility for ts support in older versions of Node.js 22 ([9ee024b](https://github.com/h3js/srvx/commit/9ee024b))
+
+### 🏡 Chore
+
+- Update examples to use latest ([338ea07](https://github.com/h3js/srvx/commit/338ea07))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.2...v0.8.3)
