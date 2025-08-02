@@ -48,6 +48,9 @@ export async function main(mainOpts: MainOpts): Promise<void> {
           .map((f) => `--env-file=${f}`),
       );
     }
+    if (isNode && process.versions.node.startsWith("22.")) {
+      runtimeArgs.push("--experimental-strip-types");
+    }
     const child = fork(fileURLToPath(import.meta.url), args, {
       execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
     });
