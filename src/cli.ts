@@ -38,48 +38,43 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     console.log(usage(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
-  if (options._prod && !options._import) {
-    // Start the server directly in the current process
-    await serve();
-  } else {
-    // Fork a child process with additional args
-    const isBun = !!process.versions.bun;
-    const isDeno = !!process.versions.deno;
-    const isNode = !isBun && !isDeno;
-    const runtimeArgs: string[] = [];
-    if (!options._prod) {
-      runtimeArgs.push("--watch");
-    }
-    if (isNode || isDeno) {
-      runtimeArgs.push(
-        ...[".env", ".env.local"]
-          .filter((f) => existsSync(f))
-          .map((f) => `--env-file=${f}`),
-      );
-    }
-    if (isNode) {
-      const [major, minor] = process.versions.node.split(".");
-      if (major === "22" && +minor >= 6) {
-        runtimeArgs.push("--experimental-strip-types");
-      }
-      if (options._import) {
-        runtimeArgs.push(`--import=${options._import}`);
-      }
-    }
-    const child = fork(fileURLToPath(import.meta.url), args, {
-      execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
-    });
-    child.on("error", (error) => {
-      console.error("Error in child process:", error);
-      process.exit(1);
-    });
-    child.on("exit", (code) => {
-      if (code !== 0) {
-        console.error(`Child process exited with code ${code}`);
-        process.exit(code);
-      }
-    });
+  // Fork a child process with additional args
+  const isBun = !!process.versions.bun;
+  const isDeno = !!process.versions.deno;
+  const isNode = !isBun && !isDeno;
+  const runtimeArgs: string[] = [];
+  if (!options._prod) {
+    runtimeArgs.push("--watch");
   }
+  if (isNode || isDeno) {
+    runtimeArgs.push(
+      ...[".env", options._prod ? ".env.production" : ".env.local"]
+        .filter((f) => existsSync(f))
+        .map((f) => `--env-file=${f}`),
+    );
+  }
+  if (isNode) {
+    const [major, minor] = process.versions.node.split(".");
+    if (major === "22" && +minor >= 6) {
+      runtimeArgs.push("--experimental-strip-types");
+    }
+    if (options._import) {
+      runtimeArgs.push(`--import=${options._import}`);
+    }
+  }
+  const child = fork(fileURLToPath(import.meta.url), args, {
+    execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
+  });
+  child.on("error", (error) => {
+    console.error("Error in child process:", error);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code}`);
+      process.exit(code);
+    }
+  });
 }
 
 async function serve() {
