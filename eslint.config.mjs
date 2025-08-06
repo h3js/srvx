@@ -8,5 +8,6 @@ export default unjs({
     "unicorn/prefer-top-level-await": "off",
     "unicorn/prefer-ternary": "off",
     "unicorn/no-process-exit": "off",
+    "@typescript-eslint/no-unused-vars": "off",
   },
 });
