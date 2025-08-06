@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-express",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx --prod",
+    "dev": "srvx"
+  },
+  "devDependencies": {
+    "express": "^5.1.0",
+    "srvx": "latest"
+  }
+}
