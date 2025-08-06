@@ -1,0 +1,14 @@
+{
+  "name": "srvx-examples-jsx",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "JITI_JSX=1 srvx --prod --import jiti/register server.tsx",
+    "dev": "JITI_JSX=1 srvx --import jiti/register server.tsx"
+  },
+  "devDependencies": {
+    "jiti": "^2.5.1",
+    "nano-jsx": "^0.1.0",
+    "srvx": "latest"
+  }
+}
