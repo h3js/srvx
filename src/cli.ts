@@ -118,7 +118,7 @@ async function serve() {
     await server.ready();
     await globalThis.__srvx_listen_cb__?.();
 
-    printInfo();
+    printInfo(entry);
 
     // Keep the process alive with proper cleanup
     const cleanup = () => {
@@ -279,21 +279,24 @@ function renderError(
   });
 }
 
-function printInfo() {
+function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
+  let entryInfo: string;
   if (options._entry) {
-    console.log(
-      c.gray(
-        `${c.bold(c.gray("λ"))} Server entry: ${c.cyan("./" + relative(".", options._entry))} ${options._prod ? "" : c.gray("(watching for changes)")}`,
-      ),
-    );
+    entryInfo = c.cyan("./" + relative(".", options._entry));
+  } else {
+    entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
   }
+  console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
+  if (options._entry && entry._error) {
+    console.error(c.red(`  ${entry._error}`));
+  }
+  let staticInfo: string;
   if (options._static) {
-    console.log(
-      c.gray(
-        `${c.bold(c.gray("⊟"))} Static files: ${c.cyan("./" + relative(".", options._static) + "/")}`,
-      ),
-    );
+    staticInfo = c.cyan("./" + relative(".", options._static) + "/");
+  } else {
+    staticInfo = c.gray(`(add ${c.bold("public/")} dir to enable)`);
   }
+  console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
 }
 
 async function interceptListen<T = unknown>(
