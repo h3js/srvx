@@ -79,10 +79,14 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 async function serve() {
   try {
     // Load server entry file and create a new server instance
-    const { serve: srvxServe } = await import("srvx");
+    const entry = await loadEntry(options);
+
+    const forceUseNode = entry._legacyNode;
+    const { serve: srvxServe } = forceUseNode
+      ? await import("srvx/node")
+      : await import("srvx");
     const { serveStatic } = await import("srvx/static");
     const { log } = await import("srvx/log");
-    const entry = await loadEntry(options);
 
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
@@ -291,6 +295,9 @@ async function interceptListen<T = unknown>(
       // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
       // @ts-expect-error
       listenHandler = this._events.request;
+      if (Array.isArray(listenHandler)) {
+        listenHandler = listenHandler[0]; // Bun compatibility
+      }
 
       // Restore original listen method
       http.Server.prototype.listen = originalListen;
