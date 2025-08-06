@@ -385,6 +385,10 @@ function parseArgs(args: string[]): CLIOptions {
     entry = resolve(input);
     dir = dirname(entry);
   }
+  if (!existsSync(dir)) {
+    console.error(c.red(`Directory "${dir}" does not exist.\n`));
+    process.exit(1);
+  }
 
   return {
     _dir: dir,
