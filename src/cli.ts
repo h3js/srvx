@@ -38,15 +38,18 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     console.log(usage(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
-  if (options._prod) {
+  if (options._prod && !options._import) {
     // Start the server directly in the current process
     await serve();
   } else {
-    // Fork a child process to run the server with watch mode
+    // Fork a child process with additional args
     const isBun = !!process.versions.bun;
     const isDeno = !!process.versions.deno;
     const isNode = !isBun && !isDeno;
-    const runtimeArgs: string[] = ["--watch"];
+    const runtimeArgs: string[] = [];
+    if (!options._prod) {
+      runtimeArgs.push("--watch");
+    }
     if (isNode || isDeno) {
       runtimeArgs.push(
         ...[".env", ".env.local"]
@@ -58,6 +61,9 @@ export async function main(mainOpts: MainOpts): Promise<void> {
       const [major, minor] = process.versions.node.split(".");
       if (major === "22" && +minor >= 6) {
         runtimeArgs.push("--experimental-strip-types");
+      }
+      if (options._import) {
+        runtimeArgs.push(`--import=${options._import}`);
       }
     }
     const child = fork(fileURLToPath(import.meta.url), args, {
@@ -152,6 +158,7 @@ type CLIOptions = Partial<ServerOptions> & {
   _static: string;
   _help?: boolean;
   _version?: boolean;
+  _import?: string;
 };
 
 async function loadEntry(
@@ -189,7 +196,8 @@ async function loadEntry(
     const { res: mod, listenHandler } = await interceptListen(
       () => import(entryURL),
     );
-    let fetchHandler = mod.fetch || mod.default?.fetch;
+    let fetchHandler =
+      mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
 
     // Upgrade legacy Node.js handler
     let _legacyNode = false;
@@ -222,11 +230,20 @@ async function loadEntry(
     };
   } catch (error) {
     if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
-      console.error(
-        c.red(
-          `\n\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
-        ),
-      );
+      const message = String(error);
+      if (/"\.(m|c)?ts"/g.test(message)) {
+        console.error(
+          c.red(
+            `\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
+          ),
+        );
+      } else if (/"\.(m|c)?tsx"/g.test(message)) {
+        console.error(
+          c.red(
+            `\nYou need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)\n\n`,
+          ),
+        );
+      }
     }
     if (error instanceof Error) {
       Error.captureStackTrace?.(error, serve);
@@ -353,6 +370,7 @@ function parseArgs(args: string[]): CLIOptions {
       port: { type: "string", short: "p" },
       host: { type: "string", short: "H" },
       static: { type: "string", short: "s" },
+      import: { type: "string" },
       tls: { type: "boolean" },
       cert: { type: "string" },
       key: { type: "string" },
@@ -376,6 +394,7 @@ function parseArgs(args: string[]): CLIOptions {
     _help: values.help,
     _static: values.static || "public",
     _version: values.version,
+    _import: values.import,
     port: values.port ? Number.parseInt(values.port, 10) : undefined,
     hostname: values.host,
     tls: values.tls ? { cert: values.cert, key: values.key } : undefined,
