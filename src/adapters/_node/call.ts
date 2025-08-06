@@ -50,8 +50,8 @@ export function callNodeHandler(
     let streamPromise: Promise<Response> | undefined;
     nodeRes.once("pipe", (stream) => {
       streamPromise = new Promise((resolve) => {
-        stream.on("end", () => resolve(webRes));
-        stream.on("error", (error) => reject(error));
+        stream.once("end", () => resolve(webRes));
+        stream.once("error", (error) => reject(error));
       });
     });
 
