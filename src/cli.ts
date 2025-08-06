@@ -1,4 +1,4 @@
-import type { ServerMiddleware, ServerOptions } from "srvx";
+import type { ServerMiddleware, ServerOptions, ServerRequest } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, extname, relative, resolve } from "node:path";
@@ -134,7 +134,9 @@ type CLIOptions = Partial<ServerOptions> & {
   _version?: boolean;
 };
 
-async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
+async function loadEntry(
+  opts: CLIOptions,
+): Promise<ServerOptions & { _legacyNode?: boolean; _error?: string }> {
   try {
     // Guess entry if not provided
     if (!opts._entry) {
@@ -150,13 +152,10 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       }
     }
     if (!opts._entry) {
+      const _error = `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${defaultEntries.join(", ")}).`;
       return {
-        fetch: () =>
-          renderError(
-            `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${defaultEntries.join(", ")}).`,
-            404,
-            "No Server Entry",
-          ),
+        _error,
+        fetch: () => renderError(_error, 404, "No Server Entry"),
         ...opts,
       };
     }
@@ -167,16 +166,31 @@ async function loadEntry(opts: CLIOptions): Promise<ServerOptions> {
       : pathToFileURL(resolve(opts._entry)).href;
 
     // Import the user file
-    const entryModule = await import(entryURL);
+    const defaultExport = await import(entryURL).then((m) => m.default || {});
+    let fetchHandler = defaultExport.fetch;
+
+    // Upgrade legacy Node.js handler
+    let _legacyNode = false;
+    if (!fetchHandler && typeof defaultExport === "function") {
+      const { callNodeHandler } = await import("./adapters/_node/call.ts");
+      _legacyNode = true;
+      fetchHandler = (webReq: ServerRequest) =>
+        callNodeHandler(defaultExport, webReq);
+    }
+
+    // Runtime warning if no fetch handler is found
+    let _error: string | undefined;
+    if (!fetchHandler) {
+      _error = `The entry file "${relative(".", opts._entry)}" does not export a valid fetch handler.`;
+      fetchHandler = () => renderError(_error, 500, "Invalid Entry");
+    }
+
     return {
-      fetch: () =>
-        renderError(
-          `The entry file "${relative(".", opts._entry)}" does not export a valid fetch handler.`,
-          500,
-          "Invalid Entry",
-        ),
-      ...entryModule.default,
+      ...defaultExport,
       ...opts,
+      _error,
+      _legacyNode,
+      fetch: fetchHandler,
     };
   } catch (error) {
     if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
