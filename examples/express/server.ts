@@ -7,6 +7,6 @@ app.get("/", (req, res) => {
   // next(new Error("This is an error!"));
 });
 
-app.listen(3000, () => {
-  console.log(`Example app listening on port 3000`);
+const server = app.listen(() => {
+  console.log(`Express app listening on port ${server.address()?.port}`);
 });

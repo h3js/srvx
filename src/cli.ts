@@ -1,5 +1,6 @@
 import type {
   NodeHttpHandler,
+  Server,
   ServerMiddleware,
   ServerOptions,
   ServerRequest,
@@ -86,7 +87,7 @@ async function serve() {
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
 
-    const server = await srvxServe({
+    const server = srvxServe({
       error: (error) => {
         console.error(error);
         return renderError(error);
@@ -101,7 +102,11 @@ async function serve() {
         ...(entry.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
       ...entry,
-    }).ready();
+    });
+
+    globalThis.__srvx__ = server;
+    await server.ready();
+    await globalThis.__srvx_listen_cb__?.();
 
     printInfo();
 
@@ -122,6 +127,11 @@ async function serve() {
     console.error(error);
     process.exit(1);
   }
+}
+
+declare global {
+  var __srvx__: Server;
+  var __srvx_listen_cb__: () => void;
 }
 
 type MainOpts = {
@@ -277,10 +287,30 @@ async function interceptListen<T = unknown>(
   let listenHandler: NodeHttpHandler | undefined;
   try {
     // @ts-expect-error
-    http.Server.prototype.listen = function (this: Server) {
+    http.Server.prototype.listen = function (this: Server, arg1, arg2) {
       // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+      // @ts-expect-error
       listenHandler = this._events.request;
+
+      // Restore original listen method
       http.Server.prototype.listen = originalListen;
+
+      // Defer callback execution
+      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
+        (arg) => typeof arg === "function",
+      );
+
+      // Return a deferred proxy for the server instance
+      return new Proxy(
+        {},
+        {
+          get(_, prop) {
+            const server = globalThis.__srvx__;
+            // @ts-expect-error
+            return server?.node?.server?.[prop];
+          },
+        },
+      );
     };
     res = await cb();
   } finally {
