@@ -1,0 +1,12 @@
+{
+  "name": "srvx-examples-node-handler",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx --prod",
+    "dev": "srvx"
+  },
+  "devDependencies": {
+    "srvx": "latest"
+  }
+}

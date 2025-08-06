@@ -327,4 +327,10 @@ export type NodeHttpHandler = (
   res: NodeServerResponse,
 ) => void | Promise<void>;
 
+export type NodeHTTPMiddleware = (
+  req: NodeServerRequest,
+  res: NodeServerResponse,
+  next: (error?: Error) => void,
+) => unknown | Promise<unknown>;
+
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
