@@ -40,7 +40,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     #formDataBody?: Promise<FormData>;
     #jsonBody?: Promise<any>;
     #textBody?: Promise<string>;
-    #bodyStream?: undefined | ReadableStream<Uint8Array>;
+    #bodyStream?: undefined | ReadableStream<Uint8Array<ArrayBuffer>>;
 
     _node: { req: NodeServerRequest; res?: NodeServerResponse };
     runtime: ServerRuntimeContext;
@@ -132,7 +132,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return true;
     }
 
-    get body() {
+    get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
       if (!this._hasBody) {
         return null;
       }

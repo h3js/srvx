@@ -24,7 +24,7 @@ export const NodeResponse: {
         | Buffer
         | Uint8Array
         | DataView
-        | ReadableStream<Uint8Array>
+        | ReadableStream
         | NodeReadable
         | undefined
         | null;
@@ -128,7 +128,7 @@ export const NodeResponse: {
           body = bodyInit as NodeReadable;
         } else {
           const res = new globalThis.Response(bodyInit as BodyInit);
-          body = res.body;
+          body = res.body as ReadableStream<Uint8Array<ArrayBuffer>>;
           for (const [key, value] of res.headers) {
             headers.push([key, value]);
           }
@@ -254,15 +254,17 @@ export const NodeResponse: {
       return false; // Not supported
     }
 
-    get body(): ReadableStream<Uint8Array> | null {
+    get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
       if (this.#responseObj) {
-        return this.#responseObj.body; // Reuse instance
+        return this.#responseObj.body as ReadableStream<
+          Uint8Array<ArrayBuffer>
+        >; // Reuse instance
       }
       const fastBody = this.#fastBody(ReadableStream);
       if (fastBody !== false) {
-        return fastBody as ReadableStream<Uint8Array>; // Fast path
+        return fastBody as ReadableStream<Uint8Array<ArrayBuffer>>; // Fast path
       }
-      return this.#response.body; // Slow path
+      return this.#response.body as ReadableStream<Uint8Array<ArrayBuffer>>; // Slow path
     }
 
     get bodyUsed(): boolean {
@@ -296,13 +298,13 @@ export const NodeResponse: {
 
     bytes(): Promise<Uint8Array<ArrayBuffer>> {
       if (this.#responseObj) {
-        return this.#responseObj.bytes(); // Reuse instance
+        return this.#responseObj.bytes() as Promise<Uint8Array<ArrayBuffer>>; // Reuse instance
       }
       const fastBody = this.#fastBody(Uint8Array);
       if (fastBody !== false) {
         return Promise.resolve(fastBody || new Uint8Array()); // Fast path
       }
-      return this.#response.bytes(); // Slow path
+      return this.#response.bytes() as Promise<Uint8Array<ArrayBuffer>>; // Slow path
     }
 
     formData(): Promise<FormData> {
