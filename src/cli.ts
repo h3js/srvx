@@ -1,4 +1,9 @@
-import type { ServerMiddleware, ServerOptions, ServerRequest } from "srvx";
+import type {
+  NodeHttpHandler,
+  ServerMiddleware,
+  ServerOptions,
+  ServerRequest,
+} from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, extname, relative, resolve } from "node:path";
@@ -166,16 +171,23 @@ async function loadEntry(
       : pathToFileURL(resolve(opts._entry)).href;
 
     // Import the user file
-    const defaultExport = await import(entryURL).then((m) => m.default || {});
-    let fetchHandler = defaultExport.fetch;
+    const { res: mod, listenHandler } = await interceptListen(
+      () => import(entryURL),
+    );
+    let fetchHandler = mod.fetch || mod.default?.fetch;
 
     // Upgrade legacy Node.js handler
     let _legacyNode = false;
-    if (!fetchHandler && typeof defaultExport === "function") {
-      const { callNodeHandler } = await import("./adapters/_node/call.ts");
-      _legacyNode = true;
-      fetchHandler = (webReq: ServerRequest) =>
-        callNodeHandler(defaultExport, webReq);
+    if (!fetchHandler) {
+      const nodeHandler =
+        listenHandler ||
+        (typeof mod.default === "function" ? mod.default : undefined);
+      if (nodeHandler) {
+        _legacyNode = true;
+        const { callNodeHandler } = await import("./adapters/_node/call.ts");
+        fetchHandler = (webReq: ServerRequest) =>
+          callNodeHandler(nodeHandler, webReq);
+      }
     }
 
     // Runtime warning if no fetch handler is found
@@ -186,7 +198,8 @@ async function loadEntry(
     }
 
     return {
-      ...defaultExport,
+      ...mod,
+      ...mod.default,
       ...opts,
       _error,
       _legacyNode,
@@ -249,6 +262,31 @@ function printInfo() {
       ),
     );
   }
+}
+
+async function interceptListen<T = unknown>(
+  cb: () => T | Promise<T>,
+): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
+  const http = process.getBuiltinModule("node:http");
+  if (!http || !http.Server) {
+    const res = await cb();
+    return { res };
+  }
+  const originalListen = http.Server.prototype.listen;
+  let res: T;
+  let listenHandler: NodeHttpHandler | undefined;
+  try {
+    // @ts-expect-error
+    http.Server.prototype.listen = function (this: Server) {
+      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+      listenHandler = this._events.request;
+      http.Server.prototype.listen = originalListen;
+    };
+    res = await cb();
+  } finally {
+    http.Server.prototype.listen = originalListen;
+  }
+  return { res, listenHandler };
 }
 
 async function version() {

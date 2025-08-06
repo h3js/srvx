@@ -4,10 +4,9 @@ const app = express();
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
+  // next(new Error("This is an error!"));
 });
 
-export default app;
-
-// app.listen(3000, () => {
-//   console.log(`Example app listening on port 3000`);
-// });
+app.listen(3000, () => {
+  console.log(`Example app listening on port 3000`);
+});
