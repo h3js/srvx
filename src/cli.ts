@@ -134,6 +134,7 @@ async function serve() {
 }
 
 declare global {
+  var __srvx_version__: string | undefined;
   var __srvx__: Server;
   var __srvx_listen_cb__: () => void;
 }
@@ -327,19 +328,17 @@ async function interceptListen<T = unknown>(
 }
 
 async function version() {
-  const { default: pkg } = await import("../package.json", {
-    with: { type: "json" },
-  });
-  return `srvx v${pkg.version}\n${runtime()}`;
+  const version = globalThis.__srvx_version__ || "unknown";
+  return `srvx ${version}\n${runtime()}`;
 }
 
 function runtime() {
   if (process.versions.bun) {
-    return `bun v${process.versions.bun}`;
+    return `bun ${process.versions.bun}`;
   } else if (process.versions.deno) {
-    return `deno v${process.versions.deno}`;
+    return `deno ${process.versions.deno}`;
   } else {
-    return `node v${process.versions.node}`;
+    return `node ${process.versions.node}`;
   }
 }
 

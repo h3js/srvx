@@ -22,6 +22,9 @@ export default defineBuildConfig({
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {
+        define: {
+          "globalThis.__srvx_version__": JSON.stringify(pkg.version),
+        },
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",
