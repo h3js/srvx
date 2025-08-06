@@ -16,7 +16,7 @@ export const Colors = {
   gray: _c(90),
   url: (title: string, url: string) =>
     noColor
-      ? `${title} (${url})`
+      ? `[${title}](${url})`
       : `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`,
 } as Record<
   | "bold"
