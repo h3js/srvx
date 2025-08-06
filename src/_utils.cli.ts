@@ -2,8 +2,24 @@
 const noColor =
   globalThis.process?.env?.NO_COLOR === "1" ||
   globalThis.process?.env?.TERM === "dumb";
-const _c = (c: number) => (t: string) =>
-  noColor ? t : `\u001B[${c}m${t}\u001B[0m`;
+
+// map each code to its matching reset code
+const resets: Record<number, number> = {
+  1: 22,
+  31: 39,
+  32: 39,
+  33: 39,
+  34: 39,
+  35: 39,
+  36: 39,
+  90: 39,
+};
+
+const _c = (c: number) => (text: string) => {
+  if (noColor) return text;
+  const off = resets[c] ?? 0;
+  return `\u001B[${c}m${text}\u001B[${off}m`;
+};
 
 export const Colors = {
   bold: _c(1),
