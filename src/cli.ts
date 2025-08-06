@@ -80,6 +80,11 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
 async function serve() {
   try {
+    // Set default NODE_ENV
+    if (!process.env.NODE_ENV) {
+      process.env.NODE_ENV = options._prod ? "production" : "development";
+    }
+
     // Load server entry file and create a new server instance
     const entry = await loadEntry(options);
 
