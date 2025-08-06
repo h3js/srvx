@@ -13,8 +13,9 @@ import { existsSync } from "node:fs";
 import { Colors as c } from "./_utils.cli.ts";
 
 // prettier-ignore
-const defaultEntries = ["server", "src/server", "index", "src/index"];
-const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs"];
+const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
+// prettier-ignore
+const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
 
 const args = process.argv.slice(2);
 const options = parseArgs(args);
