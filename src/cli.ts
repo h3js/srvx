@@ -419,11 +419,13 @@ ${c.cyan(command)} - Start an HTTP server with the specified entry path.
 ${c.bold("USAGE")}
 ${existsSync(options._entry) ? "" : `\n${example()}\n`}
 ${c.gray("# srvx [options] [entry]")}
-${c.gray("$")} ${c.cyan(command)} ${c.gray("./server.ts")}         ${c.gray("# Start development server")}
-${c.gray("$")} ${c.cyan(command)} --prod              ${c.gray("# Start production  server")}
-${c.gray("$")} ${c.cyan(command)} --port=8080         ${c.gray("# Listen on port 8080")}
-${c.gray("$")} ${c.cyan(command)} --host=localhost    ${c.gray("# Bind to localhost only")}
+${c.gray("$")} ${c.cyan(command)} ${c.gray("./server.ts")}            ${c.gray("# Start development server")}
+${c.gray("$")} ${c.cyan(command)} --prod                 ${c.gray("# Start production  server")}
+${c.gray("$")} ${c.cyan(command)} --port=8080            ${c.gray("# Listen on port 8080")}
+${c.gray("$")} ${c.cyan(command)} --host=localhost       ${c.gray("# Bind to localhost only")}
+${c.gray("$")} ${c.cyan(command)} --import=jiti/register ${c.gray(`# Enable ${c.url("jiti", "https://github.com/unjs/jiti")} loader`)}
 ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
+
 
 ${c.bold("ARGUMENTS")}
 
@@ -436,6 +438,7 @@ ${c.bold("OPTIONS")}
   ${c.green("--host")} ${c.yellow("<host>")}            Host to bind to (default: all interfaces)
   ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
   ${c.green("--prod")}                   Run in production mode (no watch, no debug)
+  ${c.green("--import")} ${c.yellow("<loader>")}        ES module to preload
   ${c.green("--tls")}                    Enable TLS (HTTPS/HTTP2)
   ${c.green("--cert")} ${c.yellow("<file>")}            TLS certificate file
   ${c.green("--key")}  ${c.yellow("<file>")}            TLS private key file
