@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.8.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.5...v0.8.6)
+
+### 🚀 Enhancements
+
+- **cli:** Support node.js and express handlers ([#98](https://github.com/h3js/srvx/pull/98))
+- **cli:** Support `--import` for custom loader ([#99](https://github.com/h3js/srvx/pull/99))
+- **cli:** Add `server/index` and jsx to defaults ([7c65bd2](https://github.com/h3js/srvx/commit/7c65bd2))
+- **cli:** Set default `NODE_ENV` if not set before serve ([cfbb3d6](https://github.com/h3js/srvx/commit/cfbb3d6))
+
+### 🩹 Fixes
+
+- Cli color resets ([2ecc989](https://github.com/h3js/srvx/commit/2ecc989))
+- **cli:** Exit if directory does not exists ([3a94ac8](https://github.com/h3js/srvx/commit/3a94ac8))
+
+### 💅 Refactors
+
+- **logger:** Better status colors ([1643985](https://github.com/h3js/srvx/commit/1643985))
+- **cli:** Improve info message ([b97e4be](https://github.com/h3js/srvx/commit/b97e4be))
+- **cli:** Always use sub process ([82ecc00](https://github.com/h3js/srvx/commit/82ecc00))
+
+### 📖 Documentation
+
+- Fix typo ([#96](https://github.com/h3js/srvx/pull/96))
+
+### 📦 Build
+
+- Lighter version injection to the bundle ([6b78daa](https://github.com/h3js/srvx/commit/6b78daa))
+
+### 🏡 Chore
+
+- Update eslint config ([ecc0b9c](https://github.com/h3js/srvx/commit/ecc0b9c))
+- Apply automated updates ([076b9c4](https://github.com/h3js/srvx/commit/076b9c4))
+- Update deps ([871e4f8](https://github.com/h3js/srvx/commit/871e4f8))
+- Fix types ([936b31d](https://github.com/h3js/srvx/commit/936b31d))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Alpheus ([@alpheusmtx](https://github.com/alpheusmtx))
+
 ## v0.8.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.4...v0.8.5)
