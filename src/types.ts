@@ -224,6 +224,12 @@ export interface Server<Handler = ServerHandler> {
   readonly fetch: Handler;
 
   /**
+   * Start listening for incoming requests.
+   * When `manual` option is enabled, this method needs to be called explicitly to begin accepting connections.
+   */
+  serve(): void | Promise<Server<Handler>>;
+
+  /**
    * Returns a promise that resolves when the server is ready.
    */
   ready(): Promise<Server<Handler>>;
