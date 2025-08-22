@@ -4,6 +4,7 @@ import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
+import type * as uws from "uWebSockets.js";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -185,7 +186,8 @@ export interface Server<Handler = ServerHandler> {
     | "bun"
     | "cloudflare"
     | "service-worker"
-    | "generic";
+    | "generic"
+    | "uws";
 
   /**
    * Server options
@@ -275,6 +277,14 @@ export interface ServerRuntimeContext {
   };
 
   /**
+   * Underlying uWebSockets.js server request context.
+   */
+  uws?: {
+    req: UWSServerRequest;
+    res: UWSServerResponse;
+  };
+
+  /**
    * Underlying Cloudflare request context.
    */
   cloudflare?: {
@@ -340,3 +350,18 @@ export type NodeHTTPMiddleware = (
 ) => unknown | Promise<unknown>;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
+
+export type UWSServerRequest = uws.HttpRequest;
+
+export type UWSServerResponse = uws.HttpResponse;
+
+export type UWSHTTPHandler = (
+  req: UWSServerRequest,
+  res: UWSServerResponse,
+) => void | Promise<void>;
+
+export type UWSHTTPMiddleware = (
+  req: UWSServerRequest,
+  res: UWSServerResponse,
+  next: (error?: Error) => void,
+) => unknown | Promise<unknown>;
