@@ -149,8 +149,6 @@ export const UWSResponse: {
       };
     }
 
-    // ... the rest is for interface compatibility only and usually not to be used ...
-
     /** Lazy initialized response instance */
     #responseObj?: globalThis.Response;
 
@@ -246,25 +244,31 @@ export const UWSResponse: {
     ): T | null | false {
       const bodyInit = this.#body;
       if (bodyInit === null || bodyInit === undefined) {
-        return null; // No body
+        // No body
+        return null;
       }
       if (bodyInit instanceof as) {
-        return bodyInit; // Fast path
+        // Fast path
+        return bodyInit;
       }
-      return false; // Not supported
+      // Not supported
+      return false;
     }
 
     get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
       if (this.#responseObj) {
+        // Reuse instance
         return this.#responseObj.body as ReadableStream<
           Uint8Array<ArrayBuffer>
-        >; // Reuse instance
+        >;
       }
       const fastBody = this.#fastBody(ReadableStream);
       if (fastBody !== false) {
-        return fastBody as ReadableStream<Uint8Array<ArrayBuffer>>; // Fast path
+        // Fast path
+        return fastBody as ReadableStream<Uint8Array<ArrayBuffer>>;
       }
-      return this.#response.body as ReadableStream<Uint8Array<ArrayBuffer>>; // Slow path
+      // Slow path
+      return this.#response.body as ReadableStream<Uint8Array<ArrayBuffer>>;
     }
 
     get bodyUsed(): boolean {
@@ -276,66 +280,83 @@ export const UWSResponse: {
 
     arrayBuffer(): Promise<ArrayBuffer> {
       if (this.#responseObj) {
-        return this.#responseObj.arrayBuffer(); // Reuse instance
+        // Reuse instance
+        return this.#responseObj.arrayBuffer();
       }
       const fastBody = this.#fastBody(ArrayBuffer);
       if (fastBody !== false) {
-        return Promise.resolve(fastBody || new ArrayBuffer(0)); // Fast path
+        // Fast path
+        return Promise.resolve(fastBody || new ArrayBuffer(0));
       }
-      return this.#response.arrayBuffer(); // Slow path
+      // Slow path
+      return this.#response.arrayBuffer();
     }
 
     blob(): Promise<Blob> {
       if (this.#responseObj) {
-        return this.#responseObj.blob(); // Reuse instance
+        // Reuse instance
+        return this.#responseObj.blob();
       }
       const fastBody = this.#fastBody(Blob);
       if (fastBody !== false) {
-        return Promise.resolve(fastBody || new Blob()); // Fast path
+        // Fast path
+        return Promise.resolve(fastBody || new Blob());
       }
-      return this.#response.blob(); // Slow path
+      // Slow path
+      return this.#response.blob();
     }
 
     bytes(): Promise<Uint8Array<ArrayBuffer>> {
       if (this.#responseObj) {
-        return this.#responseObj.bytes() as Promise<Uint8Array<ArrayBuffer>>; // Reuse instance
+        // Reuse instance
+        return this.#responseObj.bytes() as Promise<Uint8Array<ArrayBuffer>>;
       }
       const fastBody = this.#fastBody(Uint8Array);
       if (fastBody !== false) {
-        return Promise.resolve(fastBody || new Uint8Array()); // Fast path
+        // Fast path
+        return Promise.resolve(fastBody || new Uint8Array());
       }
-      return this.#response.bytes() as Promise<Uint8Array<ArrayBuffer>>; // Slow path
+      // Slow path
+      return this.#response.bytes() as Promise<Uint8Array<ArrayBuffer>>;
     }
 
     formData(): Promise<FormData> {
       if (this.#responseObj) {
-        return this.#responseObj.formData(); // Reuse instance
+        // Reuse instance
+        return this.#responseObj.formData();
       }
       const fastBody = this.#fastBody(FormData);
       if (fastBody !== false) {
         // TODO: Content-Type should be one of "multipart/form-data" or "application/x-www-form-urlencoded"
-        return Promise.resolve(fastBody || new FormData()); // Fast path
+        // Fast path
+        return Promise.resolve(fastBody || new FormData());
       }
-      return this.#response.formData(); // Slow path
+      // Slow path
+      return this.#response.formData();
     }
 
     text(): Promise<string> {
       if (this.#responseObj) {
-        return this.#responseObj.text(); // Reuse instance
+        // Reuse instance
+        return this.#responseObj.text();
       }
       const bodyInit = this.#body;
       if (bodyInit === null || bodyInit === undefined) {
-        return Promise.resolve(""); // No body
+        // No body
+        return Promise.resolve("");
       }
       if (typeof bodyInit === "string") {
-        return Promise.resolve(bodyInit); // Fast path
+        // Fast path
+        return Promise.resolve(bodyInit);
       }
-      return this.#response.text(); // Slow path
+      // Slow path
+      return this.#response.text();
     }
 
     json(): Promise<unknown> {
       if (this.#responseObj) {
-        return this.#responseObj.json(); // Reuse instance
+        // Reuse instance
+        return this.#responseObj.json();
       }
       return this.text().then((text) => JSON.parse(text));
     }
