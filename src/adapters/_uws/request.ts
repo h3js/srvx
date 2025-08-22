@@ -222,27 +222,46 @@ async function _readStream(stream: ReadableStream) {
 }
 
 function normalizeIp(txt: string): string {
-  // Normalize common IPv6 loopback and IPv4-mapped forms
-  // Examples returned by uWS: "::1" or "0000:...:ffff:7f00:0001"
   const lower = txt.toLowerCase();
-  if (lower === "::1") return "::1";
-  const ffffIdx = lower.lastIndexOf("ffff:");
-  if (ffffIdx !== -1) {
-    // IPv4-mapped IPv6; parse the last two hextets into IPv4
-    const parts = lower.split(":");
-    const a = parts.at(-2);
-    const b = parts.at(-1);
-    if (a && b) {
-      const ah = Number.parseInt(a, 16);
-      const bh = Number.parseInt(b, 16);
-      if (Number.isFinite(ah) && Number.isFinite(bh)) {
-        const b1 = (ah >> 8) & 0xff;
-        const b2 = ah & 0xff;
-        const b3 = (bh >> 8) & 0xff;
-        const b4 = bh & 0xff;
+
+  if (lower === "::1") {
+    return "::1";
+  }
+
+  const parts = lower.split(":");
+
+  if (
+    parts.length === 8 &&
+    Number.parseInt(parts[7], 16) === 1 &&
+    parts.slice(0, 7).every((p) => Number.parseInt(p, 16) === 0)
+  ) {
+    return "::1";
+  }
+
+  const match = lower.match(/:ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+
+  if (match && typeof match.index === "number") {
+    const prefix = lower.slice(0, Math.max(0, match.index));
+    const prefixHextets = prefix.split(":").filter(Boolean);
+    const isPrefixAllZeros = prefixHextets.every(
+      (p) => Number.parseInt(p, 16) === 0,
+    );
+
+    if (isPrefixAllZeros) {
+      const hexA = match[1];
+      const hexB = match[2];
+      const valA = Number.parseInt(hexA, 16);
+      const valB = Number.parseInt(hexB, 16);
+
+      if (Number.isFinite(valA) && Number.isFinite(valB)) {
+        const b1 = (valA >> 8) & 0xff;
+        const b2 = valA & 0xff;
+        const b3 = (valB >> 8) & 0xff;
+        const b4 = valB & 0xff;
         return `${b1}.${b2}.${b3}.${b4}`;
       }
     }
   }
+
   return txt;
 }
