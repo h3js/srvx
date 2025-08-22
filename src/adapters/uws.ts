@@ -10,7 +10,6 @@ import {
   fmtURL,
   printListening,
   resolvePortAndHost,
-  resolveTLSOptions,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { UWSRequest } from "./_uws/request.ts";
@@ -43,13 +42,14 @@ export function toUWSHandler(fetchHandler: FetchHandler): UWSHTTPHandler {
 
 class UWSServer implements Server {
   readonly runtime = "uws";
-  uws: Server["uws"];
+  readonly uws: Server["uws"] = {};
   readonly options: Server["options"];
   readonly fetch: ServerHandler;
 
-  #listeningPromise?: Promise<void>;
-  #isSecure: boolean;
   #wait: ReturnType<typeof createWaitUntil>;
+  #listeningPromise?: Promise<void>;
+  #listeningInfo?: { hostname?: string; port: number };
+  #listenSocket?: us_listen_socket;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -62,33 +62,44 @@ class UWSServer implements Server {
     this.fetch = wrapFetch(this);
     this.#wait = createWaitUntil();
 
-    const tls = resolveTLSOptions(this.options);
-    this.#isSecure = !!(tls?.cert && tls?.key);
+    if (!options.manual) {
+      this.serve();
+    }
   }
 
   serve(): Promise<this> {
-    if (this.#listeningPromise) {
-      return this.#listeningPromise.then(() => this);
+    if (this.uws?.server) {
+      return Promise.resolve(this.#listeningPromise).then(() => this);
     }
-    const promise = (async () => {
+    this.#listeningPromise = (async () => {
       const uws = await import("uWebSockets.js").catch((error) => {
         console.error(
           "Please install uWebSockets.js: `npm install uWebSockets.js`",
         );
         throw error;
       });
-      const tls = resolveTLSOptions(this.options);
-      const app = tls ? uws.SSLApp(tls) : uws.App();
-      this.uws = { server: app };
+      this.uws!.server =
+        this.options.uws &&
+        "cert_file_name" in this.options.uws &&
+        this.options.uws.cert_file_name &&
+        "key_file_name" in this.options.uws &&
+        this.options.uws.key_file_name
+          ? uws.SSLApp(this.options.uws)
+          : uws.App(this.options.uws);
       const handler = toUWSHandler(this.fetch);
-      app.any("/*", handler);
-      const { port, hostname } = resolvePortAndHost(this.options);
+      this.uws!.server.any("/*", handler);
+      const { port } = resolvePortAndHost(this.options);
       await new Promise<void>((resolve, reject) => {
-        app.listen(
-          hostname || "0.0.0.0",
+        this.uws!.server!.listen(
           port,
           (listenSocket: us_listen_socket | false) => {
             if (listenSocket) {
+              this.#listenSocket = listenSocket;
+              const { port, hostname } = resolvePortAndHost({
+                ...this.options,
+                port: uws.us_socket_local_port(listenSocket),
+              });
+              this.#listeningInfo = { hostname, port };
               printListening(this.options, this.url);
               resolve();
             } else {
@@ -98,13 +109,23 @@ class UWSServer implements Server {
         );
       });
     })();
-    this.#listeningPromise = promise.then(() => {});
-    return promise.then(() => this);
+    return this.#listeningPromise.then(() => this);
   }
 
-  get url() {
-    const { port, hostname } = resolvePortAndHost(this.options);
-    return fmtURL(hostname, port, this.#isSecure);
+  get url(): string | undefined {
+    return this.#listeningInfo
+      ? fmtURL(
+          this.#listeningInfo.hostname,
+          this.#listeningInfo.port,
+          !!(
+            this.options.uws &&
+            "cert_file_name" in this.options.uws &&
+            this.options.uws.cert_file_name &&
+            "key_file_name" in this.options.uws &&
+            this.options.uws.key_file_name
+          ),
+        )
+      : undefined;
   }
 
   ready(): Promise<this> {
@@ -113,9 +134,11 @@ class UWSServer implements Server {
 
   async close(): Promise<void> {
     await this.#wait.wait();
-    if (this.uws?.server) {
+    if (this.uws?.server && this.#listenSocket) {
       const { us_listen_socket_close } = await import("uWebSockets.js");
-      us_listen_socket_close(this.uws.server);
+      us_listen_socket_close(this.#listenSocket);
+      this.uws.server.close();
+      this.#listenSocket = undefined;
     }
   }
 }
