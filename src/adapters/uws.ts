@@ -53,6 +53,7 @@ class UWSServer implements Server {
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
+    this.options.uws ??= {};
 
     for (const plugin of options.plugins || []) {
       plugin(this);
