@@ -88,7 +88,7 @@
     "vitest": "^3.2.4"
   },
   "optionalDependencies": {
-    "uWebSockets.js": "uNetworking/uWebSockets.js#v20.52.0"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.52.0"
   },
   "packageManager": "pnpm@10.12.4",
   "engines": {

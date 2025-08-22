@@ -95,7 +95,7 @@ importers:
         version: 3.2.4(@types/node@24.2.0)(jiti@2.5.1)
     optionalDependencies:
       uWebSockets.js:
-        specifier: uNetworking/uWebSockets.js#v20.52.0
+        specifier: github:uNetworking/uWebSockets.js#v20.52.0
         version: https://codeload.github.com/uNetworking/uWebSockets.js/tar.gz/cfc9a40d8132a34881813cec3d5f8e3a185b3ce3
 
   examples/elysia:
