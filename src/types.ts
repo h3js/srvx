@@ -160,6 +160,13 @@ export interface ServerOptions {
   deno?: Deno.ServeOptions;
 
   /**
+   * uWebSockets.js server options
+   *
+   * @docs https://github.com/uNetworking/uWebSockets.js
+   */
+  uws?: uws.AppOptions;
+
+  /**
    * Service worker options
    */
   serviceWorker?: {
