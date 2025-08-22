@@ -1,4 +1,4 @@
-import { kNodeInspect } from "../_node/_common.ts";
+import { kNodeInspect, kUWSAbort } from "./_common.ts";
 import { UWSRequestHeaders } from "./headers.ts";
 
 import type {
@@ -54,7 +54,10 @@ export const UWSRequest = /* @__PURE__ */ (() => {
     }
 
     get ip() {
-      return new TextDecoder().decode(this._uws.res.getRemoteAddressAsText());
+      const txt = new TextDecoder().decode(
+        this._uws.res.getRemoteAddressAsText(),
+      );
+      return normalizeIp(txt);
     }
 
     get headers() {
@@ -64,9 +67,9 @@ export const UWSRequest = /* @__PURE__ */ (() => {
       return this.#headers;
     }
 
-    clone: any = () => {
-      return new _Request({ ...this._uws }) as unknown as ServerRequest;
-    };
+    clone(): any {
+      return new _Request({ ...this._uws });
+    }
 
     get url() {
       const query = this._uws.req.getQuery();
@@ -87,6 +90,9 @@ export const UWSRequest = /* @__PURE__ */ (() => {
     get signal() {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
+        // Allow response pipeline to notify abort
+        (this._uws.res as unknown as Record<symbol, () => void>)[kUWSAbort] =
+          () => this.#abortSignal?.abort();
       }
       return this.#abortSignal.signal;
     }
@@ -213,4 +219,30 @@ async function _readStream(stream: ReadableStream) {
     offset += chunk.length;
   }
   return buffer;
+}
+
+function normalizeIp(txt: string): string {
+  // Normalize common IPv6 loopback and IPv4-mapped forms
+  // Examples returned by uWS: "::1" or "0000:...:ffff:7f00:0001"
+  const lower = txt.toLowerCase();
+  if (lower === "::1") return "::1";
+  const ffffIdx = lower.lastIndexOf("ffff:");
+  if (ffffIdx !== -1) {
+    // IPv4-mapped IPv6; parse the last two hextets into IPv4
+    const parts = lower.split(":");
+    const a = parts.at(-2);
+    const b = parts.at(-1);
+    if (a && b) {
+      const ah = Number.parseInt(a, 16);
+      const bh = Number.parseInt(b, 16);
+      if (Number.isFinite(ah) && Number.isFinite(bh)) {
+        const b1 = (ah >> 8) & 0xff;
+        const b2 = ah & 0xff;
+        const b3 = (bh >> 8) & 0xff;
+        const b4 = bh & 0xff;
+        return `${b1}.${b2}.${b3}.${b4}`;
+      }
+    }
+  }
+  return txt;
 }
