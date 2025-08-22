@@ -228,6 +228,11 @@ export interface Server<Handler = ServerHandler> {
   readonly deno?: { server?: Deno.HttpServer };
 
   /**
+   * uWebSockets.js context.
+   */
+  readonly uws?: { server?: uws.TemplatedApp };
+
+  /**
    * Server fetch handler
    */
   readonly fetch: Handler;
