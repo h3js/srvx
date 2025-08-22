@@ -14,6 +14,7 @@
     "./cloudflare": "./dist/adapters/cloudflare.mjs",
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
+    "./aws-lambda": "./dist/adapters/aws-lambda.mjs",
     "./cli": "./dist/cli.mjs",
     "./static": "./dist/static.mjs",
     "./log": "./dist/log.mjs",
@@ -56,13 +57,15 @@
     "srvx": "link:."
   },
   "dependencies": {
-    "cookie-es": "^2.0.0"
+    "cookie-es": "^2.0.0",
+    "ufo": "^1.6.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250806.0",
     "@hono/node-server": "^1.18.1",
     "@mitata/counters": "^0.0.8",
     "@mjackson/node-fetch-server": "^0.7.0",
+    "@types/aws-lambda": "^8.10.152",
     "@types/bun": "^1.2.19",
     "@types/deno": "^2.3.0",
     "@types/node": "^24.2.0",

@@ -4,6 +4,7 @@ import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
+import type * as AWS from "aws-lambda";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -185,6 +186,7 @@ export interface Server<Handler = ServerHandler> {
     | "bun"
     | "cloudflare"
     | "service-worker"
+    | "aws-lambda"
     | "generic";
 
   /**
@@ -250,7 +252,7 @@ export interface Server<Handler = ServerHandler> {
 // ----------------------------------------------------------------------------
 
 export interface ServerRuntimeContext {
-  name: "node" | "deno" | "bun" | "cloudflare" | (string & {});
+  name: "node" | "deno" | "bun" | "cloudflare" | "aws-lambda" | (string & {});
 
   /**
    * Underlying Node.js server request info.
@@ -340,3 +342,8 @@ export type NodeHTTPMiddleware = (
 ) => unknown | Promise<unknown>;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
+
+export type AWSLambdaFetchHandler = (
+  event: AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2,
+  context: AWS.Context,
+) => MaybePromise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2>;
