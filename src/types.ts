@@ -368,8 +368,8 @@ export type UWSServerRequest = uws.HttpRequest;
 export type UWSServerResponse = uws.HttpResponse;
 
 export type UWSHTTPHandler = (
-  req: UWSServerRequest,
   res: UWSServerResponse,
+  req: UWSServerRequest,
 ) => void | Promise<void>;
 
 export type UWSHTTPMiddleware = (
