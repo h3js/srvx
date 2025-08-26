@@ -4,6 +4,7 @@ import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
+import type * as uws from "uWebSockets.js";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -159,6 +160,13 @@ export interface ServerOptions {
   deno?: Deno.ServeOptions;
 
   /**
+   * uWebSockets.js server options
+   *
+   * @docs https://github.com/uNetworking/uWebSockets.js
+   */
+  uws?: uws.AppOptions;
+
+  /**
    * Service worker options
    */
   serviceWorker?: {
@@ -185,7 +193,8 @@ export interface Server<Handler = ServerHandler> {
     | "bun"
     | "cloudflare"
     | "service-worker"
-    | "generic";
+    | "generic"
+    | "uws";
 
   /**
    * Server options
@@ -217,6 +226,11 @@ export interface Server<Handler = ServerHandler> {
    * Deno context.
    */
   readonly deno?: { server?: Deno.HttpServer };
+
+  /**
+   * uWebSockets.js context.
+   */
+  readonly uws?: { server?: uws.TemplatedApp };
 
   /**
    * Server fetch handler
@@ -272,6 +286,14 @@ export interface ServerRuntimeContext {
    */
   bun?: {
     server: Bun.Server;
+  };
+
+  /**
+   * Underlying uWebSockets.js server request context.
+   */
+  uws?: {
+    req: UWSServerRequest;
+    res: UWSServerResponse;
   };
 
   /**
@@ -349,3 +371,18 @@ export type NodeHTTPMiddleware = (
 ) => unknown | Promise<unknown>;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
+
+export type UWSServerRequest = uws.HttpRequest;
+
+export type UWSServerResponse = uws.HttpResponse;
+
+export type UWSHTTPHandler = (
+  res: UWSServerResponse,
+  req: UWSServerRequest,
+) => void | Promise<void>;
+
+export type UWSHTTPMiddleware = (
+  req: UWSServerRequest,
+  res: UWSServerResponse,
+  next: (error?: Error) => void,
+) => unknown | Promise<unknown>;
