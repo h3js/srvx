@@ -19,6 +19,7 @@ export default defineBuildConfig({
           "cloudflare",
           "generic",
           "service-worker",
+          "aws-lambda",
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {
