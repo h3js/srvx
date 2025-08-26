@@ -287,6 +287,10 @@ export interface ServerRuntimeContext {
   };
 }
 
+export interface ServerRequestContext {
+  [key: string]: unknown;
+}
+
 export interface ServerRequest extends Request {
   /**
    * Runtime specific request context.
@@ -297,6 +301,11 @@ export interface ServerRequest extends Request {
    * IP address of the client.
    */
   ip?: string | undefined;
+
+  /**
+   * Arbitrary context related to the request.
+   */
+  context?: ServerRequestContext;
 
   /**
    * Tell the runtime about an ongoing operation that shouldn't close until the promise resolves.
