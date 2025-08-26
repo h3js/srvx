@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.8.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.6...v0.8.7)
+
+### 🩹 Fixes
+
+- Add missing `Server.serve` type ([#102](https://github.com/h3js/srvx/pull/102))
+
+### 🌊 Types
+
+- Declare optional `ServerRequest.context` ([dc6f868](https://github.com/h3js/srvx/commit/dc6f868))
+
+### 🏡 Chore
+
+- Remove `--experimental-strip-types` in scripts ([#105](https://github.com/h3js/srvx/pull/105))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abeer0 ([@iiio2](https://github.com/iiio2))
+- Oskar Lebuda <oskar.lebuda@enp.pl>
+
 ## v0.8.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.5...v0.8.6)
