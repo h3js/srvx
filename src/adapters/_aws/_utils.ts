@@ -1,5 +1,4 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyEventV2 } from "aws-lambda";
-import { stringifyQuery } from "ufo";
 
 /**
  * AWS Lambda response structure for API Gateway integration
@@ -158,4 +157,17 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
       )
       .catch(reject);
   });
+}
+
+function stringifyQuery(obj: Record<string, unknown>) {
+  return Object.entries(obj)
+    .filter(([_, value]) => value != null) // usuwa null/undefined
+    .map(([key, value]) =>
+      Array.isArray(value)
+        ? value
+            .map((v) => `${encodeURIComponent(key)}=${encodeURIComponent(v)}`)
+            .join("&")
+        : `${encodeURIComponent(key)}=${encodeURIComponent(value as string)}`,
+    )
+    .join("&");
 }

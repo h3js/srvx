@@ -14,9 +14,6 @@ importers:
       cookie-es:
         specifier: ^2.0.0
         version: 2.0.0
-      ufo:
-        specifier: ^1.6.1
-        version: 1.6.1
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250826.0

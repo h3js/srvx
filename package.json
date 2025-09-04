@@ -56,8 +56,7 @@
     "srvx": "link:."
   },
   "dependencies": {
-    "cookie-es": "^2.0.0",
-    "ufo": "^1.6.1"
+    "cookie-es": "^2.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250826.0",
