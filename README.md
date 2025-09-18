@@ -51,6 +51,7 @@ $ bunx --bun srvx
 
 | Example          | Source                                                                                     | Try                                                                  |
 | ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `aws-lambda`     | [examples/aws-lambda](https://github.com/h3js/srvx/tree/main/examples/aws-lambda/)         | `npx giget gh:h3js/srvx/examples/aws-lambda srvx-aws-lambda`         |
 | `elysia`         | [examples/elysia](https://github.com/h3js/srvx/tree/main/examples/elysia/)                 | `npx giget gh:h3js/srvx/examples/elysia srvx-elysia`                 |
 | `express`        | [examples/express](https://github.com/h3js/srvx/tree/main/examples/express/)               | `npx giget gh:h3js/srvx/examples/express srvx-express`               |
 | `h3`             | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                         | `npx giget gh:h3js/srvx/examples/h3 srvx-h3`                         |
