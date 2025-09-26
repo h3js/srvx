@@ -14,22 +14,13 @@ export type NodeRequestContext = {
   res?: NodeServerResponse;
 };
 
-export const NodeRequest = /* @__PURE__ */ (() => {
-  const unsupportedGetters = [
-    "cache",
-    "credentials",
-    "destination",
-    "integrity",
-    "keepalive",
-    "mode",
-    "redirect",
-    "referrer",
-    "referrerPolicy",
-  ] as const;
+// https://github.com/nodejs/undici/blob/main/lib/web/fetch/request.js
+// https://github.com/nodejs/node/blob/main/deps/undici/undici.js
 
-  const _Request = class Request
-    implements Omit<ServerRequest, (typeof unsupportedGetters)[number]>
-  {
+export const NodeRequest = /* @__PURE__ */ (() => {
+  const UndiciRequest = globalThis.Request;
+
+  const _Request = class Request extends UndiciRequest {
     #url?: InstanceType<typeof NodeRequestURL>;
     #headers?: InstanceType<typeof NodeRequestHeaders>;
     #bodyUsed: boolean = false;
@@ -46,6 +37,8 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     runtime: ServerRuntimeContext;
 
     constructor(nodeCtx: NodeRequestContext) {
+      super("http://_", {});
+
       this._node = nodeCtx;
       this.runtime = {
         name: "node",
@@ -57,15 +50,11 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this._node.req.socket?.remoteAddress;
     }
 
-    get headers() {
+    override get headers() {
       if (!this.#headers) {
         this.#headers = new NodeRequestHeaders(this._node);
       }
       return this.#headers;
-    }
-
-    clone(): ServerRequest {
-      return new _Request({ ...this._node }) as unknown as ServerRequest;
     }
 
     get _url() {
@@ -75,15 +64,15 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#url;
     }
 
-    get url() {
+    override get url() {
       return this._url.href;
     }
 
-    get method() {
+    override get method() {
       return this._node.req.method || "GET";
     }
 
-    get signal() {
+    override get signal() {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
         this._node.req.once("close", () => {
@@ -93,7 +82,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#abortSignal.signal;
     }
 
-    get bodyUsed() {
+    override get bodyUsed() {
       return this.#bodyUsed;
     }
 
@@ -132,7 +121,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return true;
     }
 
-    get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
+    override get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
       if (!this._hasBody) {
         return null;
       }
@@ -160,7 +149,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#bodyStream;
     }
 
-    bytes(): Promise<Uint8Array<ArrayBuffer>> {
+    override bytes(): Promise<Uint8Array<ArrayBuffer>> {
       if (!this.#bodyBytes) {
         const _bodyStream = this.body;
         this.#bodyBytes = _bodyStream
@@ -170,7 +159,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#bodyBytes;
     }
 
-    arrayBuffer(): Promise<ArrayBuffer> {
+    override arrayBuffer(): Promise<ArrayBuffer> {
       return this.bytes().then((buff) => {
         return buff.buffer.slice(
           buff.byteOffset,
@@ -179,7 +168,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       });
     }
 
-    blob(): Promise<Blob> {
+    override blob(): Promise<Blob> {
       if (!this.#blobBody) {
         this.#blobBody = this.bytes().then((bytes) => {
           return new Blob([bytes], {
@@ -190,7 +179,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#blobBody;
     }
 
-    formData(): Promise<FormData> {
+    override formData(): Promise<FormData> {
       if (!this.#formDataBody) {
         this.#formDataBody = new Response(this.body, {
           headers: this.headers as unknown as Headers,
@@ -199,7 +188,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#formDataBody;
     }
 
-    text(): Promise<string> {
+    override text(): Promise<string> {
       if (!this.#textBody) {
         this.#textBody = this.bytes().then((bytes) => {
           return new TextDecoder().decode(bytes);
@@ -208,7 +197,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       return this.#textBody;
     }
 
-    json(): Promise<any> {
+    override json(): Promise<any> {
       if (!this.#jsonBody) {
         this.#jsonBody = this.text().then((txt) => {
           return JSON.parse(txt);
@@ -229,15 +218,6 @@ export const NodeRequest = /* @__PURE__ */ (() => {
       };
     }
   };
-
-  for (const key of unsupportedGetters) {
-    Object.defineProperty(_Request.prototype, key, {
-      enumerable: true,
-      configurable: false,
-    });
-  }
-
-  Object.setPrototypeOf(_Request.prototype, globalThis.Request.prototype);
 
   return _Request;
 })() as unknown as {

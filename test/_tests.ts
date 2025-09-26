@@ -25,6 +25,18 @@ export function addTests(opts: {
     expect(await response.text()).toMatch("yes");
   });
 
+  test("request.clone()", async () => {
+    const response = await fetch(url("/req-clone"));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toMatch("yes");
+  });
+
+  test("new Request(request)", async () => {
+    const response = await fetch(url("/req-new-req"));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toMatch("yes");
+  });
+
   test("headers", async () => {
     const response = await fetch(url("/headers"), {
       headers: { foo: "bar", bar: "baz" },
