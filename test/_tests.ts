@@ -25,16 +25,20 @@ export function addTests(opts: {
     expect(await response.text()).toMatch("yes");
   });
 
-  test("request.clone()", async () => {
-    const response = await fetch(url("/req-clone"));
-    expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("yes");
-  });
-
-  test("new Request(request)", async () => {
-    const response = await fetch(url("/req-new-req"));
-    expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("yes");
+  describe("clone request", () => {
+    for (const pathname of ["/req-clone", "/req-new-req"]) {
+      test(pathname, async () => {
+        const response = await fetch(url(pathname), {
+          headers: { "x-test": "123" },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          pathname,
+          method: "GET",
+          headers: { "x-test": "123" },
+        });
+      });
+    }
   });
 
   test("headers", async () => {
