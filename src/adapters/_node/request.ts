@@ -39,7 +39,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     constructor(nodeCtx: NodeRequestContext) {
       const url = new NodeRequestURL(nodeCtx);
       const headers = new NodeRequestHeaders(nodeCtx);
-      super(url.href, { headers });
+      super(url.href, { method: nodeCtx.req.method, headers });
 
       this._node = nodeCtx;
       this.#url = url;

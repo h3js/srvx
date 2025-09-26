@@ -29,12 +29,13 @@ export function addTests(opts: {
     for (const pathname of ["/req-clone", "/req-new-req"]) {
       test(pathname, async () => {
         const response = await fetch(url(pathname), {
+          method: "DELETE",
           headers: { "x-test": "123" },
         });
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
           pathname,
-          method: "GET",
+          method: "DELETE",
           headers: { "x-test": "123" },
         });
       });
