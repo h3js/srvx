@@ -25,6 +25,23 @@ export function addTests(opts: {
     expect(await response.text()).toMatch("yes");
   });
 
+  describe("clone request", () => {
+    for (const pathname of ["/req-clone", "/req-new-req"]) {
+      test(pathname, async () => {
+        const response = await fetch(url(pathname), {
+          method: "DELETE",
+          headers: { "x-test": "123" },
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          pathname,
+          method: "DELETE",
+          headers: { "x-test": "123" },
+        });
+      });
+    }
+  });
+
   test("headers", async () => {
     const response = await fetch(url("/headers"), {
       headers: { foo: "bar", bar: "baz" },
