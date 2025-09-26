@@ -21,11 +21,11 @@ const all = process.argv.includes("--all");
 const release = process.argv.includes("--release");
 
 const names = [
-  // "node",
+  "node",
   // "srvx",
   "srvx-fast",
   // release && "srvx-release",
-  // release && "srvx-fast-release",
+  release && "srvx-fast-release",
   all && "whatwg-node",
   all && "whatwg-node-fast",
   all && "hono",

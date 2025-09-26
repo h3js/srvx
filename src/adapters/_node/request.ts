@@ -37,13 +37,14 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     runtime: ServerRuntimeContext;
 
     constructor(nodeCtx: NodeRequestContext) {
-      super("http://_", {});
+      const url = new NodeRequestURL(nodeCtx);
+      const headers = new NodeRequestHeaders(nodeCtx);
+      super(url.href, { headers });
 
       this._node = nodeCtx;
-      this.runtime = {
-        name: "node",
-        node: nodeCtx,
-      };
+      this.#url = url;
+      this.#headers = headers;
+      this.runtime = { name: "node", node: nodeCtx };
     }
 
     get ip() {
