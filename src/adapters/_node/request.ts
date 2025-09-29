@@ -93,7 +93,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
   }
 
   for (const key of Object.getOwnPropertyNames(NativeRequest.prototype)) {
-    if (key === "constructor" || key in NodeRequest.prototype) {
+    if (key in NodeRequest.prototype) {
       continue;
     }
     const desc = Object.getOwnPropertyDescriptor(NativeRequest.prototype, key)!;
@@ -111,6 +111,8 @@ export const NodeRequest = /* @__PURE__ */ (() => {
           return this._request[key](...args);
         },
       });
+    } else {
+      Object.defineProperty(NodeRequest.prototype, key, desc);
     }
   }
 
