@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.9
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.8...v0.8.9)
+
+### 🩹 Fixes
+
+- **node:** Safer global Request patch ([0e8d6da](https://github.com/h3js/srvx/commit/0e8d6da))
+
+### 🏡 Chore
+
+- Update benchs ([7e8782c](https://github.com/h3js/srvx/commit/7e8782c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.8
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.7...v0.8.8)
