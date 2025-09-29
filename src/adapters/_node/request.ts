@@ -15,27 +15,31 @@ export type NodeRequestContext = {
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const NativeRequest = globalThis.Request;
-
   const { Readable } = process.getBuiltinModule("node:stream");
 
-  if (!("_srvx" in NativeRequest)) {
-    // Credits to hono/node adapter for global patching idea
-    // https://github.com/honojs/node-server/blob/main/src/request.ts
-    class Request extends NativeRequest {
-      static _srvx = true;
-      constructor(input: string | URL | Request, options?: RequestInit) {
-        if (typeof input === "object" && "_request" in input) {
-          input = (input as any)._request;
-        }
-        if ((options?.body as ReadableStream)?.getReader !== undefined) {
-          (options as any).duplex ??= "half";
-        }
-        super(input, options);
+  const NativeRequest = ((globalThis as any)._Request ??=
+    globalThis.Request) as typeof globalThis.Request;
+
+  // Credits to hono/node adapter for global patching idea (https://github.com/honojs/node-server/blob/main/src/request.ts)
+  const PatchedRequest = class Request extends NativeRequest {
+    static _srvx = true;
+    constructor(
+      input: string | URL | globalThis.Request,
+      options?: RequestInit,
+    ) {
+      if (typeof input === "object" && "_request" in input) {
+        input = (input as unknown as NodeRequest)._request;
       }
+      if ((options?.body as ReadableStream)?.getReader !== undefined) {
+        (options as any).duplex ??= "half";
+      }
+      super(input, options);
     }
-    // Fix new Request(request) issue with undici constructor by assigning it back to global
-    globalThis.Request = Request as unknown as typeof globalThis.Request;
+  };
+
+  // Fix new Request(request) issue with undici constructor by assigning it back to global
+  if (!(globalThis.Request as any)._srvx) {
+    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
   }
 
   class NodeRequest implements Partial<ServerRequest> {
@@ -86,7 +90,7 @@ export const NodeRequest: {
       if (!this.#request) {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
-        this.#request = new Request(this.url, {
+        this.#request = new PatchedRequest(this.url, {
           method,
           headers: this.headers,
           signal: this.signal,
@@ -102,9 +106,7 @@ export const NodeRequest: {
 
   inheritProps(NodeRequest.prototype, NativeRequest.prototype, "_request");
 
-  Object.setPrototypeOf(NodeRequest.prototype, Request.prototype);
+  Object.setPrototypeOf(NodeRequest.prototype, PatchedRequest.prototype);
 
   return NodeRequest as any;
 })();
-
-export type NodeRequest = InstanceType<typeof NodeRequest>;
