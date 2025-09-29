@@ -14,18 +14,18 @@ You can locally benchmark by running `pnpm run bench:node --all` in srvx reposit
 > Currently `srvx` (with `FastResponse`) can get close to **96.98%** of native `node:http` performance.
 
 ```sh
-Node.js:         v22.13.0
-OS:              darwin arm64
-OHA:             1.6.0
+Node.js:	 v24.9.0
+OS:		 darwin arm64
+OHA:		 1.10.0
 
-┌──────────────────┬──────────────────┐
-│ node             │ '100796 req/sec' │
-│ srvx-fast        │ '97757 req/sec'  │
-│ hono-fast        │ '93141 req/sec'  │
-│ whatwg-node-fast │ '84808 req/sec'  │
-│ srvx             │ '67125 req/sec'  │
-│ whatwg-node      │ '62386 req/sec'  │
-│ hono             │ '60502 req/sec'  │
-│ remix            │ '30376 req/sec'  │
-└──────────────────┴──────────────────┘
+┌──────────────────┬─────────────────┐
+│ node             │ '60997 req/sec' │
+│ srvx-fast        │ '56282 req/sec' │
+│ hono-fast        │ '55300 req/sec' │
+│ whatwg-node-fast │ '52957 req/sec' │
+│ srvx             │ '47225 req/sec' │
+│ whatwg-node      │ '44670 req/sec' │
+│ hono             │ '44138 req/sec' │
+│ remix            │ '31529 req/sec' │
+└──────────────────┴─────────────────┘
 ```

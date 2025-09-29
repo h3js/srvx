@@ -22,9 +22,9 @@ const release = process.argv.includes("--release");
 
 const names = [
   "node",
-  // "srvx",
+  "srvx",
   "srvx-fast",
-  // release && "srvx-release",
+  release && "srvx-release",
   release && "srvx-fast-release",
   all && "whatwg-node",
   all && "whatwg-node-fast",

@@ -82,8 +82,8 @@ importers:
         specifier: ^3.6.2
         version: 3.6.2
       srvx-release:
-        specifier: npm:srvx@0.8.7
-        version: srvx@0.8.7
+        specifier: npm:srvx@0.8.8
+        version: srvx@0.8.8
       tslib:
         specifier: ^2.8.1
         version: 2.8.1
@@ -2594,8 +2594,8 @@ packages:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
     engines: {node: '>= 10.x'}
 
-  srvx@0.8.7:
-    resolution: {integrity: sha512-g3+15LlwVOGL2QpoTPZlvRjg+9a5Tx/69CatXjFP6txvhIaW2FmGyzJfb8yft5wyfGddvJmP/Yx+e/uNDMRSLQ==}
+  srvx@0.8.8:
+    resolution: {integrity: sha512-DHgvDuDTMV9pKAgxBsoccNW6DWTEHgP/r5NzpzfJ3YdbLW/wCHiRWYB2WWTadtHpj+bIBVN7h7jEJq1oVkuAiw==}
     engines: {node: '>=20.16.0'}
     hasBin: true
 
@@ -5261,7 +5261,7 @@ snapshots:
 
   split2@4.2.0: {}
 
-  srvx@0.8.7:
+  srvx@0.8.8:
     dependencies:
       cookie-es: 2.0.0
 
