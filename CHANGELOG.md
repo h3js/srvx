@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.8.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.7...v0.8.8)
+
+### 🩹 Fixes
+
+- **node:** Add back `req.runtime` ([d1a148b](https://github.com/h3js/srvx/commit/d1a148b))
+
+### 💅 Refactors
+
+- **node:** Improve `NodeRequest` wrapper ([#109](https://github.com/h3js/srvx/pull/109))
+- **node:** Rewrite FastResponse ([#110](https://github.com/h3js/srvx/pull/110))
+- **node:** Avoid top level `node:` imports ([d95ccb7](https://github.com/h3js/srvx/commit/d95ccb7))
+- **node:** Improve instance types ([6e83952](https://github.com/h3js/srvx/commit/6e83952))
+
+### 📖 Documentation
+
+- **node:** Provide `async` keyword ([#107](https://github.com/h3js/srvx/pull/107))
+
+### 🏡 Chore
+
+- Update deps ([a2498c7](https://github.com/h3js/srvx/commit/a2498c7))
+- Fix typo ([#106](https://github.com/h3js/srvx/pull/106))
+- Update undocs ([663a039](https://github.com/h3js/srvx/commit/663a039))
+- Update deps ([7e5844c](https://github.com/h3js/srvx/commit/7e5844c))
+- Add fastify example ([42cb8bb](https://github.com/h3js/srvx/commit/42cb8bb))
+- Apply automated updates ([b477382](https://github.com/h3js/srvx/commit/b477382))
+- Update deps ([23ea4c5](https://github.com/h3js/srvx/commit/23ea4c5))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abeer0 ([@iiio2](https://github.com/iiio2))
+- Mohamed Attia ([@Speelwolf](https://github.com/Speelwolf))
+
 ## v0.8.7
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.6...v0.8.7)
