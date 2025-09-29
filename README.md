@@ -49,17 +49,18 @@ $ bunx --bun srvx
 
 <!-- automd:examples -->
 
-| Example          | Source                                                                                     | Try                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `elysia`         | [examples/elysia](https://github.com/h3js/srvx/tree/main/examples/elysia/)                 | `npx giget gh:h3js/srvx/examples/elysia srvx-elysia`                 |
-| `express`        | [examples/express](https://github.com/h3js/srvx/tree/main/examples/express/)               | `npx giget gh:h3js/srvx/examples/express srvx-express`               |
-| `h3`             | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                         | `npx giget gh:h3js/srvx/examples/h3 srvx-h3`                         |
-| `hello-world`    | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/)       | `npx giget gh:h3js/srvx/examples/hello-world srvx-hello-world`       |
-| `hono`           | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)                     | `npx giget gh:h3js/srvx/examples/hono srvx-hono`                     |
-| `jsx`            | [examples/jsx](https://github.com/h3js/srvx/tree/main/examples/jsx/)                       | `npx giget gh:h3js/srvx/examples/jsx srvx-jsx`                       |
-| `node-handler`   | [examples/node-handler](https://github.com/h3js/srvx/tree/main/examples/node-handler/)     | `npx giget gh:h3js/srvx/examples/node-handler srvx-node-handler`     |
+| Example | Source | Try |
+| --- | --- | --- |
+| `elysia` | [examples/elysia](https://github.com/h3js/srvx/tree/main/examples/elysia/) | `npx giget gh:h3js/srvx/examples/elysia srvx-elysia` |
+| `express` | [examples/express](https://github.com/h3js/srvx/tree/main/examples/express/) | `npx giget gh:h3js/srvx/examples/express srvx-express` |
+| `fastify` | [examples/fastify](https://github.com/h3js/srvx/tree/main/examples/fastify/) | `npx giget gh:h3js/srvx/examples/fastify srvx-fastify` |
+| `h3` | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/) | `npx giget gh:h3js/srvx/examples/h3 srvx-h3` |
+| `hello-world` | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/) | `npx giget gh:h3js/srvx/examples/hello-world srvx-hello-world` |
+| `hono` | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/) | `npx giget gh:h3js/srvx/examples/hono srvx-hono` |
+| `jsx` | [examples/jsx](https://github.com/h3js/srvx/tree/main/examples/jsx/) | `npx giget gh:h3js/srvx/examples/jsx srvx-jsx` |
+| `node-handler` | [examples/node-handler](https://github.com/h3js/srvx/tree/main/examples/node-handler/) | `npx giget gh:h3js/srvx/examples/node-handler srvx-node-handler` |
 | `service-worker` | [examples/service-worker](https://github.com/h3js/srvx/tree/main/examples/service-worker/) | `npx giget gh:h3js/srvx/examples/service-worker srvx-service-worker` |
-| `websocket`      | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)           | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket`           |
+| `websocket` | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/) | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket` |
 
 <!-- /automd -->
 
