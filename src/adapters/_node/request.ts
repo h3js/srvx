@@ -6,6 +6,7 @@ import type {
 import { Readable } from "node:stream";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
+import { inheritProps } from "./_common.ts";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
@@ -96,29 +97,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     }
   }
 
-  for (const key of Object.getOwnPropertyNames(NativeRequest.prototype)) {
-    if (key in NodeRequest.prototype) {
-      continue;
-    }
-    const desc = Object.getOwnPropertyDescriptor(NativeRequest.prototype, key)!;
-    if (desc.get) {
-      Object.defineProperty(NodeRequest.prototype, key, {
-        ...desc,
-        get() {
-          return this._request[key];
-        },
-      });
-    } else if (typeof desc.value === "function") {
-      Object.defineProperty(NodeRequest.prototype, key, {
-        ...desc,
-        value(...args: unknown[]) {
-          return this._request[key](...args);
-        },
-      });
-    } else {
-      Object.defineProperty(NodeRequest.prototype, key, desc);
-    }
-  }
+  inheritProps(NodeRequest.prototype, NativeRequest.prototype, "_request");
 
   Object.setPrototypeOf(NodeRequest.prototype, Request.prototype);
 
