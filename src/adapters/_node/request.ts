@@ -3,7 +3,6 @@ import type {
   NodeServerResponse,
   ServerRequest,
 } from "../../types.ts";
-import { Readable } from "node:stream";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { inheritProps } from "./_common.ts";
@@ -15,6 +14,8 @@ export type NodeRequestContext = {
 
 export const NodeRequest = /* @__PURE__ */ (() => {
   const NativeRequest = globalThis.Request;
+
+  const { Readable } = process.getBuiltinModule("node:stream");
 
   if (!("_srvx" in NativeRequest)) {
     // Credits to hono/node adapter for global patching idea
