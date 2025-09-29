@@ -37,7 +37,10 @@ export const fixture: (
       },
     ],
 
-    async error(err) {
+    async error(err: any) {
+      if (err.toString() !== "Error: test error") {
+        console.error(err);
+      }
       return new _Response(`error: ${(err as Error).message}`, { status: 500 });
     },
 
@@ -91,6 +94,22 @@ export const fixture: (
         }
         case "/req-headers-instanceof": {
           return new _Response(req.headers instanceof Headers ? "yes" : "no");
+        }
+        case "/req-clone": {
+          const clone = req.clone();
+          return Response.json({
+            method: clone.method,
+            pathname: new URL(clone.url).pathname,
+            headers: Object.fromEntries(clone.headers),
+          });
+        }
+        case "/req-new-req": {
+          const clone = new Request(req);
+          return Response.json({
+            method: clone.method,
+            pathname: new URL(clone.url).pathname,
+            headers: Object.fromEntries(clone.headers),
+          });
         }
         case "/error": {
           throw new Error("test error");
