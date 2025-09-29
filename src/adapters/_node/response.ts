@@ -42,11 +42,6 @@ export const NodeResponse: {
     #response?: globalThis.Response;
 
     constructor(body?: BodyInit | null, init?: ResponseInit) {
-      if (init instanceof NodeResponse) {
-        init = { ...init.#init, headers: new Headers(init.headers) };
-      } else if (init instanceof NativeResponse) {
-        init = { ...init, headers: new Headers(init.headers) };
-      }
       this.#body = body;
       this.#init = init;
     }
@@ -56,14 +51,26 @@ export const NodeResponse: {
     }
 
     get statusText(): string {
-      return this.#response?.statusText || STATUS_CODES[this.status] || "";
+      return (
+        this.#response?.statusText ||
+        this.#init?.statusText ||
+        STATUS_CODES[this.status] ||
+        ""
+      );
     }
 
     get headers(): Headers {
-      return (
-        this.#response?.headers ||
-        (this.#headers ??= new Headers(this.#init?.headers))
-      );
+      if (this.#response) {
+        return this.#response.headers;
+      }
+      if (this.#headers) {
+        return this.#headers;
+      }
+      const initHeaders = this.#init?.headers;
+      return (this.#headers =
+        initHeaders instanceof Headers
+          ? initHeaders
+          : new Headers(initHeaders));
     }
 
     get ok(): boolean {
@@ -96,7 +103,7 @@ export const NodeResponse: {
       // Body
       let body: PreparedNodeResponseBody;
       let contentType: string | undefined | null;
-      let contentLength: string | undefined | null;
+      let contentLength: string | number | undefined | null;
       if (this.#response) {
         body = this.#response.body;
       } else if (this.#body) {
@@ -105,20 +112,20 @@ export const NodeResponse: {
         } else if (typeof this.#body === "string") {
           body = this.#body;
           contentType = "text/plain; charset=UTF-8";
-          contentLength = String(Buffer.byteLength(this.#body));
+          contentLength = Buffer.byteLength(this.#body);
         } else if (this.#body instanceof ArrayBuffer) {
           body = Buffer.from(this.#body);
-          contentLength = String(this.#body.byteLength);
+          contentLength = this.#body.byteLength;
         } else if (this.#body instanceof Uint8Array) {
-          body = Buffer.from(this.#body);
-          contentLength = String(this.#body.byteLength);
+          body = this.#body;
+          contentLength = this.#body.byteLength;
         } else if (this.#body instanceof DataView) {
           body = Buffer.from(this.#body.buffer);
-          contentLength = String(this.#body.byteLength);
+          contentLength = this.#body.byteLength;
         } else if (this.#body instanceof Blob) {
           body = this.#body.stream();
           contentType = this.#body.type;
-          contentLength = String(this.#body.size);
+          contentLength = this.#body.size;
         } else if (
           typeof (this.#body as unknown as NodeReadable).pipe === "function"
         ) {
@@ -164,13 +171,14 @@ export const NodeResponse: {
         rawNodeHeaders.push(["content-type", contentType]);
       }
       if (contentLength && !hasContentLength) {
-        rawNodeHeaders.push(["content-length", contentLength]);
+        rawNodeHeaders.push(["content-length", String(contentLength)]);
       }
 
       // Free up memory
       this.#init = undefined;
       this.#headers = undefined;
       this.#response = undefined;
+      this.#body = undefined;
 
       return {
         status,
