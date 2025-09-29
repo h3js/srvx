@@ -12,7 +12,9 @@ export type NodeRequestContext = {
   res?: NodeServerResponse;
 };
 
-export const NodeRequest = /* @__PURE__ */ (() => {
+export const NodeRequest: {
+  new (nodeCtx: NodeRequestContext): ServerRequest;
+} = /* @__PURE__ */ (() => {
   const NativeRequest = globalThis.Request;
 
   const { Readable } = process.getBuiltinModule("node:stream");
@@ -42,7 +44,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     runtime: ServerRequest["runtime"];
 
     #request?: Request;
-    #headers?: InstanceType<typeof NodeRequestHeaders>;
+    #headers?: NodeRequestHeaders;
     #abortSignal?: AbortController;
 
     constructor(ctx: NodeRequestContext) {
@@ -102,7 +104,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
 
   Object.setPrototypeOf(NodeRequest.prototype, Request.prototype);
 
-  return NodeRequest;
-})() as unknown as {
-  new (nodeCtx: NodeRequestContext): ServerRequest;
-};
+  return NodeRequest as any;
+})();
+
+export type NodeRequest = InstanceType<typeof NodeRequest>;

@@ -5,8 +5,6 @@ import { splitSetCookieString } from "cookie-es";
 
 import { inheritProps } from "./_common.ts";
 
-export type NodeResponse = InstanceType<typeof NodeResponse>;
-
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null
 
@@ -196,3 +194,5 @@ export const NodeResponse: {
 
   return NodeResponse as any;
 })();
+
+export type NodeResponse = InstanceType<typeof NodeResponse>;

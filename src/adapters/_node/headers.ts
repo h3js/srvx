@@ -3,6 +3,8 @@ import { kNodeInspect } from "./_common.ts";
 
 import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
 
+export type NodeRequestHeaders = InstanceType<typeof NodeRequestHeaders>;
+
 export const NodeRequestHeaders: {
   new (nodeCtx: {
     req: NodeServerRequest;
