@@ -15,23 +15,22 @@ export type NodeRequestContext = {
 export const NodeRequest = /* @__PURE__ */ (() => {
   const NativeRequest = globalThis.Request;
 
-  // Credits to hono/node adapter for global patching idea
-  // https://github.com/honojs/node-server/blob/main/src/request.ts
-  class Request extends NativeRequest {
-    static _srvx = true;
-    constructor(input: string | URL | Request, options?: RequestInit) {
-      if (typeof input === "object" && "_request" in input) {
-        input = (input as any)._request;
+  if (!("_srvx" in NativeRequest)) {
+    // Credits to hono/node adapter for global patching idea
+    // https://github.com/honojs/node-server/blob/main/src/request.ts
+    class Request extends NativeRequest {
+      static _srvx = true;
+      constructor(input: string | URL | Request, options?: RequestInit) {
+        if (typeof input === "object" && "_request" in input) {
+          input = (input as any)._request;
+        }
+        if ((options?.body as ReadableStream)?.getReader !== undefined) {
+          (options as any).duplex ??= "half";
+        }
+        super(input, options);
       }
-      if ((options?.body as ReadableStream)?.getReader !== undefined) {
-        (options as any).duplex ??= "half";
-      }
-      super(input, options);
     }
-  }
-
-  // Fix new Request(request) issue with undici
-  if (!("_srvx" in globalThis.Request)) {
+    // Fix new Request(request) issue with undici constructor by assigning it back to global
     globalThis.Request = Request as unknown as typeof globalThis.Request;
   }
 
