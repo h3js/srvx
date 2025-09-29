@@ -37,6 +37,7 @@ export const NodeRequest = /* @__PURE__ */ (() => {
   class NodeRequest implements Partial<ServerRequest> {
     _node!: NodeRequestContext;
     _url!: URL;
+    runtime: ServerRequest["runtime"];
 
     #request?: Request;
     #headers?: InstanceType<typeof NodeRequestHeaders>;
@@ -45,6 +46,10 @@ export const NodeRequest = /* @__PURE__ */ (() => {
     constructor(ctx: NodeRequestContext) {
       this._node = ctx;
       this._url = new NodeRequestURL({ req: ctx.req });
+      this.runtime = {
+        name: "node",
+        node: ctx,
+      };
     }
 
     get ip(): string | undefined {
