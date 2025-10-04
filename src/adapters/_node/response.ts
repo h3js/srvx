@@ -2,8 +2,7 @@ import type NodeHttp from "node:http";
 import type { Readable as NodeReadable } from "node:stream";
 
 import { splitSetCookieString } from "cookie-es";
-
-import { inheritProps } from "./_common.ts";
+import { lazyInherit } from "../../_inherit.ts";
 
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null
@@ -187,7 +186,7 @@ export const NodeResponse: {
     }
   }
 
-  inheritProps(NodeResponse.prototype, NativeResponse.prototype, "_response");
+  lazyInherit(NodeResponse.prototype, NativeResponse.prototype, "_response");
 
   Object.setPrototypeOf(NodeResponse, NativeResponse);
   Object.setPrototypeOf(NodeResponse.prototype, NativeResponse.prototype);

@@ -39,7 +39,7 @@
     "bench:node": "node test/bench-node/_run.mjs",
     "bench:url:bun": "bun run ./test/url.bench.ts",
     "bench:url:deno": "deno run -A ./test/url.bench.ts",
-    "bench:url:node": "pnpm --expose-gc --allow-natives-syntax ./test/url.bench.ts",
+    "bench:url:node": "pnpm --expose-gc --allow-natives-syntax node ./test/url.bench.ts",
     "build": "obuild",
     "dev": "vitest dev",
     "lint": "eslint . && prettier -c .",

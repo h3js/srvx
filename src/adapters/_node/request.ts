@@ -5,7 +5,7 @@ import type {
 } from "../../types.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
-import { inheritProps } from "./_common.ts";
+import { lazyInherit } from "../../_inherit.ts";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
@@ -104,7 +104,7 @@ export const NodeRequest: {
     }
   }
 
-  inheritProps(NodeRequest.prototype, NativeRequest.prototype, "_request");
+  lazyInherit(NodeRequest.prototype, NativeRequest.prototype, "_request");
 
   Object.setPrototypeOf(NodeRequest.prototype, PatchedRequest.prototype);
 
