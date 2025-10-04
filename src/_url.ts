@@ -8,11 +8,16 @@ export type URLInit = {
 };
 
 /**
- * Wrapper for URL with fast path access to `.pathname`, `.search` and `.searchParams` props.
+ * URL wrapper with fast paths to access to the following props:
+ *
+ *  - `url.pathname`
+ *  - `url.search`
+ *  - `url.searchParams`
+ *  - `url.protocol`
  *
  * **NOTES:**
  *
- * - It is assumed that the input URL is already ecoded and formatted from an HTTP request and contains no hash.
+ * - It is assumed that the input URL is **already encoded** and formatted from an HTTP request and contains no hash.
  * - Triggering the setters or getters on other props will deoptimize to full URL parsing.
  * - Changes to `searchParams` will be discarded as we don't track them.
  */
@@ -21,15 +26,14 @@ export const FastURL: { new (url: string | URLInit): URL } =
     const NativeURL = globalThis.URL;
 
     const FastURL = class URL implements Partial<globalThis.URL> {
-      #parsedURL: globalThis.URL | undefined;
-
+      #url?: globalThis.URL;
       #href?: string;
       #protocol?: string;
       #host?: string;
       #pathname?: string;
       #search?: string;
       #searchParams?: URLSearchParams;
-      #pos?: { pathname: number; query: number };
+      #pos?: [protocol: number, pathname: number, query: number];
 
       constructor(url: string | URLInit) {
         if (typeof url === "string") {
@@ -43,10 +47,10 @@ export const FastURL: { new (url: string | URLInit): URL } =
       }
 
       get _url(): globalThis.URL {
-        if (this.#parsedURL) {
-          return this.#parsedURL;
+        if (this.#url) {
+          return this.#url;
         }
-        this.#parsedURL = new NativeURL(this.href);
+        this.#url = new NativeURL(this.href);
         this.#href = undefined;
         this.#protocol = undefined;
         this.#host = undefined;
@@ -54,12 +58,12 @@ export const FastURL: { new (url: string | URLInit): URL } =
         this.#search = undefined;
         this.#searchParams = undefined;
         this.#pos = undefined;
-        return this.#parsedURL;
+        return this.#url;
       }
 
       get href(): string {
-        if (this.#parsedURL) {
-          return this.#parsedURL.href;
+        if (this.#url) {
+          return this.#url.href;
         }
         if (!this.#href) {
           this.#href = `${this.#protocol || "http:"}//${this.#host || "localhost"}${this.#pathname || "/"}${this.#search || ""}`;
@@ -67,63 +71,79 @@ export const FastURL: { new (url: string | URLInit): URL } =
         return this.#href!;
       }
 
-      #getPos(): { pathname: number; query: number } {
+      #getPos(): [protocol: number, pathname: number, query: number] {
         if (!this.#pos) {
           const url = this.href;
           const protoIndex = url.indexOf("://");
-          const pIndex =
+          const pathnameIndex =
             protoIndex === -1
               ? -1 /* deoptimize */
               : url.indexOf("/", protoIndex + 4);
-          const qIndex = pIndex === -1 ? -1 : url.indexOf("?", pIndex);
-          this.#pos = { pathname: pIndex, query: qIndex };
+          const qIndex =
+            pathnameIndex === -1 ? -1 : url.indexOf("?", pathnameIndex);
+          this.#pos = [protoIndex, pathnameIndex, qIndex];
         }
         return this.#pos;
       }
 
       get pathname() {
-        if (this.#parsedURL) {
-          return this.#parsedURL.pathname;
+        if (this.#url) {
+          return this.#url.pathname;
         }
         if (this.#pathname === undefined) {
-          const pos = this.#getPos();
-          if (pos.pathname === -1) {
+          const [, pathnameIndex, queryIndex] = this.#getPos();
+          if (pathnameIndex === -1) {
             return this._url.pathname; // deoptimize
           }
           this.#pathname = this.href.slice(
-            pos.pathname,
-            pos.query === -1 ? undefined : pos.query,
+            pathnameIndex,
+            queryIndex === -1 ? undefined : queryIndex,
           );
         }
         return this.#pathname;
       }
 
       get search() {
-        if (this.#parsedURL) {
-          return this.#parsedURL.search;
+        if (this.#url) {
+          return this.#url.search;
         }
         if (this.#search === undefined) {
-          const pos = this.#getPos();
-          if (pos.pathname === -1) {
+          const [, pathnameIndex, queryIndex] = this.#getPos();
+          if (pathnameIndex === -1) {
             return this._url.search; // deoptimize
           }
           const url = this.href;
           this.#search =
-            pos.query === -1 || pos.query === url.length - 1
+            queryIndex === -1 || queryIndex === url.length - 1
               ? ""
-              : url.slice(pos.query);
+              : url.slice(queryIndex);
         }
         return this.#search;
       }
 
       get searchParams() {
-        if (this.#parsedURL) {
-          return this.#parsedURL.searchParams;
+        if (this.#url) {
+          return this.#url.searchParams;
         }
         if (!this.#searchParams) {
           this.#searchParams = new URLSearchParams(this.search);
         }
         return this.#searchParams;
+      }
+
+      get protocol() {
+        if (this.#url) {
+          return this.#url.protocol;
+        }
+        if (this.#protocol === undefined) {
+          const [protocolIndex] = this.#getPos();
+          if (protocolIndex === -1) {
+            return this._url.protocol; // deoptimize
+          }
+          const url = this.href;
+          this.#protocol = url.slice(0, protocolIndex + 1);
+        }
+        return this.#protocol;
       }
 
       toString(): string {
