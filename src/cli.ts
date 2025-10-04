@@ -76,6 +76,21 @@ export async function main(mainOpts: MainOpts): Promise<void> {
       process.exit(code);
     }
   });
+
+  // Ensure child process is killed on exit
+  const cleanup = (signal?: any) => {
+    try {
+      child.kill(signal || "SIGTERM");
+    } catch (error) {
+      console.error("Error killing child process:", error);
+    }
+    if (signal) {
+      process.exit();
+    }
+  };
+  process.on("exit", () => cleanup());
+  process.on("SIGINT" /* Ctrl+C */, () => cleanup("SIGINT"));
+  process.on("SIGTERM" /* kill */, () => cleanup("SIGTERM"));
 }
 
 async function serve() {
