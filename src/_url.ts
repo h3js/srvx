@@ -125,6 +125,14 @@ export const FastURL: { new (url: string | URLInit): URL } =
         }
         return this.#searchParams;
       }
+
+      toString(): string {
+        return this.href;
+      }
+
+      toJSON(): string {
+        return this.href;
+      }
     };
 
     lazyInherit(FastURL.prototype, NativeURL.prototype, "_url");
