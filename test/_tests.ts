@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import http from "node:http";
 
 export function addTests(opts: {
   url: (path: string) => string;
@@ -177,5 +178,35 @@ export function addTests(opts: {
       expect(response.status).toBe(200);
       expect(response.headers.get("x-clone-with-headers")).toBe("true");
     });
+  });
+
+  test("absolute path in request line", async () => {
+    const _url = new URL(url("/"));
+
+    if (_url.protocol === "https:") {
+      // TODO: Write test to make sure it is forbidden for http2/tls
+      return;
+    }
+
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request({
+        method: "GET",
+        path: _url.href,
+        hostname: "localhost",
+        port: _url.port,
+        headers: { Host: "example.com" },
+      });
+      req.end();
+      req.on("response", resolve);
+      req.on("error", reject);
+    });
+    const body = await new Promise<string>((resolve, reject) => {
+      const chunks: Uint8Array[] = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      res.on("error", reject);
+    });
+    expect(res.statusCode).toBe(200);
+    expect(body).toBe("ok");
   });
 }

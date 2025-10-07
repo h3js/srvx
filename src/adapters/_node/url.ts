@@ -3,29 +3,32 @@ import { FastURL } from "../../_url.ts";
 
 export class NodeRequestURL extends FastURL {
   constructor({ req }: { req: NodeServerRequest; res?: NodeServerResponse }) {
-    const host =
-      req.headers.host ||
-      (req.headers[":authority"] as string) ||
-      `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
+    const path = req.url || "/";
+    if (path[0] === "/") {
+      const qIndex = path.indexOf("?");
+      const pathname = qIndex === -1 ? path : path?.slice(0, qIndex) || "/";
+      const search = qIndex === -1 ? "" : path?.slice(qIndex) || "";
 
-    const protocol =
-      (req.socket as any)?.encrypted ||
-      req.headers["x-forwarded-proto"] === "https"
-        ? "https:"
-        : "http:";
+      const host =
+        req.headers.host ||
+        (req.headers[":authority"] as string) ||
+        `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
 
-    const qIndex = (req.url || "/").indexOf("?");
+      const protocol =
+        (req.socket as any)?.encrypted ||
+        req.headers["x-forwarded-proto"] === "https" ||
+        req.headers[":scheme"] === "https"
+          ? "https:"
+          : "http:";
 
-    const pathname =
-      qIndex === -1 ? req.url || "/" : req.url?.slice(0, qIndex) || "/";
-
-    const search = qIndex === -1 ? "" : req.url?.slice(qIndex) || "";
-
-    super({
-      protocol,
-      host,
-      pathname,
-      search,
-    });
+      super({
+        protocol,
+        host,
+        pathname,
+        search,
+      });
+    } else {
+      super(path);
+    }
   }
 }
