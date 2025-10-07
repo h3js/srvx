@@ -76,6 +76,24 @@ export async function main(mainOpts: MainOpts): Promise<void> {
       process.exit(code);
     }
   });
+
+  // Ensure child process is killed on exit
+  let cleanupCalled = false;
+  const cleanup = (signal: any, exitCode?: number) => {
+    if (cleanupCalled) return;
+    cleanupCalled = true;
+    try {
+      child.kill(signal || "SIGTERM");
+    } catch (error) {
+      console.error("Error killing child process:", error);
+    }
+    if (exitCode !== undefined) {
+      process.exit(exitCode);
+    }
+  };
+  process.on("exit", () => cleanup("SIGTERM"));
+  process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
+  process.on("SIGTERM", () => cleanup("SIGTERM", 143));
 }
 
 async function serve() {
@@ -122,18 +140,21 @@ async function serve() {
     printInfo(entry);
 
     // Keep the process alive with proper cleanup
-    const cleanup = () => {
-      // TODO: force close seems not working properly (when fixed, we should await for it)
-      server.close(true).catch(() => {});
-      process.exit(0);
+    let cleanupCalled = false;
+    const cleanup = (exitCode?: number) => {
+      if (cleanupCalled) return;
+      cleanupCalled = true;
+      console.log(c.gray("\rGracefully stopping server..."));
+      server
+        .close(true)
+        .catch(console.error)
+        .then(() => {
+          console.log(c.gray("Server stopped."));
+          process.exit(exitCode || 0);
+        });
     };
-    // Handle Ctrl+C
-    process.on("SIGINT", () => {
-      console.log(c.gray("\rStopping server..."));
-      cleanup();
-    });
-    // Handle termination signal (watcher)
-    process.on("SIGTERM", cleanup);
+    process.on("SIGINT" /* ctrl + c */, () => cleanup(130));
+    process.on("SIGTERM", () => cleanup(143));
   } catch (error) {
     console.error(error);
     process.exit(1);
