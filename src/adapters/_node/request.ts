@@ -15,7 +15,7 @@ export type NodeRequestContext = {
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const { Readable } = process.getBuiltinModule("node:stream");
+  let Readable: typeof import("node:stream").Readable;
 
   const NativeRequest = ((globalThis as any)._Request ??=
     globalThis.Request) as typeof globalThis.Request;
@@ -90,6 +90,10 @@ export const NodeRequest: {
       if (!this.#request) {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
+        if (hasBody && !Readable) {
+          Readable =
+            globalThis.process.getBuiltinModule("node:stream").Readable;
+        }
         this.#request = new PatchedRequest(this.url, {
           method,
           headers: this.headers,
