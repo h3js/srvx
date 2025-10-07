@@ -30,7 +30,7 @@ export const NodeResponse: {
   const NativeResponse = globalThis.Response;
 
   const STATUS_CODES =
-    globalThis.process?.getBuiltinModule("node:http")?.STATUS_CODES || {};
+    globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
 
   class NodeResponse implements Partial<Response> {
     #body?: BodyInit | null;
