@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.8.10
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.9...v0.8.10)
+
+### 🩹 Fixes
+
+- **cli:** Ensure child process is killed on exit ([#114](https://github.com/h3js/srvx/pull/114))
+
+### 💅 Refactors
+
+- Reimplement `FastURL` ([#112](https://github.com/h3js/srvx/pull/112))
+- **node:** Rewrite `NodeRequestURL` based on `FastURL` ([#113](https://github.com/h3js/srvx/pull/113))
+
+### 🏡 Chore
+
+- Update deps ([946263d](https://github.com/h3js/srvx/commit/946263d))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.9
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.8...v0.8.9)
