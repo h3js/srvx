@@ -2,7 +2,9 @@ import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
 import { FastURL } from "../../_url.ts";
 
 export class NodeRequestURL extends FastURL {
-  constructor({ req }: { req: NodeServerRequest; res?: NodeServerResponse }) {
+  #req: NodeServerRequest;
+
+  constructor({ req }: { req: NodeServerRequest }) {
     const path = req.url || "/";
     if (path[0] === "/") {
       const qIndex = path.indexOf("?");
@@ -30,5 +32,15 @@ export class NodeRequestURL extends FastURL {
     } else {
       super(path);
     }
+    this.#req = req;
+  }
+
+  override get pathname(): string {
+    return super.pathname;
+  }
+
+  override set pathname(value: string) {
+    this._url.pathname = value;
+    this.#req.url = this._url.pathname + this._url.search;
   }
 }
