@@ -21,7 +21,7 @@ export type URLInit = {
  * - Triggering the setters or getters on other props will deoptimize to full URL parsing.
  * - Changes to `searchParams` will be discarded as we don't track them.
  */
-export const FastURL: { new (url: string | URLInit): URL } =
+export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
   /* @__PURE__ */ (() => {
     const NativeURL = globalThis.URL;
 
