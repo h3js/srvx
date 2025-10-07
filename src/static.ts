@@ -2,13 +2,30 @@ import type { ServerMiddleware } from "./types.ts";
 import type { Transform } from "node:stream";
 
 import { extname, join, resolve } from "node:path";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createReadStream, ReadStream } from "node:fs";
 import { FastResponse } from "srvx";
 import { createGzip, createBrotliCompress } from "node:zlib";
 
 export interface ServeStaticOptions {
+  /**
+   * The directory to serve static files from.
+   */
   dir: string;
+
+  /**
+   * The HTTP methods to allow for serving static files.
+   */
+  methods?: string[];
+
+  /**
+   * A function to modify the HTML content before serving it.
+   */
+  renderHTML?: (ctx: {
+    request: Request;
+    html: string;
+    filename: string;
+  }) => Response | Promise<Response>;
 }
 
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/MIME_types/Common_types
@@ -38,9 +55,12 @@ const COMMON_MIME_TYPES: Record<string, string> = {
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const dir = resolve(options.dir) + "/";
+  const methods = new Set(
+    (options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()),
+  );
 
   return async (req, next) => {
-    if (req.method !== "GET" && req.method !== "HEAD") {
+    if (!methods.has(req.method)) {
       return next();
     }
     const path = new URL(req.url).pathname.slice(1).replace(/\/$/, "");
@@ -59,11 +79,19 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       }
       const fileStat = await stat(filePath).catch(() => null);
       if (fileStat?.isFile()) {
+        const fileExt = extname(filePath);
         const headers: HeadersInit = {
           "Content-Length": fileStat.size.toString(),
           "Content-Type":
-            COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream",
+            COMMON_MIME_TYPES[fileExt] || "application/octet-stream",
         };
+        if (options.renderHTML && fileExt === ".html") {
+          return options.renderHTML({
+            html: await readFile(filePath, "utf8"),
+            filename: filePath,
+            request: req,
+          });
+        }
         let stream: ReadStream | Transform = createReadStream(filePath);
         const acceptEncoding = req.headers.get("accept-encoding") || "";
         if (acceptEncoding.includes("br")) {
