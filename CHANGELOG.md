@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.11
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.10...v0.8.11)
+
+### 🚀 Enhancements
+
+- **node:** Support absolute paths in request line ([#116](https://github.com/h3js/srvx/pull/116))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.10
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.9...v0.8.10)
