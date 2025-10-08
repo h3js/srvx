@@ -1,5 +1,6 @@
 export function lazyInherit(target: any, source: any, sourceKey: any): void {
   for (const key of Object.getOwnPropertyNames(source)) {
+    if (key === "constructor") continue;
     const targetDesc = Object.getOwnPropertyDescriptor(target, key)!;
     const desc = Object.getOwnPropertyDescriptor(source, key)!;
     let modified = false;
