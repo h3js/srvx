@@ -23,12 +23,18 @@ export const NodeRequest: {
   // Credits to hono/node adapter for global patching idea (https://github.com/honojs/node-server/blob/main/src/request.ts)
   const PatchedRequest = class Request extends NativeRequest {
     static _srvx = true;
+
+    // @ts-expect-error
+    static [Symbol.hasInstance](instance) {
+      return instance instanceof NativeRequest;
+    }
+
     constructor(
       input: string | URL | globalThis.Request,
       options?: RequestInit,
     ) {
       if (typeof input === "object" && "_request" in input) {
-        input = (input as unknown as NodeRequest)._request;
+        input = (input as any)._request;
       }
       if ((options?.body as ReadableStream)?.getReader !== undefined) {
         (options as any).duplex ??= "half";
@@ -42,12 +48,12 @@ export const NodeRequest: {
     globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
   }
 
-  class NodeRequest implements Partial<ServerRequest> {
+  class Request implements Partial<ServerRequest> {
     _node!: NodeRequestContext;
     _url!: URL;
     runtime: ServerRequest["runtime"];
 
-    #request?: Request;
+    #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortSignal?: AbortController;
 
@@ -86,7 +92,7 @@ export const NodeRequest: {
       return this.#abortSignal.signal;
     }
 
-    get _request(): Request {
+    get _request(): globalThis.Request {
       if (!this.#request) {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
@@ -108,9 +114,9 @@ export const NodeRequest: {
     }
   }
 
-  lazyInherit(NodeRequest.prototype, NativeRequest.prototype, "_request");
+  lazyInherit(Request.prototype, NativeRequest.prototype, "_request");
 
-  Object.setPrototypeOf(NodeRequest.prototype, PatchedRequest.prototype);
+  Object.setPrototypeOf(Request.prototype, NativeRequest.prototype);
 
-  return NodeRequest as any;
+  return Request as any;
 })();
