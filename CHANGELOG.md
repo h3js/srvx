@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.8.15
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.14...v0.8.15)
+
+### 🩹 Fixes
+
+- Avoid inheriting `constructor` props ([3ecb746](https://github.com/h3js/srvx/commit/3ecb746))
+- **node:** Fix instance check against native `Request` after patching ([c7e7b7f](https://github.com/h3js/srvx/commit/c7e7b7f))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.8.14
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.13...v0.8.14)
