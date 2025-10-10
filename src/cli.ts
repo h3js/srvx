@@ -121,6 +121,7 @@ async function serve() {
         console.error(error);
         return renderError(error);
       },
+      ...entry,
       middleware: [
         log(),
         options._static
@@ -130,7 +131,6 @@ async function serve() {
           : undefined,
         ...(entry.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
-      ...entry,
     });
 
     globalThis.__srvx__ = server;
