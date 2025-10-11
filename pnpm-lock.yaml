@@ -10,10 +10,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      cookie-es:
-        specifier: ^2.0.0
-        version: 2.0.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251004.0
@@ -54,6 +50,9 @@ importers:
       changelogen:
         specifier: ^0.6.2
         version: 0.6.2(magicast@0.3.5)
+      cookie-es:
+        specifier: ^2.0.0
+        version: 2.0.0
       eslint:
         specifier: ^9.37.0
         version: 9.37.0(jiti@2.6.1)
