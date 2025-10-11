@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.16
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.15...v0.8.16)
+
+### 🩹 Fixes
+
+- **cli:** Correct middleware entry spread in serve function ([#119](https://github.com/h3js/srvx/pull/119))
+
+### 📦 Build
+
+- Inline and export `splitSetCookieString` ([#121](https://github.com/h3js/srvx/pull/121))
+
+### ❤️ Contributors
+
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+- Валентин Степанов ([@teleskop150750](https://github.com/teleskop150750))
+
 ## v0.8.15
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.14...v0.8.15)
