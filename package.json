@@ -54,13 +54,9 @@
   "resolutions": {
     "srvx": "link:."
   },
-  "dependencies": {
-    "cookie-es": "^2.0.0"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251004.0",
     "@hono/node-server": "^1.19.5",
-    "@mitata/counters": "^0.0.8",
     "@mjackson/node-fetch-server": "^0.7.0",
     "@types/bun": "^1.2.23",
     "@types/deno": "^2.5.0",
@@ -71,6 +67,7 @@
     "@whatwg-node/server": "^0.10.12",
     "automd": "^0.4.2",
     "changelogen": "^0.6.2",
+    "cookie-es": "^2.0.0",
     "eslint": "^9.37.0",
     "eslint-config-unjs": "^0.5.0",
     "execa": "^9.6.0",
