@@ -85,7 +85,7 @@ export const NodeRequest: {
     get signal() {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
-        this._node.req.once("close", () => {
+        this._node.req.socket.once("close", () => {
           this.#abortSignal?.abort();
         });
       }
