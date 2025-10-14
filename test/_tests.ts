@@ -121,7 +121,7 @@ export function addTests(opts: {
     const aborts = await fetch(url("/abort-log")).then((res) => res.json());
     const abort = aborts.find((a: any) => a.request === "GET /abort");
     expect(abort).toBeDefined();
-    expect(abort.reason).toMatch(/AbortError:/);
+    expect(abort.reason).toMatch(/AbortError:|aborted/);
   });
 
   test("total aborts", async () => {

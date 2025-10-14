@@ -87,8 +87,8 @@ export const NodeRequest: {
         this.#abortSignal = new AbortController();
         const req = this._node.req;
         const method = this.method;
-        const abort = () => {
-          this.#abortSignal?.abort();
+        const abort = (err?: any) => {
+          this.#abortSignal?.abort(err);
         };
         req.once("error", abort);
         if (method === "GET" || method === "HEAD") {
