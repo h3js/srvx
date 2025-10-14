@@ -86,16 +86,11 @@ export const NodeRequest: {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
         const req = this._node.req;
-        const method = this.method;
         const abort = (err?: any) => {
           this.#abortSignal?.abort(err);
         };
         req.once("error", abort);
-        if (method === "GET" || method === "HEAD") {
-          req.once("close", abort);
-        } else {
-          req.once("end", abort); // wait for body to be consumed
-        }
+        req.once("end", abort);
       }
       return this.#abortSignal.signal;
     }
