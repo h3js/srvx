@@ -6,7 +6,13 @@ export function addTests(opts: {
   runtime: string;
   fetch?: typeof globalThis.fetch;
 }): void {
-  const { url, fetch = globalThis.fetch } = opts;
+  const { url, fetch: _fetch = globalThis.fetch } = opts;
+
+  let fetchCount = 0;
+  const fetch = (...args: Parameters<typeof _fetch>) => {
+    fetchCount++;
+    return _fetch(...args);
+  };
 
   test("GET works", async () => {
     const response = await fetch(url("/"));
@@ -112,10 +118,23 @@ export function addTests(opts: {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
-    const { abortCount } = await fetch(url("/abort-count")).then((res) =>
-      res.json(),
-    );
-    expect(abortCount).toBe(1);
+    const aborts = await fetch(url("/abort-log")).then((res) => res.json());
+    const abort = aborts.find((a: any) => a.request === "GET /abort");
+    expect(abort).toBeDefined();
+    expect(abort.reason).toMatch(/AbortError:/);
+  });
+
+  test("total aborts", async () => {
+    let expectedAbortCount = fetchCount;
+    if (opts.runtime === "bun") {
+      expectedAbortCount = 1; // Bun only aborts explicitly
+    }
+
+    const res = await fetch(url("/abort-log"));
+    expect(res.status).toBe(200);
+    const aborts = await res.json();
+    // console.log(aborts.map((a: any) => `${a.request}`).join("\n"));
+    expect(aborts.length).toBe(expectedAbortCount);
   });
 
   describe("plugin", () => {
