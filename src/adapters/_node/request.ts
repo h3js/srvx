@@ -85,7 +85,11 @@ export const NodeRequest: {
     get signal() {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
-        this._node.req.socket.once("close", () => {
+        const hasBody = !(this.method === "GET" || this.method === "HEAD");
+        const target = hasBody
+          ? this._node.req.socket || this._node.req
+          : this._node.req;
+        target.once("close", () => {
           this.#abortSignal?.abort();
         });
       }
