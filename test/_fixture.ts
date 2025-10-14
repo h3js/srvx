@@ -10,7 +10,10 @@ export const fixture: (
   opts?: Partial<ServerOptions>,
   _Response?: typeof globalThis.Response,
 ) => ServerOptions = (opts, _Response = globalThis.Response) => {
-  let abortCount = 0;
+  const aborts: Array<{
+    request: string; // example: GET /test
+    reason: string;
+  }> = [];
 
   return {
     ...opts,
@@ -46,6 +49,14 @@ export const fixture: (
 
     async fetch(req) {
       const url = new URL(req.url);
+
+      req.signal.addEventListener("abort", () => {
+        aborts.push({
+          request: `${req.method} ${url.pathname}`,
+          reason: req.signal.reason.toString(),
+        });
+      });
+
       switch (url.pathname) {
         case "/": {
           return new _Response("ok");
@@ -161,9 +172,6 @@ export const fixture: (
           return res.clone();
         }
         case "/abort": {
-          req.signal.addEventListener("abort", () => {
-            abortCount++;
-          });
           return new _Response(
             new ReadableStream({
               async start(controller) {
@@ -183,8 +191,8 @@ export const fixture: (
             },
           );
         }
-        case "/abort-count": {
-          return _Response.json({ abortCount });
+        case "/abort-log": {
+          return _Response.json(aborts);
         }
       }
       return new _Response("404", { status: 404 });
