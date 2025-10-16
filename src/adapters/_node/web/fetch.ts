@@ -1,5 +1,4 @@
-import type { ServerRequest } from "../../../../dist/types.d.mts";
-import type { NodeHttp1Handler } from "../../../types.ts";
+import type { ServerRequest, NodeHttpHandler } from "../../../types.ts";
 
 import { WebIncomingMessage } from "./incoming.ts";
 import { WebRequestSocket } from "./socket.ts";
@@ -22,7 +21,7 @@ import { WebServerResponse } from "./response.ts";
  * @experimental Behavior might be unstable.
  */
 export async function fetchNodeHandler(
-  handler: NodeHttp1Handler,
+  handler: NodeHttpHandler,
   req: ServerRequest,
 ): Promise<Response> {
   // Direct pass through if coming from a Node server handler
