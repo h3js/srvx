@@ -10,21 +10,21 @@ const fetchCallers = [
     name: "direct fetch",
     fetchNodeHandler,
   },
-  // {
-  //   name: "through srvx/node",
-  //   async fetchNodeHandler(handler: NodeHttpHandler, req: Request) {
-  //     const server = serve({
-  //       port: 0,
-  //       fetch: (webReq) => fetchNodeHandler(handler, webReq),
-  //     });
-  //     await server.ready();
-  //     const reqURL = new URL(req.url);
-  //     const originURL = new URL(server.url!);
-  //     reqURL.port = originURL.port;
-  //     reqURL.hostname = originURL.hostname;
-  //     return globalThis.fetch(new Request(reqURL.toString(), req));
-  //   },
-  // },
+  {
+    name: "through srvx/node",
+    async fetchNodeHandler(handler: NodeHttpHandler, req: Request) {
+      const server = serve({
+        port: 0,
+        fetch: (webReq) => fetchNodeHandler(handler, webReq),
+      });
+      await server.ready();
+      const reqURL = new URL(req.url);
+      const originURL = new URL(server.url!);
+      reqURL.port = originURL.port;
+      reqURL.hostname = originURL.hostname;
+      return globalThis.fetch(new Request(reqURL.toString(), req));
+    },
+  },
 ];
 
 const fixtures: { name: string; skip?: boolean; handler: NodeHttpHandler }[] = [
