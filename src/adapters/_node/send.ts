@@ -35,9 +35,9 @@ export async function sendNodeResponse(
   for (const [key, value] of webRes.headers) {
     if (key === "set-cookie") {
       hasSetCookie = true;
-    } else {
-      headerEntries.push([key, value]);
+      continue;
     }
+    headerEntries.push([key, value]);
   }
   if (hasSetCookie) {
     const setCookieValues = webRes.headers.getSetCookie();
