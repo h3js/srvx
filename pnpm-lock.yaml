@@ -16,7 +16,7 @@ importers:
         version: 4.20251004.0
       '@hono/node-server':
         specifier: ^1.19.5
-        version: 1.19.5(hono@4.9.12)
+        version: 1.19.5(hono@4.10.0)
       '@mitata/counters':
         specifier: ^0.0.8
         version: 0.0.8
@@ -68,6 +68,9 @@ importers:
       express:
         specifier: ^5.1.0
         version: 5.1.0
+      fastify:
+        specifier: ^5.6.1
+        version: 5.6.1
       get-port-please:
         specifier: ^3.2.0
         version: 3.2.0
@@ -148,7 +151,7 @@ importers:
     devDependencies:
       hono:
         specifier: latest
-        version: 4.9.12
+        version: 4.10.0
       srvx:
         specifier: link:../..
         version: link:../..
@@ -1948,8 +1951,8 @@ packages:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==}
     engines: {node: '>= 0.4'}
 
-  hono@4.9.12:
-    resolution: {integrity: sha512-SrTC0YxqPwnN7yKa8gg/giLyQ2pILCKoideIHbYbFQlWZjYt68D2A4Ae1hehO/aDQ6RmTcpqOV/O2yBtMzx/VQ==}
+  hono@4.10.0:
+    resolution: {integrity: sha512-V/S2IyKL6fk5+bEjiQzg74r5BglqAwU20IX3WjdTUFgvmtSqAZjSxN/Zb5lr6/JXVmH0aqkqOq++3UgzOi9+4Q==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -3158,9 +3161,9 @@ snapshots:
       '@fastify/forwarded': 3.0.1
       ipaddr.js: 2.2.0
 
-  '@hono/node-server@1.19.5(hono@4.9.12)':
+  '@hono/node-server@1.19.5(hono@4.10.0)':
     dependencies:
-      hono: 4.9.12
+      hono: 4.10.0
 
   '@humanfs/core@0.19.1': {}
 
@@ -4626,7 +4629,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.9.12: {}
+  hono@4.10.0: {}
 
   html-escaper@2.0.2: {}
 
