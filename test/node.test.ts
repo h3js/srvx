@@ -1,4 +1,3 @@
-import { describe, beforeAll, afterAll } from "vitest";
 import { fetch, Agent } from "undici";
 import { addTests } from "./_tests.ts";
 import { serve, FastResponse } from "../src/adapters/node.ts";
@@ -6,6 +5,22 @@ import { getTLSCert } from "./_utils.ts";
 import { fixture } from "./_fixture.ts";
 
 const tls = await getTLSCert();
+
+const isDeno = !!globalThis.Deno;
+const isBun = !!globalThis.Bun;
+const runtime = isDeno
+  ? `deno-node-compat`
+  : isBun
+    ? `bun-node-compat`
+    : "node";
+
+// Vitest is currently broken in Bun -_-
+const { describe, beforeAll, afterAll, expect, test } = globalThis.Bun
+  ? ((await import("bun:test")) as unknown as typeof import("vitest"))
+  : await import("vitest");
+if (!describe.sequential) {
+  describe.sequential = describe;
+}
 
 const testConfigs = [
   {
@@ -31,7 +46,10 @@ const testConfigs = [
 ];
 
 for (const config of testConfigs) {
-  describe.sequential(`node (${config.name})`, () => {
+  if ((isDeno || isBun) && config.http2) {
+    continue; // Not implemented yet in Deno, Bun fails somehow too!
+  }
+  describe.sequential(`${runtime} (${config.name})`, () => {
     const client = getHttpClient(config.http2);
     let server: ReturnType<typeof serve> | undefined;
 
@@ -49,13 +67,13 @@ for (const config of testConfigs) {
     });
 
     afterAll(async () => {
-      await client.agent?.close();
+      await client.agent?.close?.();
       await server!.close();
     });
 
     addTests({
       url: (path) => server!.url! + path.slice(1),
-      runtime: "node",
+      runtime,
       fetch: client.fetch,
     });
   });

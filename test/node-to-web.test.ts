@@ -1,9 +1,13 @@
-import { describe, expect, test } from "vitest";
 import type { NodeHttpHandler } from "../src/types.ts";
 import { fetchNodeHandler, serve } from "../src/adapters/node.ts";
 
 import express from "express";
 import fastify from "fastify";
+
+// Vitest is currently broken in Bun -_-
+const { describe, expect, test } = globalThis.Bun
+  ? ((await import("bun:test")) as unknown as typeof import("vitest"))
+  : await import("vitest");
 
 const fetchCallers = [
   {
@@ -99,6 +103,7 @@ describe("fetchNodeHandler", () => {
           );
           expect(res.status).toBe(418);
           expect(res.statusText).toBe("I'm a Moka Pot");
+
           expect(res.headers.get("Content-Type")).toBe(
             "application/json; charset=utf-8",
           );

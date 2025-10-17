@@ -49,7 +49,10 @@
     "release": "pnpm test && changelogen --release && npm publish && git push --follow-tags",
     "srvx": "./bin/srvx.mjs",
     "test": "pnpm lint && pnpm test:types && vitest run --coverage",
-    "test:types": "tsc --noEmit --skipLibCheck"
+    "test:node-compat:deno": "deno run vitest test/node.test",
+    "test:node-compat:bun": "bun test test/node.test.ts",
+    "test:types": "tsc --noEmit --skipLibCheck",
+    "vitest": "vitest"
   },
   "resolutions": {
     "srvx": "link:."
