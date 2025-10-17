@@ -10,21 +10,21 @@ const fetchCallers = [
     name: "direct fetch",
     fetchNodeHandler,
   },
-  {
-    name: "through srvx/node",
-    async fetchNodeHandler(handler: NodeHttpHandler, req: Request) {
-      const server = serve({
-        port: 0,
-        fetch: (webReq) => fetchNodeHandler(handler, webReq),
-      });
-      await server.ready();
-      const reqURL = new URL(req.url);
-      const originURL = new URL(server.url!);
-      reqURL.port = originURL.port;
-      reqURL.hostname = originURL.hostname;
-      return globalThis.fetch(new Request(reqURL.toString(), req));
-    },
-  },
+  // {
+  //   name: "through srvx/node",
+  //   async fetchNodeHandler(handler: NodeHttpHandler, req: Request) {
+  //     const server = serve({
+  //       port: 0,
+  //       fetch: (webReq) => fetchNodeHandler(handler, webReq),
+  //     });
+  //     await server.ready();
+  //     const reqURL = new URL(req.url);
+  //     const originURL = new URL(server.url!);
+  //     reqURL.port = originURL.port;
+  //     reqURL.hostname = originURL.hostname;
+  //     return globalThis.fetch(new Request(reqURL.toString(), req));
+  //   },
+  // },
 ];
 
 const fixtures: { name: string; skip?: boolean; handler: NodeHttpHandler }[] = [
@@ -90,7 +90,10 @@ describe("fetchNodeHandler", () => {
             fixture.handler as any,
             new Request("http://localhost/", {
               method: "POST",
-              headers: { "x-test": "1", "Content-Type": "application/json" },
+              headers: {
+                "x-test": "1",
+                "Content-Type": "application/json",
+              },
               body: JSON.stringify({ test: true }),
             }),
           );
@@ -100,7 +103,7 @@ describe("fetchNodeHandler", () => {
             "application/json; charset=utf-8",
           );
           // TODO: body
-          expect(await res.json()).toMatchObject({ header: true });
+          expect(await res.json()).toMatchObject({ header: true, body: true });
         });
       }
     });

@@ -8,9 +8,17 @@ export class WebIncomingMessage extends IncomingMessage {
     this.method = req.method;
     const url = new URL(req.url);
     this.url = url.pathname + url.search;
-    this.headers = {};
+
     for (const [key, value] of req.headers.entries()) {
       this.headers[key.toLowerCase()] = value;
+    }
+    if (
+      req.method !== "GET" &&
+      req.method !== "HEAD" &&
+      !this.headers["content-length"] &&
+      !this.headers["transfer-encoding"]
+    ) {
+      this.headers["transfer-encoding"] = "chunked";
     }
 
     const onData = (chunk: any) => {
