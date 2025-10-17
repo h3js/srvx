@@ -47,3 +47,14 @@ export async function fetchNodeHandler(
     });
   }
 }
+
+/**
+ * Converts a Node.js HTTP handler into a Fetch API handler.
+ *
+ * @experimental Behavior might be unstable.
+ */
+export function nodeToFetchHandler(
+  handler: NodeHttpHandler,
+): (req: ServerRequest) => Promise<Response> {
+  return (req: ServerRequest) => fetchNodeHandler(handler, req);
+}

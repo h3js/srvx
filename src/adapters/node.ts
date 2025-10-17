@@ -38,7 +38,7 @@ export {
 
 export { sendNodeResponse } from "./_node/send.ts";
 
-export { fetchNodeHandler } from "./_node/web/fetch.ts";
+export { fetchNodeHandler, nodeToFetchHandler } from "./_node/web/fetch.ts";
 
 export function serve(options: ServerOptions): Server {
   return new NodeServer(options);
