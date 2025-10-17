@@ -1,4 +1,3 @@
-import { splitSetCookieString } from "cookie-es";
 import { kNodeInspect } from "./_common.ts";
 
 import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
@@ -55,7 +54,7 @@ export const NodeRequestHeaders: {
       if (!setCookie || setCookie.length === 0) {
         return [];
       }
-      return splitSetCookieString(setCookie);
+      return Array.isArray(setCookie) ? setCookie : [setCookie];
     }
 
     has(name: string): boolean {
@@ -183,7 +182,7 @@ export const NodeResponseHeaders: {
       if (!setCookie) {
         return [];
       }
-      return splitSetCookieString(setCookie);
+      return Array.isArray(setCookie) ? setCookie : [setCookie];
     }
 
     has(name: string): boolean {

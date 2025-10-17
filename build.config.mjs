@@ -12,7 +12,6 @@ export default defineBuildConfig({
         "src/cli.ts",
         "src/static.ts",
         "src/log.ts",
-        "src/cookie.ts",
         ...[
           "deno",
           "bun",
