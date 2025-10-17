@@ -30,12 +30,7 @@ export async function sendNodeResponse(
     return endNodeResponse(nodeRes);
   }
 
-  const headerEntries: NodeHttp.OutgoingHttpHeader[] = [];
-  for (const [key, value] of webRes.headers) {
-    headerEntries.push([key, value]);
-  }
-
-  writeHead(nodeRes, webRes.status, webRes.statusText, headerEntries.flat());
+  writeHead(nodeRes, webRes.status, webRes.statusText, [...webRes.headers]);
 
   return webRes.body
     ? streamBody(webRes.body, nodeRes)
