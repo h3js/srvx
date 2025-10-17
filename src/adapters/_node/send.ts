@@ -1,5 +1,3 @@
-import { splitSetCookieString } from "cookie-es";
-
 import type { Readable as NodeReadable } from "node:stream";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
@@ -33,13 +31,18 @@ export async function sendNodeResponse(
   }
 
   const headerEntries: NodeHttp.OutgoingHttpHeader[] = [];
+  let hasSetCookie = false;
   for (const [key, value] of webRes.headers) {
     if (key === "set-cookie") {
-      for (const setCookie of splitSetCookieString(value)) {
-        headerEntries.push(["set-cookie", setCookie]);
-      }
+      hasSetCookie = true;
     } else {
       headerEntries.push([key, value]);
+    }
+  }
+  if (hasSetCookie) {
+    const setCookieValues = webRes.headers.getSetCookie();
+    for (const setCookie of setCookieValues) {
+      headerEntries.push(["set-cookie", setCookie]);
     }
   }
 

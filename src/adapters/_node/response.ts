@@ -1,7 +1,6 @@
 import type NodeHttp from "node:http";
 import type { Readable as NodeReadable } from "node:stream";
 
-import { splitSetCookieString } from "cookie-es";
 import { lazyInherit } from "../../_inherit.ts";
 
 // prettier-ignore
@@ -150,13 +149,13 @@ export const NodeResponse: {
       let hasContentLength: boolean | undefined;
       if (headerEntries) {
         for (const [key, value] of headerEntries) {
-          if (key === "set-cookie") {
-            for (const setCookie of splitSetCookieString(value)) {
-              rawNodeHeaders.push(["set-cookie", setCookie]);
+          if (Array.isArray(value)) {
+            for (const v of value) {
+              rawNodeHeaders.push([key, v]);
             }
-            continue;
+          } else {
+            rawNodeHeaders.push([key, value]);
           }
-          rawNodeHeaders.push([key, value]);
           if (key === "content-type") {
             hasContentTypeHeader = true;
           } else if (key === "content-length") {
