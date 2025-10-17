@@ -7,6 +7,14 @@ import { fixture } from "./_fixture.ts";
 
 const tls = await getTLSCert();
 
+const isDeno = !!globalThis.Deno;
+const isBun = !!globalThis.Bun;
+const runtime = isDeno
+  ? `deno-node-compat`
+  : isBun
+    ? `bun-node-compat`
+    : "node";
+
 const testConfigs = [
   {
     name: "http1",
@@ -31,7 +39,10 @@ const testConfigs = [
 ];
 
 for (const config of testConfigs) {
-  describe.sequential(`node (${config.name})`, () => {
+  if (isDeno && config.http2) {
+    continue; // Not implemented yet in Deno!
+  }
+  describe.sequential(`${runtime} (${config.name})`, () => {
     const client = getHttpClient(config.http2);
     let server: ReturnType<typeof serve> | undefined;
 
@@ -55,7 +66,7 @@ for (const config of testConfigs) {
 
     addTests({
       url: (path) => server!.url! + path.slice(1),
-      runtime: "node",
+      runtime,
       fetch: client.fetch,
     });
   });
