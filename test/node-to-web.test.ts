@@ -102,11 +102,7 @@ describe("fetchNodeHandler", () => {
             }),
           );
           expect(res.status).toBe(418);
-
-          // TODO
-          if (!globalThis.Deno) {
-            expect(res.statusText).toBe("I'm a Moka Pot");
-          }
+          expect(res.statusText).toBe("I'm a Moka Pot");
 
           expect(res.headers.get("Content-Type")).toBe(
             "application/json; charset=utf-8",
