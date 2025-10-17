@@ -7,6 +7,7 @@ import type {
 } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import * as nodeHTTP from "node:http";
 import { dirname, extname, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -324,17 +325,12 @@ function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
 ): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
-  const http = process.getBuiltinModule("node:http");
-  if (!http || !http.Server) {
-    const res = await cb();
-    return { res };
-  }
-  const originalListen = http.Server.prototype.listen;
+  const originalListen = nodeHTTP.Server.prototype.listen;
   let res: T;
   let listenHandler: NodeHttpHandler | undefined;
   try {
     // @ts-expect-error
-    http.Server.prototype.listen = function (this: Server, arg1, arg2) {
+    nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
       // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
       // @ts-expect-error
       listenHandler = this._events.request;
@@ -343,7 +339,7 @@ async function interceptListen<T = unknown>(
       }
 
       // Restore original listen method
-      http.Server.prototype.listen = originalListen;
+      nodeHTTP.Server.prototype.listen = originalListen;
 
       // Defer callback execution
       globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
@@ -364,7 +360,7 @@ async function interceptListen<T = unknown>(
     };
     res = await cb();
   } finally {
-    http.Server.prototype.listen = originalListen;
+    nodeHTTP.Server.prototype.listen = originalListen;
   }
   return { res, listenHandler };
 }
