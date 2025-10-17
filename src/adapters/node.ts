@@ -10,6 +10,10 @@ import {
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
+import nodeHTTP from "node:http";
+import nodeHTTPS from "node:https";
+import nodeHTTP2 from "node:http2";
+
 import type NodeHttp from "node:http";
 import type NodeHttps from "node:https";
 import type NodeHttp2 from "node:http2";
@@ -108,8 +112,7 @@ class NodeServer implements Server {
 
     if (isHttp2) {
       if (this.#isSecure) {
-        const { createSecureServer } = process.getBuiltinModule("node:http2");
-        server = createSecureServer(
+        server = nodeHTTP2.createSecureServer(
           { allowHTTP1: true, ...this.serveOptions },
           handler,
         );
@@ -117,14 +120,12 @@ class NodeServer implements Server {
         throw new Error("node.http2 option requires tls certificate!");
       }
     } else if (this.#isSecure) {
-      const { createServer } = process.getBuiltinModule("node:https");
-      server = createServer(
+      server = nodeHTTPS.createServer(
         this.serveOptions as NodeHttps.ServerOptions,
         handler,
       );
     } else {
-      const { createServer } = process.getBuiltinModule("node:http");
-      server = createServer(
+      server = nodeHTTP.createServer(
         this.serveOptions as NodeHttp.ServerOptions,
         handler,
       );
