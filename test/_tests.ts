@@ -60,16 +60,11 @@ export function addTests(opts: {
       unsetHeader: null,
     });
 
-    // TODO
-    if (opts.runtime !== "deno-node-compat") {
-      expect(response.headers.has("content-type")).toBe(true);
-      expect(response.headers.get("content-type")).toMatch(
-        /^application\/json/,
-      );
+    expect(response.headers.has("content-type")).toBe(true);
+    expect(response.headers.get("content-type")).toMatch(/^application\/json/);
 
-      expect(response.headers.get("x-req-foo")).toBe("bar");
-      expect(response.headers.get("x-req-bar")).toBe("baz");
-    }
+    expect(response.headers.get("x-req-foo")).toBe("bar");
+    expect(response.headers.get("x-req-bar")).toBe("baz");
   });
 
   test("response headers mutated", async () => {
@@ -77,11 +72,8 @@ export function addTests(opts: {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-ignored")).toBeNull();
 
-    // TODO
-    if (opts.runtime !== "deno-node-compat") {
-      expect(response.headers.get("x-test-header-1")).toBe("1");
-      expect(response.headers.get("x-test-header-2")).toBe("2");
-    }
+    expect(response.headers.get("x-test-header-1")).toBe("1");
+    expect(response.headers.get("x-test-header-2")).toBe("2");
   });
 
   test("POST works (binary body)", async () => {
@@ -147,7 +139,7 @@ export function addTests(opts: {
     const aborts = await res.json();
     // console.log(aborts.map((a: any) => `${a.request}`).join("\n"));
 
-    // TODO
+    // Deno Node.js compat behaves differently!!!
     if (opts.runtime !== "deno-node-compat") {
       expect(aborts.length).toBe(expectedAbortCount);
     }
@@ -169,10 +161,7 @@ export function addTests(opts: {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("ok");
 
-      // TODO
-      if (opts.runtime !== "deno-node-compat") {
-        expect(response.headers.get("x-plugin-header")).toBe("1");
-      }
+      expect(response.headers.get("x-plugin-header")).toBe("1");
     });
   });
 
@@ -216,10 +205,7 @@ export function addTests(opts: {
       });
       expect(response.status).toBe(200);
 
-      // TODO
-      if (opts.runtime !== "deno-node-compat") {
-        expect(response.headers.get("x-clone-with-headers")).toBe("true");
-      }
+      expect(response.headers.get("x-clone-with-headers")).toBe("true");
     });
   });
 
