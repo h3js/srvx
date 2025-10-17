@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-
 import express from "express";
-
-import type { NodeHttp1Handler, NodeHttpHandler } from "../src/types.ts";
+import type { NodeHttpHandler } from "../src/types.ts";
 import { fetchNodeHandler, serve } from "../src/adapters/node.ts";
 
 const fetchCallers = [
@@ -31,7 +29,7 @@ const fetchCallers = [
 
 describe("fetchNodeHandler", () => {
   // Fixture: simple Node.js HTTP handler
-  const nodeHandler: NodeHttp1Handler = async (req, res) => {
+  const nodeHandler: NodeHttpHandler = async (req, res) => {
     // Read body
     const body: any = await new Promise((resolve) => {
       const chunks: Uint8Array[] = [];
