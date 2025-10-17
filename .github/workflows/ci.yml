@@ -33,6 +33,7 @@ jobs:
       - run: pnpm test:types
       - run: pnpm vitest --coverage
       - run: deno run test:node-compat:deno
+      - run: bun run test:node-compat:bun
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
