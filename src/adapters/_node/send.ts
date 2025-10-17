@@ -31,19 +31,8 @@ export async function sendNodeResponse(
   }
 
   const headerEntries: NodeHttp.OutgoingHttpHeader[] = [];
-  let hasSetCookie = false;
   for (const [key, value] of webRes.headers) {
-    if (key === "set-cookie") {
-      hasSetCookie = true;
-      continue;
-    }
     headerEntries.push([key, value]);
-  }
-  if (hasSetCookie) {
-    const setCookieValues = webRes.headers.getSetCookie();
-    for (const setCookie of setCookieValues) {
-      headerEntries.push(["set-cookie", setCookie]);
-    }
   }
 
   writeHead(nodeRes, webRes.status, webRes.statusText, headerEntries.flat());
