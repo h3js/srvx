@@ -83,9 +83,9 @@ const fixtures: { name: string; skip?: boolean; handler: NodeHttpHandler }[] = [
 
 describe("fetchNodeHandler", () => {
   for (const fixture of fixtures) {
-    describe.skipIf(fixture.skip)(fixture.name, () => {
+    describe(fixture.name, () => {
       for (const caller of fetchCallers) {
-        test.skipIf(caller.skip)(caller.name, async () => {
+        test(caller.name, async () => {
           const res = await caller.fetchNodeHandler(
             fixture.handler as any,
             new Request("http://localhost/", {
