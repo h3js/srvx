@@ -9,7 +9,7 @@ export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView |
 export interface PreparedNodeResponse {
   status: number;
   statusText: string;
-  headers: NodeHttp.OutgoingHttpHeader[];
+  headers: [string, string][];
   body: PreparedNodeResponseBody;
 }
 
@@ -132,7 +132,7 @@ export const NodeResponse: {
       }
 
       // Headers
-      const rawNodeHeaders: NodeHttp.OutgoingHttpHeader[] = [];
+      const headers: [string, string][] = [];
       const initHeaders = this.#init?.headers;
       const headerEntries =
         this.#response?.headers ||
@@ -151,10 +151,10 @@ export const NodeResponse: {
         for (const [key, value] of headerEntries) {
           if (Array.isArray(value)) {
             for (const v of value) {
-              rawNodeHeaders.push([key, v]);
+              headers.push([key, v]);
             }
           } else {
-            rawNodeHeaders.push([key, value]);
+            headers.push([key, value]);
           }
           if (key === "content-type") {
             hasContentTypeHeader = true;
@@ -164,10 +164,10 @@ export const NodeResponse: {
         }
       }
       if (contentType && !hasContentTypeHeader) {
-        rawNodeHeaders.push(["content-type", contentType]);
+        headers.push(["content-type", contentType]);
       }
       if (contentLength && !hasContentLength) {
-        rawNodeHeaders.push(["content-length", String(contentLength)]);
+        headers.push(["content-length", String(contentLength)]);
       }
 
       // Free up memory
@@ -179,7 +179,7 @@ export const NodeResponse: {
       return {
         status,
         statusText,
-        headers: rawNodeHeaders,
+        headers,
         body,
       };
     }

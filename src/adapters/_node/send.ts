@@ -15,7 +15,7 @@ export async function sendNodeResponse(
   // Fast path for NodeResponse
   if ((webRes as NodeResponse).nodeResponse) {
     const res = (webRes as NodeResponse).nodeResponse();
-    writeHead(nodeRes, res.status, res.statusText, res.headers.flat());
+    writeHead(nodeRes, res.status, res.statusText, res.headers);
     if (res.body) {
       if (res.body instanceof ReadableStream) {
         return streamBody(res.body, nodeRes);
@@ -30,7 +30,8 @@ export async function sendNodeResponse(
     return endNodeResponse(nodeRes);
   }
 
-  writeHead(nodeRes, webRes.status, webRes.statusText, [...webRes.headers]);
+  const rawHeaders = [...webRes.headers];
+  writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
   return webRes.body
     ? streamBody(webRes.body, nodeRes)
@@ -41,13 +42,20 @@ function writeHead(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  headers: NodeHttp.OutgoingHttpHeader[],
+  rawHeaders: [string, string][],
 ): void {
+  // Node.js writeHead accepts a raw array of [key, value, key, value] or [[key, value], [key, value]]
+  // https://github.com/nodejs/node/blob/v22.14.0/lib/_http_server.js#L376
+  // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
+  // But it has an inconsistency in slow-path that does not unflattens!!
+  // https://github.com/h3js/srvx/pull/40
+  // Deno does not support flatten in both cases.
+  const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
-      nodeRes.writeHead(status, headers.flat() as any);
+      nodeRes.writeHead(status, writeHeaders);
     } else {
-      nodeRes.writeHead(status, statusText, headers.flat() as any);
+      nodeRes.writeHead(status, statusText, writeHeaders);
     }
   }
 }
