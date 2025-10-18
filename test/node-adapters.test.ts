@@ -1,5 +1,14 @@
-import type { NodeHttpHandler } from "../src/types.ts";
-import { fetchNodeHandler, serve } from "../src/adapters/node.ts";
+import type {
+  NodeHttpHandler,
+  NodeServerRequest,
+  NodeServerResponse,
+} from "../src/types.ts";
+import {
+  fetchNodeHandler,
+  serve,
+  toNodeHandler,
+  toFetchHandler,
+} from "../src/adapters/node.ts";
 
 import express from "express";
 import fastify from "fastify";
@@ -113,4 +122,53 @@ describe("fetchNodeHandler", () => {
       }
     });
   }
+});
+
+describe("adapters", () => {
+  function simpleNodeHandler(req: NodeServerRequest, res: NodeServerResponse) {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok");
+  }
+
+  function simpleWebHandler(): Response {
+    return new Response("ok", { status: 200 });
+  }
+
+  test("toFetchHandler", async () => {
+    const webHandler = toFetchHandler(simpleNodeHandler);
+    expect(webHandler.__nodeHandler).toBe(simpleNodeHandler);
+    expect(webHandler.name).toBe(
+      "simpleNodeHandler (converted to Web handler)",
+    );
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+
+  test("toNodeHandler", async () => {
+    const nodeHandler = toNodeHandler(simpleWebHandler);
+    expect(nodeHandler.__fetchHandler).toBe(simpleWebHandler);
+    expect(nodeHandler.name).toBe(
+      "simpleWebHandler (converted to Node handler)",
+    );
+
+    const res = await fetchNodeHandler(
+      nodeHandler,
+      new Request("http://localhost/"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+
+  test("toFetchHandler(toNodeHandler())", async () => {
+    expect(toFetchHandler(toNodeHandler(simpleWebHandler))).toBe(
+      simpleWebHandler,
+    );
+  });
+
+  test("toNodeHandler(toFetchHandler())", async () => {
+    expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(
+      simpleNodeHandler,
+    );
+  });
 });
