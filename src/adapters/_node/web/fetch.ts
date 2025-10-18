@@ -53,7 +53,7 @@ export async function fetchNodeHandler(
  *
  * @experimental Behavior might be unstable.
  */
-export function nodeToFetchHandler(
+export function toWebHandler(
   handler: NodeHttpHandler,
 ): (req: ServerRequest) => Promise<Response> {
   return (req: ServerRequest) => fetchNodeHandler(handler, req);
