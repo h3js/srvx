@@ -1,4 +1,8 @@
-import type { ServerRequest, NodeHttpHandler } from "../../../types.ts";
+import type {
+  ServerRequest,
+  NodeHttpHandler,
+  FetchHandler,
+} from "../../../types.ts";
 
 import { WebIncomingMessage } from "./incoming.ts";
 import { WebRequestSocket } from "./socket.ts";
@@ -54,7 +58,11 @@ export async function fetchNodeHandler(
  * @experimental Behavior might be unstable.
  */
 export function toWebHandler(
-  handler: NodeHttpHandler,
-): (req: ServerRequest) => Promise<Response> {
-  return (req: ServerRequest) => fetchNodeHandler(handler, req);
+  handler: NodeHttpHandler | FetchHandler,
+): FetchHandler {
+  if (handler.length === 1) {
+    return handler as FetchHandler;
+  }
+  return (req: ServerRequest) =>
+    fetchNodeHandler(handler as NodeHttpHandler, req);
 }
