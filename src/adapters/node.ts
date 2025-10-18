@@ -18,8 +18,6 @@ import type NodeHttp from "node:http";
 import type NodeHttps from "node:https";
 import type NodeHttp2 from "node:http2";
 import type {
-  FetchHandler,
-  NodeHttpHandler,
   NodeServerRequest,
   NodeServerResponse,
   Server,
@@ -28,30 +26,16 @@ import type {
 } from "../types.ts";
 
 export { FastURL } from "../_url.ts";
-
 export { NodeRequest } from "./_node/request.ts";
 export { NodeRequestHeaders, NodeResponseHeaders } from "./_node/headers.ts";
-export {
-  NodeResponse,
-  NodeResponse as FastResponse,
-} from "./_node/response.ts";
-
+export { NodeResponse } from "./_node/response.ts";
+export { NodeResponse as FastResponse } from "./_node/response.ts";
 export { sendNodeResponse } from "./_node/send.ts";
-
-export { fetchNodeHandler, toWebHandler } from "./_node/web/fetch.ts";
+export { fetchNodeHandler } from "./_node/web/fetch.ts";
+export { toNodeHandler, toFetchHandler } from "./_node/adapter.ts";
 
 export function serve(options: ServerOptions): Server {
   return new NodeServer(options);
-}
-
-export function toNodeHandler(fetchHandler: FetchHandler): NodeHttpHandler {
-  return (nodeReq, nodeRes) => {
-    const request = new NodeRequest({ req: nodeReq, res: nodeRes });
-    const res = fetchHandler(request);
-    return res instanceof Promise
-      ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
-      : sendNodeResponse(nodeRes, res);
-  };
 }
 
 // https://nodejs.org/api/http.html

@@ -1,8 +1,4 @@
-import type {
-  ServerRequest,
-  NodeHttpHandler,
-  FetchHandler,
-} from "../../../types.ts";
+import type { ServerRequest, NodeHttpHandler } from "../../../types.ts";
 
 import { WebIncomingMessage } from "./incoming.ts";
 import { WebRequestSocket } from "./socket.ts";
@@ -50,19 +46,4 @@ export async function fetchNodeHandler(
       statusText: "Internal Server Error",
     });
   }
-}
-
-/**
- * Converts a Node.js HTTP handler into a Fetch API handler.
- *
- * @experimental Behavior might be unstable.
- */
-export function toWebHandler(
-  handler: NodeHttpHandler | FetchHandler,
-): FetchHandler {
-  if (handler.length === 1) {
-    return handler as FetchHandler;
-  }
-  return (req: ServerRequest) =>
-    fetchNodeHandler(handler as NodeHttpHandler, req);
 }
