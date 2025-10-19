@@ -16,9 +16,11 @@ jobs:
       - uses: denoland/setup-deno@v2
       - run: pnpm install
       - run: pnpm lint
-      - run: pnpm test:types
       - run: pnpm build
+      - run: pnpm test:types
       - run: pnpm vitest --coverage
+      - run: deno run test:node-compat:deno
+      - run: bun run test:node-compat:bun
       - uses: codecov/codecov-action@v3
         with: { token: "${{ secrets.CODECOV_TOKEN }}" }
   publish:
