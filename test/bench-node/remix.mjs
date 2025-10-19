@@ -2,8 +2,10 @@ import * as http from "node:http";
 import { createRequestListener } from "@mjackson/node-fetch-server";
 
 let server = http.createServer(
-  createRequestListener(() => {
-    return new Response("Hello!");
+  createRequestListener((req) => {
+    return new Response("Hello!", {
+      headers: { "x-test": req.headers.get("x-test") },
+    });
   }),
 );
 

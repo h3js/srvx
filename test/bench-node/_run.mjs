@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { execSync } from "node:child_process";
+import assert from "node:assert";
 
 let ohaVersion;
 try {
@@ -42,8 +43,22 @@ for (const name of names) {
   const entry = new URL(`${name}.mjs`, import.meta.url);
   const worker = new Worker(entry, { type: "module" });
   await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const res = await fetch("http://localhost:3000", {
+    method: "GET",
+    headers: { "x-test": "123" },
+  });
+
+  assert.equal(res.status, 200, `${name} - invalid status code`);
+  assert.equal(await res.text(), "Hello!");
+  assert.equal(
+    res.headers.get("x-test"),
+    "123",
+    `${name} - missing custom header`,
+  );
+
   const stdout = execSync(
-    "oha http://localhost:3000 --no-tui --output-format json -z 3sec",
+    'oha http://localhost:3000 --no-tui --output-format json -z 3sec -H "x-test: 123"',
     {
       encoding: "utf8",
     },
