@@ -57,7 +57,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions: { id-token: write, contents: read }
-    needs: [tests, tests_node, test_deno, test_bun]
+    needs: [tests_common, tests_node, tests_deno, tests_bun]
     if: contains('refs/heads/main', github.ref) && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v5
