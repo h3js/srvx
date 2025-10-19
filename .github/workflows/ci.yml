@@ -5,7 +5,7 @@ on:
   pull_request: { branches: [main] }
 
 jobs:
-  tests:
+  tests_common:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -32,7 +32,7 @@ jobs:
         if: matrix.node-version == 24
         with:
           token: "${{ secrets.CODECOV_TOKEN }}"
-  test_deno:
+  tests_deno:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -43,7 +43,7 @@ jobs:
       - run: pnpm install
       - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts
       - run: deno run test:node-compat:deno
-  test_bun:
+  tests_bun:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
