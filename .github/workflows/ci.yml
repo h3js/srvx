@@ -7,22 +7,36 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22, 24]
     steps:
       - uses: actions/checkout@v5
       - run: npm i -g --force corepack && corepack enable
       - uses: actions/setup-node@v5
-        with: { node-version: lts/*, cache: pnpm }
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
       - uses: oven-sh/setup-bun@v2
+        if: matrix.node-version == 24
       - uses: denoland/setup-deno@v2
+        if: matrix.node-version == 24
       - run: pnpm install
       - run: pnpm lint
+        if: matrix.node-version == 24
       - run: pnpm build
+        if: matrix.node-version == 24
       - run: pnpm test:types
+        if: matrix.node-version == 24
       - run: pnpm vitest --coverage
       - run: deno run test:node-compat:deno
+        if: matrix.node-version == 24
       - run: bun run test:node-compat:bun
+        if: matrix.node-version == 24
       - uses: codecov/codecov-action@v3
-        with: { token: "${{ secrets.CODECOV_TOKEN }}" }
+        if: matrix.node-version == 24
+        with:
+          token: "${{ secrets.CODECOV_TOKEN }}"
   publish:
     runs-on: ubuntu-latest
     permissions: { id-token: write, contents: read }
