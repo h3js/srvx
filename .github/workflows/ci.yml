@@ -7,6 +7,17 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npm i -g --force corepack && corepack enable
+      - uses: actions/setup-node@v5
+        with: { node-version: lts/*, cache: pnpm }
+      - run: pnpm install
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test:types
+  tests_node:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [20, 22, 24]
@@ -14,33 +25,39 @@ jobs:
       - uses: actions/checkout@v5
       - run: npm i -g --force corepack && corepack enable
       - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: pnpm
-      - uses: oven-sh/setup-bun@v2
-        if: matrix.node-version == 24
-      - uses: denoland/setup-deno@v2
-        if: matrix.node-version == 24
+        with: { node-version: "${{ matrix.node-version }}", cache: pnpm }
       - run: pnpm install
-      - run: pnpm lint
-        if: matrix.node-version == 24
-      - run: pnpm build
-        if: matrix.node-version == 24
-      - run: pnpm test:types
-        if: matrix.node-version == 24
-      - run: pnpm vitest --coverage
-      - run: deno run test:node-compat:deno
-        if: matrix.node-version == 24
-      - run: bun run test:node-compat:bun
-        if: matrix.node-version == 24
+      - run: pnpm vitest --coverage test/node.test.ts test/node-adapters.test.ts test/url.test.ts
       - uses: codecov/codecov-action@v3
         if: matrix.node-version == 24
         with:
           token: "${{ secrets.CODECOV_TOKEN }}"
+  test_deno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npm i -g --force corepack && corepack enable
+      - uses: actions/setup-node@v5
+        with: { node-version: lts/*, cache: pnpm }
+      - uses: denoland/setup-deno@v2
+      - run: pnpm install
+      - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts
+      - run: deno run test:node-compat:deno
+  test_bun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npm i -g --force corepack && corepack enable
+      - uses: actions/setup-node@v5
+        with: { node-version: lts/*, cache: pnpm }
+      - uses: oven-sh/setup-bun@v2
+      - run: pnpm install
+      - run: pnpm vitest --coverage test/bun.test.ts test/url.test.ts
+      - run: bun run test:node-compat:bun
   publish:
     runs-on: ubuntu-latest
     permissions: { id-token: write, contents: read }
-    needs: tests
+    needs: [tests, tests_node, test_deno, test_bun]
     if: contains('refs/heads/main', github.ref) && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v5
