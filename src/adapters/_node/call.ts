@@ -40,7 +40,7 @@ export function callNodeHandler(
             for (const v of value) {
               headerEntries.push([name, v]);
             }
-          } else if (value != null) {
+          } else if (value) {
             headerEntries.push([name, String(value)]);
           }
         }

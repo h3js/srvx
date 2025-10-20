@@ -1,8 +1,8 @@
-import { kNodeInspect } from "./_common.ts";
-
-import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
+import type { NodeServerRequest } from "../../types.ts";
 import { lazyInherit } from "../../_inherit.ts";
 import type { NodeRequestContext } from "./request.ts";
+
+// https://github.com/nodejs/node/blob/main/lib/_http_incoming.js
 
 export type NodeRequestHeaders = InstanceType<typeof NodeRequestHeaders>;
 
@@ -11,12 +11,16 @@ export const NodeRequestHeaders: {
 } = /* @__PURE__ */ (() => {
   const NativeHeaders = globalThis.Headers;
 
-  class Headers {
+  class Headers implements Partial<globalThis.Headers> {
     #req: NodeServerRequest;
     #headers: globalThis.Headers | undefined;
 
     constructor(nodeCtx: NodeRequestContext) {
       this.#req = nodeCtx.req;
+    }
+
+    static [Symbol.hasInstance](val: unknown) {
+      return val instanceof NativeHeaders;
     }
 
     get _headers() {
