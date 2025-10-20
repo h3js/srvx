@@ -23,6 +23,10 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
   pending: boolean = false;
   readyState: SocketReadyState = "open";
 
+  remoteAddress: string = "";
+  remoteFamily: string = "";
+  remotePort: number = 0;
+
   #request: Request;
 
   #timeoutTimer?: ReturnType<typeof setTimeout>;

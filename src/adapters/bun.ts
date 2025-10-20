@@ -22,7 +22,7 @@ class BunServer implements Server<BunFetchHandler> {
   readonly runtime = "bun";
   readonly options: Server["options"];
   readonly bun: Server["bun"] = {};
-  readonly serveOptions: bun.ServeOptions | bun.TLSServeOptions;
+  readonly serveOptions: bun.Serve.Options<any>;
   readonly fetch: BunFetchHandler;
 
   #wait: ReturnType<typeof createWaitUntil>;
@@ -58,12 +58,12 @@ class BunServer implements Server<BunFetchHandler> {
       ...resolvePortAndHost(this.options),
       reusePort: this.options.reusePort,
       error: this.options.error,
-      ...this.options.bun,
+      ...(this.options.bun as any),
       tls: {
         cert: tls?.cert,
         key: tls?.key,
         passphrase: tls?.passphrase,
-        ...(this.options.bun as bun.TLSServeOptions)?.tls,
+        ...(this.options.bun as bun.Serve.Options<any>)?.tls,
       },
       fetch: this.fetch,
     };

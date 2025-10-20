@@ -53,8 +53,10 @@ function writeHead(
   const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
+      // @ts-expect-error
       nodeRes.writeHead(status, writeHeaders);
     } else {
+      // @ts-expect-error
       nodeRes.writeHead(status, statusText, writeHeaders);
     }
   }

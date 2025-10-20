@@ -53,6 +53,7 @@ const fixtures: { name: string; skip?: boolean; handler: NodeHttpHandler }[] = [
       });
 
       setImmediate(() => {
+        // @ts-expect-error
         res.writeHead(418, "I'm a Moka Pot", {
           "Content-Type": "application/json; charset=utf-8",
         });
@@ -126,6 +127,7 @@ describe("fetchNodeHandler", () => {
 
 describe("adapters", () => {
   function simpleNodeHandler(req: NodeServerRequest, res: NodeServerResponse) {
+    // @ts-expect-error
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ok");
   }

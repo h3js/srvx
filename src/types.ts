@@ -149,7 +149,7 @@ export interface ServerOptions {
    *
    * @docs https://bun.sh/docs/api/http
    */
-  bun?: Omit<Bun.ServeOptions | Bun.TLSServeOptions, "fetch">;
+  bun?: Omit<Bun.Serve.Options<any>, "fetch">;
 
   /**
    * Deno server options
@@ -211,7 +211,7 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Bun context.
    */
-  readonly bun?: { server?: Bun.Server };
+  readonly bun?: { server?: Bun.Server<any> };
 
   /**
    * Deno context.
@@ -271,7 +271,7 @@ export interface ServerRuntimeContext {
    * Underlying Bun server request context.
    */
   bun?: {
-    server: Bun.Server;
+    server: Bun.Server<any>;
   };
 
   /**
@@ -326,7 +326,7 @@ export type ErrorHandler = (error: unknown) => Response | Promise<Response>;
 
 export type BunFetchHandler = (
   request: Request,
-  server?: Bun.Server,
+  server?: Bun.Server<any>,
 ) => Response | Promise<Response>;
 
 export type DenoFetchHandler = (
