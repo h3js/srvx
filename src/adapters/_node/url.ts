@@ -1,4 +1,4 @@
-import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
+import type { NodeServerRequest } from "../../types.ts";
 import { FastURL } from "../../_url.ts";
 
 export class NodeRequestURL extends FastURL {

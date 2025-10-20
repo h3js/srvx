@@ -65,6 +65,10 @@ export const NodeRequest: {
       };
     }
 
+    static [Symbol.hasInstance](val: unknown) {
+      return val instanceof NativeRequest;
+    }
+
     get ip(): string | undefined {
       return this._node.req.socket?.remoteAddress;
     }

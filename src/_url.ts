@@ -46,6 +46,10 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
         }
       }
 
+      static [Symbol.hasInstance](val: unknown) {
+        return val instanceof NativeURL;
+      }
+
       get _url(): globalThis.URL {
         if (this.#url) {
           return this.#url;

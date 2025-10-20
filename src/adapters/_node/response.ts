@@ -42,6 +42,10 @@ export const NodeResponse: {
       this.#init = init;
     }
 
+    static [Symbol.hasInstance](val: unknown) {
+      return val instanceof NativeResponse;
+    }
+
     get status(): number {
       return this.#response?.status || this.#init?.status || 200;
     }
