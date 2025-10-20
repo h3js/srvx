@@ -30,7 +30,7 @@ export const NodeRequestHeaders: {
         const len = rawHeaders.length;
         for (let i = 0; i < len; i += 2) {
           const key = rawHeaders[i];
-          if (key[0] === ":") {
+          if (key.charCodeAt(0) === 58 /* : */) {
             continue;
           }
           const value = rawHeaders[i + 1];
@@ -69,7 +69,7 @@ export const NodeRequestHeaders: {
       const len = rawHeaders.length;
       for (let i = 0; i < len; i += 2) {
         const key = rawHeaders[i];
-        if (key[0] === ":") {
+        if (key.charCodeAt(0) === 58 /* : */) {
           continue;
         }
         const value = rawHeaders[i + 1];
