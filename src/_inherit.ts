@@ -22,7 +22,7 @@ export function lazyInherit(target: any, source: any, sourceKey: any): void {
           this[sourceKey][key] = value;
         };
     }
-    if (typeof desc.value === "function") {
+    if (!targetDesc?.value && typeof desc.value === "function") {
       modified = true;
       desc.value = function (...args: unknown[]) {
         // @ts-expect-error
