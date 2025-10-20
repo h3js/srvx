@@ -6,6 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createReadStream, ReadStream } from "node:fs";
 import { FastResponse } from "srvx";
 import { createGzip, createBrotliCompress } from "node:zlib";
+import { FastURL } from "./_url.ts";
 
 export interface ServeStaticOptions {
   /**
@@ -63,7 +64,8 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     if (!methods.has(req.method)) {
       return next();
     }
-    const path = new URL(req.url).pathname.slice(1).replace(/\/$/, "");
+    const url = (req._url ??= new FastURL(req.url));
+    const path = url.pathname.slice(1).replace(/\/$/, "");
     let paths: string[];
     if (path === "") {
       paths = ["index.html"];

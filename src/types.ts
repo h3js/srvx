@@ -291,6 +291,11 @@ export interface ServerRequestContext {
 
 export interface ServerRequest extends Request {
   /**
+   * Access to the parsed URL
+   */
+  _url?: URL;
+
+  /**
    * Runtime specific request context.
    */
   runtime?: ServerRuntimeContext;

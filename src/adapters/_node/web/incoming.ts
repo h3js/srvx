@@ -1,12 +1,14 @@
+import type { ServerRequest } from "../../../types.ts";
 import { IncomingMessage } from "node:http";
 import { WebRequestSocket } from "./socket.ts";
+import { FastURL } from "../../../_url.ts";
 
 export class WebIncomingMessage extends IncomingMessage {
-  constructor(req: Request, socket: WebRequestSocket) {
+  constructor(req: ServerRequest, socket: WebRequestSocket) {
     super(socket);
 
     this.method = req.method;
-    const url = new URL(req.url);
+    const url = (req._url ??= new FastURL(req.url));
     this.url = url.pathname + url.search;
 
     for (const [key, value] of req.headers.entries()) {
