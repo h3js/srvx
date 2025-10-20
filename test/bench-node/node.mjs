@@ -1,8 +1,6 @@
 import { createServer } from "node:http";
+import { nodeHandler } from "./_handler.mjs";
 
-const server = createServer((_req, res) => {
-  res.setHeader("x-test", _req.headers["x-test"] || "");
-  res.end("Hello!");
-});
+const server = createServer(nodeHandler);
 
 server.listen(3000);

@@ -1,12 +1,7 @@
 import { createServer } from "node:http";
 import { createServerAdapter } from "@whatwg-node/server";
+import { fetchHandler } from "./_handler.mjs";
 
-const nodeServer = createServer(
-  createServerAdapter((req) => {
-    return new Response("Hello!", {
-      headers: { "x-test": req.headers.get("x-test") },
-    });
-  }),
-);
+const nodeServer = createServer(createServerAdapter(fetchHandler));
 
 nodeServer.listen(3000);

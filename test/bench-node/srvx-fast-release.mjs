@@ -1,11 +1,10 @@
 import { serve, FastResponse } from "srvx-release";
+import { fetchHandler } from "./_handler.mjs";
+
+globalThis.Response = FastResponse;
 
 serve({
   port: 3000,
   silent: true,
-  fetch(req) {
-    return new FastResponse("Hello!", {
-      headers: { "x-test": req.headers.get("x-test") },
-    });
-  },
+  fetch: fetchHandler,
 });

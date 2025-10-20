@@ -1,10 +1,7 @@
 import { serve } from "@hono/node-server";
+import { fetchHandler } from "./_handler.mjs";
 
 serve({
   overrideGlobalObjects: true,
-  fetch(req) {
-    return new Response("Hello!", {
-      headers: { "x-test": req.headers.get("x-test") },
-    });
-  },
+  fetch: fetchHandler,
 });
