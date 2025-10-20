@@ -48,17 +48,17 @@ export const NodeRequest: {
   }
 
   class Request implements Partial<ServerRequest> {
-    _node!: NodeRequestContext;
-    _url!: URL;
+    #req: NodeServerRequest;
     runtime: ServerRequest["runtime"];
 
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortSignal?: AbortController;
 
+    #url?: URL;
+
     constructor(ctx: NodeRequestContext) {
-      this._node = ctx;
-      this._url = new NodeRequestURL({ req: ctx.req });
+      this.#req = ctx.req;
       this.runtime = {
         name: "node",
         node: ctx,
@@ -70,11 +70,17 @@ export const NodeRequest: {
     }
 
     get ip(): string | undefined {
-      return this._node.req.socket?.remoteAddress;
+      return this.#req.socket?.remoteAddress;
     }
 
     get method(): string {
-      return this._node.req.method || "GET";
+      return this.#req.method || "GET";
+    }
+
+    get _url() {
+      return (this.#url ||= new NodeRequestURL({
+        req: this.runtime!.node!.req,
+      }));
     }
 
     get url(): string {
@@ -82,13 +88,13 @@ export const NodeRequest: {
     }
 
     get headers(): Headers {
-      return (this.#headers ||= new NodeRequestHeaders(this._node));
+      return (this.#headers ||= new NodeRequestHeaders(this.#req));
     }
 
     get signal() {
       if (!this.#abortSignal) {
         this.#abortSignal = new AbortController();
-        const req = this._node.req;
+        const req = this.#req;
         const abort = (err?: any) => {
           this.#abortSignal?.abort(err);
         };
@@ -107,7 +113,7 @@ export const NodeRequest: {
           headers: this.headers,
           signal: this.signal,
           body: hasBody
-            ? (Readable.toWeb(this._node.req) as unknown as ReadableStream)
+            ? (Readable.toWeb(this.#req) as unknown as ReadableStream)
             : undefined,
         });
       }

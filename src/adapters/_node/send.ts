@@ -13,8 +13,8 @@ export async function sendNodeResponse(
   }
 
   // Fast path for NodeResponse
-  if ((webRes as NodeResponse).nodeResponse) {
-    const res = (webRes as NodeResponse).nodeResponse();
+  if ((webRes as NodeResponse)._toNodeResponse) {
+    const res = (webRes as NodeResponse)._toNodeResponse();
     writeHead(nodeRes, res.status, res.statusText, res.headers);
     if (res.body) {
       if (res.body instanceof ReadableStream) {

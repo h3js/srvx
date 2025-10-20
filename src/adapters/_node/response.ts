@@ -23,7 +23,7 @@ export const NodeResponse: {
     body?: BodyInit | null,
     init?: ResponseInit,
   ): globalThis.Response & {
-    readonly nodeResponse: () => PreparedNodeResponse;
+    _toNodeResponse: () => PreparedNodeResponse;
   };
 } = /* @__PURE__ */ (() => {
   const NativeResponse = globalThis.Response;
@@ -95,7 +95,7 @@ export const NodeResponse: {
       return this.#response;
     }
 
-    nodeResponse() {
+    _toNodeResponse() {
       // Status
       const status = this.status;
       const statusText = this.statusText;

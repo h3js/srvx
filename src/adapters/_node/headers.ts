@@ -1,13 +1,12 @@
 import type { NodeServerRequest } from "../../types.ts";
 import { lazyInherit } from "../../_inherit.ts";
-import type { NodeRequestContext } from "./request.ts";
 
 // https://github.com/nodejs/node/blob/main/lib/_http_incoming.js
 
 export type NodeRequestHeaders = InstanceType<typeof NodeRequestHeaders>;
 
 export const NodeRequestHeaders: {
-  new (nodeCtx: NodeRequestContext): globalThis.Headers;
+  new (req: NodeServerRequest): globalThis.Headers;
 } = /* @__PURE__ */ (() => {
   const NativeHeaders = globalThis.Headers;
 
@@ -15,8 +14,8 @@ export const NodeRequestHeaders: {
     #req: NodeServerRequest;
     #headers: globalThis.Headers | undefined;
 
-    constructor(nodeCtx: NodeRequestContext) {
-      this.#req = nodeCtx.req;
+    constructor(req: NodeServerRequest) {
+      this.#req = req;
     }
 
     static [Symbol.hasInstance](val: unknown) {
