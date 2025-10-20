@@ -45,20 +45,26 @@ for (const name of names) {
   await new Promise((resolve) => setTimeout(resolve, 200));
 
   const res = await fetch("http://localhost:3000", {
-    method: "GET",
-    headers: { "x-test": "123" },
+    method: "POST",
+    body: JSON.stringify({ message: "Hello!" }),
+    headers: { "x-test": "123", "Content-Type": "application/json" },
   });
 
   assert.equal(res.status, 200, `${name} - invalid status code`);
-  assert.equal(await res.text(), "Hello!");
+  assert.equal((await res.json()).message, "Hello!");
+  assert.equal(
+    res.headers.get("content-type"),
+    "application/json;charset=UTF-8",
+  );
   assert.equal(
     res.headers.get("x-test"),
     "123",
     `${name} - missing custom header`,
   );
 
+  // https://github.com/hatoo/oha
   const stdout = execSync(
-    'oha http://localhost:3000 --no-tui --output-format json -z 3sec -H "x-test: 123"',
+    `oha http://localhost:3000 --no-tui --output-format json -z 3sec -H "x-test: 123" -m POST -T "application/json" -d '{"message":"Hello!"}'`,
     {
       encoding: "utf8",
     },

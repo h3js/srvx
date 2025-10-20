@@ -53,7 +53,7 @@ export const fixture: (
       req.signal.addEventListener("abort", () => {
         aborts.push({
           request: `${req.method} ${url.pathname}`,
-          reason: req.signal.reason.toString(),
+          reason: req.signal.reason?.toString(),
         });
       });
 
