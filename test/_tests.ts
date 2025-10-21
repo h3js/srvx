@@ -145,6 +145,7 @@ export function addTests(opts: {
     }
   });
 
+  // https://github.com/h3js/srvx/pull/135
   test.skip("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
     expect(await res.text()).toBe("chunk1\nchunk2\n");
