@@ -147,7 +147,7 @@ export function addTests(opts: {
 
   test.skip("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
-    expect(await res.text()).toMatchInlineSnapshot();
+    expect(await res.text()).toBe("chunk1\nchunk2\n");
   });
 
   describe("plugin", () => {

@@ -200,7 +200,7 @@ export const fixture: (
                 await new Promise((resolve) => setTimeout(resolve, 100));
                 controller.enqueue(encoder.encode("chunk2\n"));
                 await new Promise((resolve) => setTimeout(resolve, 100));
-                // throw new Error("stream error!");
+                throw new Error("stream error!");
               },
             }),
             {
