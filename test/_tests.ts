@@ -5,6 +5,7 @@ export function addTests(opts: {
   url: (path: string) => string;
   runtime: string;
   fetch?: typeof globalThis.fetch;
+  http2?: boolean;
 }): void {
   const { url, fetch: _fetch = globalThis.fetch } = opts;
 
@@ -146,9 +147,22 @@ export function addTests(opts: {
   });
 
   // https://github.com/h3js/srvx/pull/135
-  test.skip("response stream error", async () => {
+  test.skipIf(opts.http2)("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
-    expect(await res.text()).toBe("chunk1\nchunk2\n");
+    expect(res.status).toBe(200);
+    const reader = res.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader!
+        .read()
+        .catch(() => ({ done: true, value: undefined }));
+      if (value) {
+        chunks.push(value);
+      }
+      if (done) break;
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    expect(body).toBe("chunk1\nchunk2\n");
   });
 
   describe("plugin", () => {
@@ -215,13 +229,9 @@ export function addTests(opts: {
     });
   });
 
-  test("absolute path in request line", async () => {
+  // TODO: Write test to make sure it is forbidden for http2/tls
+  test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));
-
-    if (_url.protocol === "https:") {
-      // TODO: Write test to make sure it is forbidden for http2/tls
-      return;
-    }
 
     const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
       const req = http.request({

@@ -74,6 +74,7 @@ for (const config of testConfigs) {
     addTests({
       url: (path) => server!.url! + path.slice(1),
       runtime,
+      http2: config.http2,
       fetch: client.fetch,
     });
   });
