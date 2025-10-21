@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.9.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.16...v0.9.0)
+
+### 🚀 Enhancements
+
+- `fetchNodeHandler` and `nodeToFetchHandler` ([#125](https://github.com/h3js/srvx/pull/125))
+- **toWebHandler:** Accept fetch or node handler as input ([2b0e232](https://github.com/h3js/srvx/commit/2b0e232))
+- Better `toNodeHandler` / `toFetchHandler` utils ([#130](https://github.com/h3js/srvx/pull/130))
+- Implement `Symbol.hasInstance` for all super classes ([529b11b](https://github.com/h3js/srvx/commit/529b11b))
+
+### 🔥 Performance
+
+- Use and cache parsed/fast url when possible ([da1caba](https://github.com/h3js/srvx/commit/da1caba))
+- **node:** Fast req body methods ([#134](https://github.com/h3js/srvx/pull/134))
+
+### 🩹 Fixes
+
+- **node:** Trigger abort signal when body read is done ([#122](https://github.com/h3js/srvx/pull/122))
+- **node, deno:** Use flatten headers only for node ([#129](https://github.com/h3js/srvx/pull/129))
+- **node:** Catch uncaught response stream error ([#135](https://github.com/h3js/srvx/pull/135))
+- **node:** Lowercase req header keys when iterating ([6adeb8e](https://github.com/h3js/srvx/commit/6adeb8e))
+
+### 💅 Refactors
+
+- ⚠️  Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️  Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- Rename to `toWebHandler` ([3124480](https://github.com/h3js/srvx/commit/3124480))
+- **node:** ⚠️  Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- Fix type issues ([83cc771](https://github.com/h3js/srvx/commit/83cc771))
+- **node:** ⚠️  Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+
+### 🏡 Chore
+
+- Fix typo in fastify example package.json ([#124](https://github.com/h3js/srvx/pull/124))
+- Update ci ([#131](https://github.com/h3js/srvx/pull/131))
+- Remove unused file ([bcc085d](https://github.com/h3js/srvx/commit/bcc085d))
+- Add note about `toFetchHandler` ([84fa36e](https://github.com/h3js/srvx/commit/84fa36e))
+- Refactor bench implementation handlers ([db78e5f](https://github.com/h3js/srvx/commit/db78e5f))
+- Update deps ([0d1ba69](https://github.com/h3js/srvx/commit/0d1ba69))
+- Update benchs ([9eda551](https://github.com/h3js/srvx/commit/9eda551))
+
+### ✅ Tests
+
+- Better abort tests ([#123](https://github.com/h3js/srvx/pull/123))
+- Run node-compat tests against other runtimes ([#128](https://github.com/h3js/srvx/pull/128))
+
+#### ⚠️ Breaking Changes
+
+- ⚠️  Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️  Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- **node:** ⚠️  Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- **node:** ⚠️  Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Hiroshi Ogawa <hi.ogawa.zz@gmail.com>
+- Wei Wang <wei@fastmail.com>
+- Manuel Schiller <meisterpink@gmail.com>
+
 ## v0.8.16
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.15...v0.8.16)
