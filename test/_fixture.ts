@@ -191,6 +191,25 @@ export const fixture: (
             },
           );
         }
+        case "/response/stream-error": {
+          const encoder = new TextEncoder();
+          return new _Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(encoder.encode("chunk1\n"));
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                controller.enqueue(encoder.encode("chunk2\n"));
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                // throw new Error("stream error!");
+              },
+            }),
+            {
+              headers: {
+                "content-type": "text/plain",
+              },
+            },
+          );
+        }
         case "/abort-log": {
           return _Response.json(aborts);
         }

@@ -145,6 +145,11 @@ export function addTests(opts: {
     }
   });
 
+  test.skip("response stream error", async () => {
+    const res = await fetch(url("/response/stream-error"));
+    expect(await res.text()).toMatchInlineSnapshot();
+  });
+
   describe("plugin", () => {
     test("intercept before handler", async () => {
       const response = await fetch(url("/"), {

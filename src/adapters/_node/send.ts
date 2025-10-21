@@ -114,7 +114,7 @@ export function streamBody(
   reader.read().then(streamHandle, streamCancel);
 
   // Return a promise that resolves when the stream is closed
-  return reader.closed.finally(() => {
+  return reader.closed.catch(streamCancel).finally(() => {
     // cleanup listeners
     nodeRes.off("close", streamCancel);
     nodeRes.off("error", streamCancel);
