@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.0...v0.9.1)
+
+### 📖 Documentation
+
+- Update fetching node handlers ([d3a5cbe](https://github.com/h3js/srvx/commit/d3a5cbe))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.9.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.16...v0.9.0)
