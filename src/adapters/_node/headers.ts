@@ -71,8 +71,7 @@ export const NodeRequestHeaders: {
         if (key.charCodeAt(0) === 58 /* : */) {
           continue;
         }
-        const value = rawHeaders[i + 1];
-        yield [key, value];
+        yield [key.toLowerCase(), rawHeaders[i + 1]];
       }
     }
 
