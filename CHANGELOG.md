@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.9.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.1...v0.9.2)
+
+### 🩹 Fixes
+
+- Lazy inherit property symbols too ([e63a34d](https://github.com/h3js/srvx/commit/e63a34d))
+
+### 🏡 Chore
+
+- Add explicit build script to publish ([6f93cc7](https://github.com/h3js/srvx/commit/6f93cc7))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.9.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.0...v0.9.1)
