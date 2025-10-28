@@ -234,6 +234,15 @@ export function addTests(opts: {
     });
   });
 
+  test("inspect objects", async () => {
+    const response = await fetch(url("/node-inspect"), {
+      headers: { "x-foo": "1" },
+    });
+    expect(response.status).toBe(200);
+    const data = await response.text();
+    expect(data.includes("x-foo"));
+  });
+
   // TODO: Write test to make sure it is forbidden for http2/tls
   test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import type { ServerOptions } from "../src/types.ts";
 
 // prettier-ignore
@@ -212,6 +213,11 @@ export const fixture: (
         }
         case "/abort-log": {
           return _Response.json(aborts);
+        }
+        case "/node-inspect": {
+          return _Response.json({
+            headers: inspect(req.headers),
+          });
         }
       }
       return new _Response("404", { status: 404 });
