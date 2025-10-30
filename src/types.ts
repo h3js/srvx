@@ -119,7 +119,7 @@ export interface ServerOptions {
    *
    * Supported for Node.js, Deno and Bun runtimes.
    *
-   * @default true
+   * @default true (disabled in test and ci environments)
    */
   gracefulShutdown?:
     | boolean

@@ -18,7 +18,11 @@ export const errorPlugin: ServerPlugin = (server) => {
 
 export const gracefulShutdownPlugin: ServerPlugin = (server) => {
   const config = server.options?.gracefulShutdown;
-  if (!globalThis.process?.on || config === false) {
+  if (
+    !globalThis.process?.on ||
+    config === false ||
+    (config === undefined && (process.env.CI || process.env.TEST))
+  ) {
     return;
   }
   const gracefulShutdown =
