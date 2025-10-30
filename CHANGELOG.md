@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.3...v0.9.4)
+
+### 🩹 Fixes
+
+- Handle non promise and promise-like values for `waitUntil` ([ef71acd](https://github.com/h3js/srvx/commit/ef71acd))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.9.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.2...v0.9.3)
