@@ -8,6 +8,7 @@ import {
   createWaitUntil,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
+import { gracefulShutdownPlugin } from "../_plugins.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -31,6 +32,8 @@ class BunServer implements Server<BunFetchHandler> {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
+
+    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 

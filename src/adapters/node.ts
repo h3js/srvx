@@ -8,7 +8,7 @@ import {
   createWaitUntil,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
-import { errorPlugin } from "../_plugins.ts";
+import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
 
 import nodeHTTP from "node:http";
 import nodeHTTPS from "node:https";
@@ -57,6 +57,8 @@ class NodeServer implements Server {
 
     for (const plugin of options.plugins || []) plugin(this);
     errorPlugin(this);
+
+    gracefulShutdownPlugin(this);
 
     const fetchHandler = (this.fetch = wrapFetch(this));
 
