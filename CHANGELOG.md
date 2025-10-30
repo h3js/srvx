@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.9.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.2...v0.9.3)
+
+### 🚀 Enhancements
+
+- **node, deno, bun:** Graceful shutdown ([#136](https://github.com/h3js/srvx/pull/136))
+- Support `SERVER_SHUTDOWN_TIMEOUT` and `SERVER_FORCE_SHUTDOWN_TIMEOUT` env variables ([00454db](https://github.com/h3js/srvx/commit/00454db))
+
+### 🩹 Fixes
+
+- **cli:** Avoid double close ([51dbad2](https://github.com/h3js/srvx/commit/51dbad2))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.9.2
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.1...v0.9.2)
