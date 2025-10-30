@@ -139,23 +139,6 @@ async function serve() {
     await globalThis.__srvx_listen_cb__?.();
 
     printInfo(entry);
-
-    // Keep the process alive with proper cleanup
-    let cleanupCalled = false;
-    const cleanup = (exitCode?: number) => {
-      if (cleanupCalled) return;
-      cleanupCalled = true;
-      console.log(c.gray("\rGracefully stopping server..."));
-      server
-        .close(true)
-        .catch(console.error)
-        .then(() => {
-          console.log(c.gray("Server stopped."));
-          process.exit(exitCode || 0);
-        });
-    };
-    process.on("SIGINT" /* ctrl + c */, () => cleanup(130));
-    process.on("SIGTERM", () => cleanup(143));
   } catch (error) {
     console.error(error);
     process.exit(1);
