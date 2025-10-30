@@ -100,13 +100,16 @@ function resolveCertOrKey(value?: unknown): undefined | string {
 }
 
 export function createWaitUntil() {
-  const promises = new Set<Promise<any>>();
+  const promises = new Set<Promise<any> | PromiseLike<any>>();
   return {
-    waitUntil: (promise: Promise<any>): void => {
+    waitUntil: (promise: Promise<any> | PromiseLike<any>): void => {
+      if (typeof promise?.then !== "function") return;
       promises.add(
-        promise.catch(console.error).finally(() => {
-          promises.delete(promise);
-        }),
+        Promise.resolve(promise)
+          .catch(console.error)
+          .finally(() => {
+            promises.delete(promise);
+          }),
       );
     },
     wait: (): Promise<any> => {
