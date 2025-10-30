@@ -26,9 +26,13 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
     return;
   }
   const gracefulShutdown =
-    config === true || !config?.gracefulTimeout ? 3 : config.gracefulTimeout;
+    config === true || !config?.gracefulTimeout
+      ? Number.parseInt(process.env.SERVER_SHUTDOWN_TIMEOUT || "") || 3
+      : config.gracefulTimeout;
   const forceShutdown =
-    config === true || !config?.forceTimeout ? 3 : config.forceTimeout;
+    config === true || !config?.forceTimeout
+      ? Number.parseInt(process.env.SERVER_FORCE_SHUTDOWN_TIMEOUT || "") || 5
+      : config.forceTimeout;
   let isShuttingDown = false;
   const shutdown = async () => {
     if (isShuttingDown) return;
