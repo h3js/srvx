@@ -115,6 +115,17 @@ export interface ServerOptions {
   silent?: boolean;
 
   /**
+   * Graceful shutdown on SIGINT and SIGTERM signals.
+   *
+   * Supported for Node.js, Deno and Bun runtimes.
+   *
+   * @default true (disabled in test and ci environments)
+   */
+  gracefulShutdown?:
+    | boolean
+    | { gracefulTimeout?: number; forceTimeout?: number };
+
+  /**
    * TLS server options.
    */
   tls?: {
