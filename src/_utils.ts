@@ -8,6 +8,11 @@ export function resolvePortAndHost(opts: ServerOptions): {
 } {
   const _port = opts.port ?? globalThis.process?.env.PORT ?? 3000;
   const port = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
+
+  if (port < 0 || port > 65535) {
+    throw new RangeError("Port range is between 0 to 65535");
+  }
+
   const hostname = opts.hostname ?? globalThis.process?.env.HOST;
   return { port, hostname };
 }
