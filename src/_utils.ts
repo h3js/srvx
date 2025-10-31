@@ -13,10 +13,8 @@ export function resolvePortAndHost(opts: ServerOptions): {
   const isDeno = !!process.versions.deno;
   const isNode = !isBun && !isDeno;
 
-  if (isNode) {
-    if (port < 0 || port > 65535) {
-      throw new RangeError("Port range is between 0 to 65535");
-    }
+  if (isNode && (port < 0 || port > 65_535)) {
+    throw new RangeError("Port range is between 0 to 65535");
   }
 
   const hostname = opts.hostname ?? globalThis.process?.env.HOST;
