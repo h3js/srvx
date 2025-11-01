@@ -10,9 +10,7 @@ export function resolvePortAndHost(opts: ServerOptions): {
   const port = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
 
   if (port < 0 || port > 65_535) {
-    throw new RangeError(`Port range is between 0 to 65535`, {
-      cause: { port },
-    });
+    throw new RangeError(`Port must be between 0 and 65535 (got "${port}").`);
   }
 
   const hostname = opts.hostname ?? globalThis.process?.env.HOST;
