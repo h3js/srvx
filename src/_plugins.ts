@@ -37,38 +37,26 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
   const shutdown = async () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    console.log(
-      c.gray(
-        `\nShutting down server... (timeout in ${gracefulShutdown}+${forceShutdown}s)`,
-      ),
-    );
+    const w = process.stderr.write.bind(process.stderr);
+    w(c.gray(`\nShutting down server in ${gracefulShutdown}s...`));
     let timeout: any;
     await Promise.race([
       // Graceful shutdown
       server.close().finally(() => {
         clearTimeout(timeout);
-        console.log(c.green("Server closed all connections."));
+        w(c.gray(" Server closed.\n"));
       }),
       new Promise<void>((resolve) => {
         timeout = setTimeout(() => {
           // Graceful shutdown timeout
-          console.warn(
-            c.yellow(
-              `Forcing closing connections to exit... (timeout in ${forceShutdown}s)`,
-            ),
-          );
+          w(c.gray(`\nForce closing connections in ${forceShutdown}s...`));
           timeout = setTimeout(() => {
             // Force shutdown timeout
-            console.error(
-              c.red("Could not close connections in time, force exiting."),
-            );
+            w(c.red("\nCould not close connections in time, force exiting."));
             resolve();
-          }, 1000);
-          return server.close(true).finally(() => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        }, 1000);
+          }, forceShutdown * 1000);
+          return server.close(true);
+        }, gracefulShutdown * 1000);
       }),
     ]);
     globalThis.process.exit(0);
