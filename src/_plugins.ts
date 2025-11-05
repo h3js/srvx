@@ -1,4 +1,4 @@
-import { Colors } from "./_utils.cli.ts";
+import * as c from "./_color.ts";
 import type { ServerPlugin } from "./types.ts";
 
 export const errorPlugin: ServerPlugin = (server) => {
@@ -38,7 +38,7 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
     console.log(
-      Colors.gray(
+      c.gray(
         `\nShutting down server... (timeout in ${gracefulShutdown}+${forceShutdown}s)`,
       ),
     );
@@ -47,20 +47,20 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
       // Graceful shutdown
       server.close().finally(() => {
         clearTimeout(timeout);
-        console.log(Colors.green("Server closed all connections."));
+        console.log(c.green("Server closed all connections."));
       }),
       new Promise<void>((resolve) => {
         timeout = setTimeout(() => {
           // Graceful shutdown timeout
           console.warn(
-            Colors.yellow(
+            c.yellow(
               `Forcing closing connections to exit... (timeout in ${forceShutdown}s)`,
             ),
           );
           timeout = setTimeout(() => {
             // Force shutdown timeout
             console.error(
-              Colors.red("Could not close connections in time, force exiting."),
+              c.red("Could not close connections in time, force exiting."),
             );
             resolve();
           }, 1000);
