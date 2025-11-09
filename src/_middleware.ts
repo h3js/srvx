@@ -1,3 +1,4 @@
+import { traceCall } from "./tracing.ts";
 import type {
   Server,
   ServerRequest,
@@ -8,21 +9,45 @@ import type {
 export function wrapFetch(server: Server): ServerHandler {
   const fetchHandler = server.options.fetch;
   const middleware = server.options.middleware || [];
-  return middleware.length === 0
-    ? fetchHandler
-    : (request) => callMiddleware(request, fetchHandler, middleware, 0);
+
+  if (middleware.length === 0) {
+    return (request) =>
+      traceCall("fetch", async () => await fetchHandler(request), {
+        request,
+        server,
+      });
+  }
+
+  return (request) =>
+    callMiddleware(server, request, fetchHandler, middleware, 0);
 }
 
 function callMiddleware(
+  server: Server,
   request: ServerRequest,
   fetchHandler: ServerHandler,
   middleware: ServerMiddleware[],
   index: number,
 ): Response | Promise<Response> {
   if (index === middleware.length) {
-    return fetchHandler(request);
+    return traceCall("fetch", async () => await fetchHandler(request), {
+      request,
+      server,
+    });
   }
-  return middleware[index](request, () =>
-    callMiddleware(request, fetchHandler, middleware, index + 1),
+
+  const currentMiddleware = middleware[index];
+  const next = () =>
+    callMiddleware(server, request, fetchHandler, middleware, index + 1);
+
+  return traceCall(
+    "middleware",
+    async () => await currentMiddleware(request, next),
+    {
+      request,
+      server,
+      index,
+      name: currentMiddleware?.name,
+    },
   );
 }
