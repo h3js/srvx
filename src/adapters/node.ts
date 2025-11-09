@@ -1,5 +1,5 @@
 import { sendNodeResponse } from "./_node/send.ts";
-import { NodeRequest } from "./_node/request.ts";
+import { NodeRequest, abortControllerKey } from "./_node/request.ts";
 import {
   fmtURL,
   resolveTLSOptions,
@@ -70,6 +70,26 @@ class NodeServer implements Server {
     ) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait.waitUntil;
+      void request.signal; // ensure AbortController is instantiated eagerly
+      nodeRes.once("close", () => {
+        const controller = (request as any)[abortControllerKey] as
+          | AbortController
+          | undefined;
+        if (!controller) {
+          return;
+        }
+        const incoming = nodeReq as NodeServerRequest & { errored?: Error };
+        if (incoming.errored) {
+          controller.abort(incoming.errored.toString());
+          return;
+        }
+        const outgoing = nodeRes as NodeServerResponse & {
+          writableFinished?: boolean;
+        };
+        if (!outgoing.writableFinished) {
+          controller.abort("Client connection prematurely closed.");
+        }
+      });
       const res = fetchHandler(request);
       return res instanceof Promise
         ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))

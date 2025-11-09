@@ -51,12 +51,15 @@ export const fixture: (
     async fetch(req) {
       const url = new URL(req.url);
 
-      req.signal.addEventListener("abort", () => {
-        aborts.push({
-          request: `${req.method} ${url.pathname}`,
-          reason: req.signal.reason?.toString(),
+      const trackAbort = url.pathname !== "/abort-no-signal";
+      if (trackAbort) {
+        req.signal.addEventListener("abort", () => {
+          aborts.push({
+            request: `${req.method} ${url.pathname}`,
+            reason: req.signal.reason?.toString(),
+          });
         });
-      });
+      }
 
       switch (url.pathname) {
         case "/": {
@@ -191,6 +194,10 @@ export const fixture: (
               },
             },
           );
+        }
+        case "/abort-no-signal": {
+          await new Promise<never>(() => {});
+          break;
         }
         case "/response/stream-error": {
           const encoder = new TextEncoder();

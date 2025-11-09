@@ -129,10 +129,26 @@ export function addTests(opts: {
     expect(abort.reason).toMatch(/AbortError:|aborted/);
   });
 
+  test("abort request without touching signal should not crash", async () => {
+    const controller = new AbortController();
+    const pending = fetch(url("/abort-no-signal"), {
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+
+    const okRes = await fetch(url("/"));
+    expect(okRes.status).toBe(200);
+    expect(await okRes.text()).toBe("ok");
+  });
+
   test("total aborts", async () => {
     let expectedAbortCount = fetchCount;
+    let untrackedAborts = 1; // /abort-no-signal doesn't subscribe to req.signal
     if (opts.runtime === "bun") {
       expectedAbortCount = 1; // Bun only aborts explicitly
+      untrackedAborts = 0;
     }
 
     const res = await fetch(url("/abort-log"));
@@ -142,7 +158,7 @@ export function addTests(opts: {
 
     // Deno Node.js compat behaves differently!!!
     if (opts.runtime !== "deno-node-compat") {
-      expect(aborts.length).toBe(expectedAbortCount);
+      expect(aborts.length).toBe(expectedAbortCount - untrackedAborts);
     }
   });
 

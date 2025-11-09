@@ -8,6 +8,8 @@ import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
 import { Readable } from "node:stream";
 
+export const abortControllerKey = Symbol("srvx.node.abortController");
+
 export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
@@ -105,6 +107,7 @@ export const NodeRequest: {
     get _abortController() {
       if (!this.#abortController) {
         this.#abortController = new AbortController();
+        (this as any)[abortControllerKey] = this.#abortController;
         const req = this.#req;
         const abort = (err?: any) => {
           this.#abortController?.abort?.(err);
