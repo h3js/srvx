@@ -8,6 +8,10 @@ export function resolvePortAndHost(opts: ServerOptions): {
 } {
   const _port = opts.port ?? globalThis.process?.env.PORT ?? 3000;
   const port = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
+  if (port < 0 || port > 65_535) {
+    throw new RangeError(`Port must be between 0 and 65535 (got "${port}").`);
+  }
+
   const hostname = opts.hostname ?? globalThis.process?.env.HOST;
   return { port, hostname };
 }
@@ -100,13 +104,16 @@ function resolveCertOrKey(value?: unknown): undefined | string {
 }
 
 export function createWaitUntil() {
-  const promises = new Set<Promise<any>>();
+  const promises = new Set<Promise<any> | PromiseLike<any>>();
   return {
-    waitUntil: (promise: Promise<any>): void => {
+    waitUntil: (promise: Promise<any> | PromiseLike<any>): void => {
+      if (typeof promise?.then !== "function") return;
       promises.add(
-        promise.catch(console.error).finally(() => {
-          promises.delete(promise);
-        }),
+        Promise.resolve(promise)
+          .catch(console.error)
+          .finally(() => {
+            promises.delete(promise);
+          }),
       );
     },
     wait: (): Promise<any> => {

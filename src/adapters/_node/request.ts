@@ -16,8 +16,9 @@ export type NodeRequestContext = {
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const NativeRequest = ((globalThis as any)._Request ??=
-    globalThis.Request) as typeof globalThis.Request;
+  const NativeRequest = ((globalThis as any)[
+    Symbol.for("srvx.nativeRequest")
+  ] ??= globalThis.Request) as typeof globalThis.Request;
 
   // Credits to hono/node adapter for global patching idea (https://github.com/honojs/node-server/blob/main/src/request.ts)
   const PatchedRequest = class Request extends NativeRequest {

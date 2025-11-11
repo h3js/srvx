@@ -11,7 +11,7 @@ import * as nodeHTTP from "node:http";
 import { dirname, extname, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
-import { Colors as c } from "./_utils.cli.ts";
+import * as c from "./_color.ts";
 
 // prettier-ignore
 const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
