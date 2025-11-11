@@ -1,6 +1,6 @@
 // Colors support for terminal output
 const noColor = /* @__PURE__ */ (() => {
-  const env = globalThis.process?.env;
+  const env = globalThis.process?.env ?? {};
   return env.NO_COLOR === "1" || env.TERM === "dumb";
 })();
 
