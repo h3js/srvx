@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.9.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.5...v0.9.6)
+
+### 🩹 Fixes
+
+- **request:** Use unique global cache key ([ab38ea4](https://github.com/h3js/srvx/commit/ab38ea4))
+- Handle no env vars for colors ([#146](https://github.com/h3js/srvx/pull/146))
+
+### 🏡 Chore
+
+- Upgrade vitest to v4 ([#138](https://github.com/h3js/srvx/pull/138))
+- Update deps ([28dcbed](https://github.com/h3js/srvx/commit/28dcbed))
+
+### ❤️ Contributors
+
+- Ian Bobinac <ian.units@gmail.com>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.9.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.3...v0.9.5)
