@@ -29,7 +29,7 @@ export const NodeRequest: {
       if (this === PatchedRequest) {
         return instance instanceof NativeRequest;
       } else {
-        return Object.prototype.isPrototypeOf.call(this, instance);
+        return Object.prototype.isPrototypeOf.call(this.prototype, instance);
       }
     }
 
