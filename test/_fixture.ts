@@ -104,6 +104,10 @@ export const fixture: (
         case "/req-instanceof": {
           return new _Response(req instanceof Request ? "yes" : "no");
         }
+        case "/req-instanceof-extended": {
+          class MyRequst extends Request {}
+          return new _Response(req instanceof MyRequst ? "yes" : "no");
+        }
         case "/req-headers-instanceof": {
           return new _Response(req.headers instanceof Headers ? "yes" : "no");
         }

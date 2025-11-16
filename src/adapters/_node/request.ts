@@ -26,7 +26,11 @@ export const NodeRequest: {
 
     // @ts-expect-error
     static [Symbol.hasInstance](instance) {
-      return instance instanceof NativeRequest;
+      if (this === PatchedRequest) {
+        return instance instanceof NativeRequest;
+      } else {
+        return Object.prototype.isPrototypeOf.call(this, instance);
+      }
     }
 
     constructor(
