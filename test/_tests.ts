@@ -24,7 +24,19 @@ export function addTests(opts: {
   test("request instanceof Request", async () => {
     const response = await fetch(url("/req-instanceof"));
     expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("yes");
+    expect(await response.json()).toMatchObject({
+      instanceofRequest: "yes",
+      instanceofExtended: "no",
+    });
+  });
+
+  test("extended request instanceof Request", async () => {
+    const response = await fetch(url("/extended-req-instanceof"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      instanceofRequest: "yes",
+      instanceofExtended: "yes",
+    });
   });
 
   test("request.headers instanceof Headers", async () => {

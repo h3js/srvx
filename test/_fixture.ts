@@ -102,7 +102,19 @@ export const fixture: (
           return new _Response(`ip: ${req.ip}`);
         }
         case "/req-instanceof": {
-          return new _Response(req instanceof Request ? "yes" : "no");
+          class MyRequst extends Request {}
+          return Response.json({
+            instanceofRequest: req instanceof Request ? "yes" : "no",
+            instanceofExtended: req instanceof MyRequst ? "yes" : "no",
+          });
+        }
+        case "/extended-req-instanceof": {
+          class MyRequst extends Request {}
+          const myReq = new MyRequst("http://example.com");
+          return Response.json({
+            instanceofRequest: myReq instanceof Request ? "yes" : "no",
+            instanceofExtended: myReq instanceof MyRequst ? "yes" : "no",
+          });
         }
         case "/req-headers-instanceof": {
           return new _Response(req.headers instanceof Headers ? "yes" : "no");
