@@ -68,3 +68,15 @@ jobs:
       - run: pnpm install
       - run: pnpm changelogen --bump --canary nightly
       - run: npm i -g npm@latest && npm publish --tag latest
+  publish-pkg-pr-new:
+    runs-on: ubuntu-latest
+    needs: [tests_common, tests_node, tests_deno, tests_bun]
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - run: npm i -fg corepack && corepack enable
+      - uses: actions/setup-node@v6
+        with: { node-version: lts/*, cache: "pnpm" }
+      - run: pnpm install
+      - run: pnpm build
+      - run: pnpm dlx pkg-pr-new publish || true
