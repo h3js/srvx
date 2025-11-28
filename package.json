@@ -17,6 +17,7 @@
     "./cli": "./dist/cli.mjs",
     "./static": "./dist/static.mjs",
     "./log": "./dist/log.mjs",
+    "./tracing": "./dist/tracing.mjs",
     ".": {
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
