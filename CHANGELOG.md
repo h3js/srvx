@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.9.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.6...v0.9.7)
+
+### 🩹 Fixes
+
+- **request:** Fix instanceof checks for extended Request class ([#147](https://github.com/h3js/srvx/pull/147))
+
+### 🏡 Chore
+
+- Update deps ([7107753](https://github.com/h3js/srvx/commit/7107753))
+- Update obuild ([aebb3fd](https://github.com/h3js/srvx/commit/aebb3fd))
+- Rollback vitest upgrade ([56ab0d7](https://github.com/h3js/srvx/commit/56ab0d7))
+- Update deps ([cc8f86a](https://github.com/h3js/srvx/commit/cc8f86a))
+
+### 🤖 CI
+
+- Add pkg.pr.new ([4d590fe](https://github.com/h3js/srvx/commit/4d590fe))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+
 ## v0.9.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.5...v0.9.6)
