@@ -8,12 +8,9 @@ import type {
 export function wrapFetch(server: Server): ServerHandler {
   const fetchHandler = server.options.fetch;
   const middleware = server.options.middleware || [];
-
-  if (middleware.length === 0) {
-    return fetchHandler;
-  }
-
-  return (request) => callMiddleware(request, fetchHandler, middleware, 0);
+  return middleware.length === 0
+    ? fetchHandler
+    : (request) => callMiddleware(request, fetchHandler, middleware, 0);
 }
 
 function callMiddleware(
@@ -25,10 +22,7 @@ function callMiddleware(
   if (index === middleware.length) {
     return fetchHandler(request);
   }
-
-  const currentMiddleware = middleware[index];
-  const next = () =>
-    callMiddleware(request, fetchHandler, middleware, index + 1);
-
-  return currentMiddleware(request, next);
+  return middleware[index](request, () =>
+    callMiddleware(request, fetchHandler, middleware, index + 1),
+  );
 }
