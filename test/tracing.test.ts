@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { tracingChannel } from "node:diagnostics_channel";
 import { serve } from "../src/adapters/node.ts";
+import { tracingPlugin } from "../src/tracing.ts";
 import type { ServerMiddleware } from "../src/types.ts";
 
 // Helper to create no-op handlers for unused tracing events
@@ -50,6 +51,7 @@ describe("tracing channels", () => {
 
     const server = serve({
       fetch: () => new Response("OK"),
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -112,6 +114,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware1, middleware2],
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -179,6 +182,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -223,6 +227,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -271,6 +276,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
+      plugins: [tracingPlugin],
       manual: true,
       port: 3000,
     });
@@ -328,6 +334,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [mw1, mw2, mw3],
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -378,6 +385,7 @@ describe("tracing channels", () => {
 
     const server = serve({
       fetch: () => new Response("OK"),
+      plugins: [tracingPlugin],
       manual: true,
     });
 
@@ -420,6 +428,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
+      plugins: [tracingPlugin],
       manual: true,
     });
 
