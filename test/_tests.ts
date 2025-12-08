@@ -154,7 +154,6 @@ export function addTests(opts: {
 
     // Deno Node.js compat behaves differently!!!
     if (opts.runtime !== "deno-node-compat") {
-      console.log(opts.runtime)
       expect(aborts.length).toBe(expectedAbortCount);
     }
   });

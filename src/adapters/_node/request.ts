@@ -123,10 +123,19 @@ export const NodeRequest: {
         req.once("error", abort);
 
         if (res) {
+          // Primary path: detect client disconnect via response close
           res.on("close", () => {
             if (req.errored) {
               abort(req.errored);
             } else if (!res.writableEnded) {
+              abort();
+            }
+          });
+        } else {
+          // Fallback for request-only contexts (no response object)
+          req.once("close", () => {
+            if (!req.complete) {
+              // Request body wasn't fully received - client disconnected
               abort();
             }
           });
