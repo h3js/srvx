@@ -124,7 +124,7 @@ export const NodeRequest: {
 
         if (res) {
           // Primary path: detect client disconnect via response close
-          res.on("close", () => {
+          res.once("close", () => {
             if (req.errored) {
               abort(req.errored);
             } else if (!res.writableEnded) {
