@@ -60,6 +60,7 @@ $ bunx --bun srvx
 | `jsx`            | [examples/jsx](https://github.com/h3js/srvx/tree/main/examples/jsx/)                       | `npx giget gh:h3js/srvx/examples/jsx srvx-jsx`                       |
 | `node-handler`   | [examples/node-handler](https://github.com/h3js/srvx/tree/main/examples/node-handler/)     | `npx giget gh:h3js/srvx/examples/node-handler srvx-node-handler`     |
 | `service-worker` | [examples/service-worker](https://github.com/h3js/srvx/tree/main/examples/service-worker/) | `npx giget gh:h3js/srvx/examples/service-worker srvx-service-worker` |
+| `tracing`        | [examples/tracing](https://github.com/h3js/srvx/tree/main/examples/tracing/)               | `npx giget gh:h3js/srvx/examples/tracing srvx-tracing`               |
 | `websocket`      | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)           | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket`           |
 
 <!-- /automd -->
