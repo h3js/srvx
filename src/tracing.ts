@@ -5,6 +5,9 @@ import type {
   ServerMiddleware,
 } from "./types.ts";
 
+/**
+ * @experimental Channel names, event types and config options may change in future releases.
+ */
 export type RequestEvent = {
   server: Server;
   request: ServerRequest;
@@ -15,6 +18,9 @@ export type RequestEvent = {
 };
 
 /**
+ *
+ * @experimental Channel names, event types and config options may change in future releases.
+ *
  * Tracing plugin that adds diagnostics channel tracing to middleware and fetch handlers.
  *
  * This plugin wraps all middleware and the fetch handler with tracing instrumentation,
