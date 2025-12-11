@@ -5,10 +5,13 @@ import type {
   ServerMiddleware,
 } from "./types.ts";
 
-export type RequestData = {
+export type RequestEvent = {
   server: Server;
   request: ServerRequest;
-  middlewareName?: string;
+  middleware?: {
+    index: number;
+    handler: ServerMiddleware;
+  };
 };
 
 /**
@@ -42,7 +45,7 @@ export function tracingPlugin(
 
     // Wrap the fetch handler with tracing
     if (opts.fetch !== false) {
-      const fetchChannel = tracingChannel<unknown, RequestData>("srvx.fetch");
+      const fetchChannel = tracingChannel<unknown, RequestEvent>("srvx.fetch");
       const originalFetch = server.options.fetch;
       server.options.fetch = (request) => {
         return fetchChannel.tracePromise(
@@ -54,17 +57,17 @@ export function tracingPlugin(
 
     // Wrap middleware with tracing
     if (opts.middleware !== false) {
-      const middlewareChannel = tracingChannel<unknown, RequestData>(
+      const middlewareChannel = tracingChannel<unknown, RequestEvent>(
         "srvx.middleware",
       );
       const originalMiddleware = server.options.middleware;
       const wrappedMiddleware: ServerMiddleware[] = originalMiddleware.map(
-        (middleware, index) => {
-          const middlewareName = middleware?.name || `middleware#${index}`;
+        (handler, index) => {
+          const middleware = Object.freeze({ index, handler });
           return (request, next) => {
             return middlewareChannel.tracePromise(
-              async () => await middleware(request, next),
-              { request, server, middlewareName },
+              async () => await handler(request, next),
+              { request, server, middleware },
             );
           };
         },

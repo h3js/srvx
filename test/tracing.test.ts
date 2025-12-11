@@ -51,7 +51,7 @@ describe("tracing channels", () => {
 
     const server = serve({
       fetch: () => new Response("OK"),
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -70,16 +70,16 @@ describe("tracing channels", () => {
     const startHandler = (data: any) => {
       events.push({
         type: "middleware.start",
-        name: data.name,
-        index: data.index,
+        name: data.middleware.handler.name,
+        index: data.middleware.index,
       });
     };
 
     const endHandler = (data: any) => {
       events.push({
         type: "middleware.end",
-        name: data.name,
-        index: data.index,
+        name: data.middleware.handler.name,
+        index: data.middleware.index,
       });
     };
 
@@ -114,7 +114,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware1, middleware2],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -182,7 +182,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -227,7 +227,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -276,7 +276,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
       port: 3000,
     });
@@ -287,7 +287,7 @@ describe("tracing channels", () => {
     expect(capturedData).toBeDefined();
     expect(capturedData.request).toBeDefined();
     expect(capturedData.server).toBeDefined();
-    expect(capturedData.index).toBe(0);
+    expect(capturedData.middleware.index).toBe(0);
     expect(capturedData.server.options.port).toBe(3000);
   });
 
@@ -297,11 +297,11 @@ describe("tracing channels", () => {
     const middlewareChannel = tracingChannel("srvx.middleware");
 
     const startHandler = (data: any) => {
-      events.push({ type: "start", name: data.name });
+      events.push({ type: "start", name: data.middleware.handler.name });
     };
 
     const endHandler = (data: any) => {
-      events.push({ type: "end", name: data.name });
+      events.push({ type: "end", name: data.middleware.handler.name });
     };
 
     middlewareChannel.subscribe({
@@ -334,7 +334,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [mw1, mw2, mw3],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -385,7 +385,7 @@ describe("tracing channels", () => {
 
     const server = serve({
       fetch: () => new Response("OK"),
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
@@ -428,7 +428,7 @@ describe("tracing channels", () => {
     const server = serve({
       fetch: () => new Response("OK"),
       middleware: [middleware],
-      plugins: [tracingPlugin],
+      plugins: [tracingPlugin()],
       manual: true,
     });
 
