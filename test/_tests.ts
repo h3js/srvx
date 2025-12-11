@@ -24,7 +24,19 @@ export function addTests(opts: {
   test("request instanceof Request", async () => {
     const response = await fetch(url("/req-instanceof"));
     expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("yes");
+    expect(await response.json()).toMatchObject({
+      instanceofRequest: "yes",
+      instanceofExtended: "no",
+    });
+  });
+
+  test("extended request instanceof Request", async () => {
+    const response = await fetch(url("/extended-req-instanceof"));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      instanceofRequest: "yes",
+      instanceofExtended: "yes",
+    });
   });
 
   test("request.headers instanceof Headers", async () => {
@@ -130,9 +142,9 @@ export function addTests(opts: {
   });
 
   test("total aborts", async () => {
-    let expectedAbortCount = fetchCount;
-    if (opts.runtime === "bun") {
-      expectedAbortCount = 1; // Bun only aborts explicitly
+    let expectedAbortCount = 1;
+    if (opts.runtime === "deno") {
+      expectedAbortCount = fetchCount; // TODO: why?
     }
 
     const res = await fetch(url("/abort-log"));

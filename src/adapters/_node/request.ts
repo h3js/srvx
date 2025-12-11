@@ -26,7 +26,11 @@ export const NodeRequest: {
 
     // @ts-expect-error
     static [Symbol.hasInstance](instance) {
-      return instance instanceof NativeRequest;
+      if (this === PatchedRequest) {
+        return instance instanceof NativeRequest;
+      } else {
+        return Object.prototype.isPrototypeOf.call(this.prototype, instance);
+      }
     }
 
     constructor(
@@ -106,12 +110,26 @@ export const NodeRequest: {
     get _abortController() {
       if (!this.#abortController) {
         this.#abortController = new AbortController();
-        const req = this.#req;
-        const abort = (err?: any) => {
-          this.#abortController?.abort?.(err);
-        };
+        const { req, res } = this.runtime!.node!;
+        const abortController = this.#abortController;
+        const abort = (err?: Error) => abortController.abort?.(err);
         req.once("error", abort);
-        req.once("end", abort);
+        if (res) {
+          res.once("close", () => {
+            const reqError = req.errored;
+            if (reqError) {
+              abort(reqError); // request error
+            } else if (!res.writableEnded) {
+              abort(); // server closed before finishing response
+            }
+          });
+        } else {
+          req.once("close", () => {
+            if (!req.complete) {
+              abort(); // client disconnected
+            }
+          });
+        }
       }
       return this.#abortController;
     }
@@ -130,7 +148,10 @@ export const NodeRequest: {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
         this.#bodyStream = hasBody
-          ? (Readable.toWeb(this.#req) as unknown as ReadableStream)
+          ? // TODO: HTTP2ServerRequest
+            (Readable.toWeb(
+              this.#req as NodeJS.ReadableStream,
+            ) as unknown as ReadableStream)
           : null;
       }
       return this.#bodyStream;
