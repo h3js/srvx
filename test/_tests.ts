@@ -142,9 +142,9 @@ export function addTests(opts: {
   });
 
   test("total aborts", async () => {
-    let expectedAbortCount = fetchCount;
-    if (opts.runtime === "bun") {
-      expectedAbortCount = 1; // Bun only aborts explicitly
+    let expectedAbortCount = 1;
+    if (opts.runtime === "deno") {
+      expectedAbortCount = fetchCount; // TODO: why?
     }
 
     const res = await fetch(url("/abort-log"));

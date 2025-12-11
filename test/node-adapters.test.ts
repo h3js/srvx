@@ -174,3 +174,117 @@ describe("adapters", () => {
     );
   });
 });
+
+describe("request signal", () => {
+  test("should not fire abort signal on successful GET request", async () => {
+    let abortFired = false;
+
+    const server = serve({
+      port: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => {
+          abortFired = true;
+        });
+        return new Response("ok");
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+
+    // Close the server and let all pending handlers flush
+    await server.close();
+
+    expect(abortFired).toBe(false);
+  });
+
+  test("should not fire abort signal on successful POST request", async () => {
+    let abortFired = false;
+    let receivedBody: string | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        request.signal.addEventListener("abort", () => {
+          abortFired = true;
+        });
+        receivedBody = await request.text();
+        return new Response(`Received: ${receivedBody}`);
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, {
+      method: "POST",
+      body: "test body",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("Received: test body");
+    expect(receivedBody).toBe("test body");
+
+    await server.close();
+
+    expect(abortFired).toBe(false);
+  });
+
+  test("should fire abort signal when client disconnects", async () => {
+    let abortFired: () => void;
+    const abortFiredPromise = new Promise<void>((resolve) => {
+      abortFired = resolve;
+    });
+
+    let requestReceived: () => void;
+    const requestReceivedPromise = new Promise<void>((resolve) => {
+      requestReceived = resolve;
+    });
+
+    const server = serve({
+      port: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => {
+          abortFired();
+        });
+        requestReceived();
+
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              if (request.signal.aborted) {
+                controller.close();
+                return;
+              }
+              await new Promise((r) => setTimeout(r, 100));
+              controller.enqueue(new TextEncoder().encode("data"));
+            },
+          }),
+        );
+      },
+    });
+
+    await server.ready();
+
+    const controller = new AbortController();
+    const fetchPromise = fetch(server.url!, { signal: controller.signal });
+
+    await requestReceivedPromise;
+    controller.abort();
+
+    // Wait for both client rejection and server-side abort
+    await fetchPromise.catch(() => {});
+    await Promise.race([
+      abortFiredPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Abort signal not fired within 1s")),
+          1000,
+        ),
+      ),
+    ]);
+
+    await server.close(true); // Force close all connections
+  });
+});

@@ -56,6 +56,7 @@ export const NodeRequest: {
     runtime: ServerRequest["runtime"];
 
     #req: NodeServerRequest;
+    #res: NodeServerResponse | undefined;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
     #request?: globalThis.Request;
@@ -64,6 +65,7 @@ export const NodeRequest: {
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
+      this.#res = ctx.res;
       this.runtime = {
         name: "node",
         node: ctx,
@@ -111,11 +113,33 @@ export const NodeRequest: {
       if (!this.#abortController) {
         this.#abortController = new AbortController();
         const req = this.#req;
+        const res = this.#res;
+        const abortController = this.#abortController;
+
         const abort = (err?: any) => {
-          this.#abortController?.abort?.(err);
+          abortController?.abort?.(err);
         };
+
         req.once("error", abort);
-        req.once("end", abort);
+
+        if (res) {
+          // Primary path: detect client disconnect via response close
+          res.once("close", () => {
+            if (req.errored) {
+              abort(req.errored);
+            } else if (!res.writableEnded) {
+              abort();
+            }
+          });
+        } else {
+          // Fallback for request-only contexts (no response object)
+          req.once("close", () => {
+            if (!req.complete) {
+              // Request body wasn't fully received - client disconnected
+              abort();
+            }
+          });
+        }
       }
       return this.#abortController;
     }
