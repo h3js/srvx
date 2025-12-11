@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.9.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.7...v0.9.8)
+
+### 🚀 Enhancements
+
+- Export `AdapterMeta` ([#151](https://github.com/h3js/srvx/pull/151))
+- Experimental tracing channel support ([#141](https://github.com/h3js/srvx/pull/141))
+
+### 🩹 Fixes
+
+- **node:** Don't fire abort signal on normal request completion ([#153](https://github.com/h3js/srvx/pull/153))
+
+### 🏡 Chore
+
+- Update deps ([b79112e](https://github.com/h3js/srvx/commit/b79112e))
+- Fix types ([206a708](https://github.com/h3js/srvx/commit/206a708))
+- Update bench ([4b58e3f](https://github.com/h3js/srvx/commit/4b58e3f))
+- Small refactors on #153 ([#153](https://github.com/h3js/srvx/issues/153))
+- Add experimental jsdocs for tracing ([f4a7996](https://github.com/h3js/srvx/commit/f4a7996))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abdelrahman Awad ([@logaretm](https://github.com/logaretm))
+- Alpheus ([@alpheusmtx](https://github.com/alpheusmtx))
+- David Citron ([@dcitron](https://github.com/dcitron))
+
 ## v0.9.7
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.6...v0.9.7)
