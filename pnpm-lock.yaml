@@ -183,6 +183,12 @@ importers:
         specifier: link:../..
         version: link:../..
 
+  examples/tracing:
+    devDependencies:
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
   examples/websocket:
     devDependencies:
       crossws:

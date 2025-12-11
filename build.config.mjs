@@ -12,6 +12,7 @@ export default defineBuildConfig({
         "src/cli.ts",
         "src/static.ts",
         "src/log.ts",
+        "src/tracing.ts",
         ...[
           "deno",
           "bun",
