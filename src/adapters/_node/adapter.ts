@@ -9,7 +9,7 @@ import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
 import { sendNodeResponse } from "./send.ts";
 
-type AdapterMeta = {
+export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
   __fetchHandler?: FetchHandler;
 };

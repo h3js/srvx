@@ -33,6 +33,8 @@ export { sendNodeResponse } from "./_node/send.ts";
 export { fetchNodeHandler } from "./_node/web/fetch.ts";
 export { toNodeHandler, toFetchHandler } from "./_node/adapter.ts";
 
+export type { AdapterMeta } from "./_node/adapter.ts";
+
 export function serve(options: ServerOptions): Server {
   return new NodeServer(options);
 }
