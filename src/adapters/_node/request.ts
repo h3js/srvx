@@ -134,7 +134,10 @@ export const NodeRequest: {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
         this.#bodyStream = hasBody
-          ? (Readable.toWeb(this.#req) as unknown as ReadableStream)
+          ? // TODO: HTTP2ServerRequest
+            (Readable.toWeb(
+              this.#req as NodeJS.ReadableStream,
+            ) as unknown as ReadableStream)
           : null;
       }
       return this.#bodyStream;

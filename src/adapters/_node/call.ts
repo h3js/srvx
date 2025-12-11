@@ -59,7 +59,7 @@ export function callNodeHandler(
     nodeRes.once("pipe", (stream) => {
       streamPromise = new Promise((resolve) => {
         stream.once("end", () => resolve(webRes));
-        stream.once("error", (error) => reject(error));
+        stream.once("error", (error: Error) => reject(error));
       });
     });
 
