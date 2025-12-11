@@ -56,7 +56,6 @@ export const NodeRequest: {
     runtime: ServerRequest["runtime"];
 
     #req: NodeServerRequest;
-    #res: NodeServerResponse | undefined;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
     #request?: globalThis.Request;
@@ -65,7 +64,6 @@ export const NodeRequest: {
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
-      this.#res = ctx.res;
       this.runtime = {
         name: "node",
         node: ctx,
@@ -112,31 +110,23 @@ export const NodeRequest: {
     get _abortController() {
       if (!this.#abortController) {
         this.#abortController = new AbortController();
-        const req = this.#req;
-        const res = this.#res;
+        const { req, res } = this.runtime!.node!;
         const abortController = this.#abortController;
-
-        const abort = (err?: any) => {
-          abortController?.abort?.(err);
-        };
-
+        const abort = (err?: Error) => abortController.abort?.(err);
         req.once("error", abort);
-
         if (res) {
-          // Primary path: detect client disconnect via response close
           res.once("close", () => {
-            if (req.errored) {
-              abort(req.errored);
+            const reqError = req.errored;
+            if (reqError) {
+              abort(reqError); // request error
             } else if (!res.writableEnded) {
-              abort();
+              abort(); // server closed before finishing response
             }
           });
         } else {
-          // Fallback for request-only contexts (no response object)
           req.once("close", () => {
             if (!req.complete) {
-              // Request body wasn't fully received - client disconnected
-              abort();
+              abort(); // client disconnected
             }
           });
         }
