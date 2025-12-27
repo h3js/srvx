@@ -1,3 +1,4 @@
+import type * as NodeHttp from "node:http";
 import type {
   FetchHandler,
   NodeHttpHandler,
@@ -41,13 +42,17 @@ export function toNodeHandler(
   return convertedNodeHandler;
 }
 
+type NodeHttp1Handler = (
+  req: NodeHttp.IncomingMessage,
+  res: NodeHttp.ServerResponse,
+) => void | Promise<void>;
 /**
  * Converts a Node.js HTTP handler into a Fetch API handler.
  *
  * @experimental Behavior might be unstable and won't work in Bun and Deno currently (tracker: https://github.com/h3js/srvx/issues/132)
  */
 export function toFetchHandler(
-  handler: NodeHttpHandler & AdapterMeta,
+  handler: (NodeHttpHandler | NodeHttp1Handler) & AdapterMeta,
 ): FetchHandler & AdapterMeta {
   if (handler.__fetchHandler) {
     return handler.__fetchHandler;
