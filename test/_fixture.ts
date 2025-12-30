@@ -128,8 +128,7 @@ export const fixture: (
           });
         }
         case "/req-new-req": {
-          const clone = new Request(req);
-          // const clone = new Request((req as any)._request || req);
+          const clone = new Request(req._request || req);
           return Response.json({
             method: clone.method,
             pathname: new URL(clone.url).pathname,

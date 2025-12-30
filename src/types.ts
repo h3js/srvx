@@ -302,6 +302,13 @@ export interface ServerRequestContext {
 
 export interface ServerRequest extends Request {
   /**
+   * Access to Node.js native instance of request.
+   *
+   * See https://srvx.h3.dev/guide/node#noderequest
+   */
+  _request?: Request;
+
+  /**
    * Access to the parsed URL
    */
   _url?: URL;
