@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.10.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.8...v0.10.0)
+
+### 🩹 Fixes
+
+- **types:** Split http1 and http2 handler types ([#154](https://github.com/h3js/srvx/pull/154))
+
+### 💅 Refactors
+
+- **node:** ⚠️  Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+
+### 📖 Documentation
+
+- Add notes about `NodeRequest` ([f483611](https://github.com/h3js/srvx/commit/f483611))
+- **node:** Also mention `req.clone()` ([7a88abf](https://github.com/h3js/srvx/commit/7a88abf))
+
+### 🌊 Types
+
+- Add `_request` type ([ddc4ac3](https://github.com/h3js/srvx/commit/ddc4ac3))
+
+#### ⚠️ Breaking Changes
+
+- **node:** ⚠️  Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+
 ## v0.9.8
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.7...v0.9.8)
