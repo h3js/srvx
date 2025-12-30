@@ -1,5 +1,5 @@
 import type {
-  NodeHttpHandler,
+  NodeHttp1Handler,
   NodeServerRequest,
   NodeServerResponse,
 } from "../src/types.ts";
@@ -25,7 +25,7 @@ const fetchCallers = [
   },
   {
     name: "through srvx/node",
-    async fetchNodeHandler(handler: NodeHttpHandler, req: Request) {
+    async fetchNodeHandler(handler: NodeHttp1Handler, req: Request) {
       const server = serve({
         port: 0,
         fetch: (webReq) => fetchNodeHandler(handler, webReq),
@@ -40,60 +40,60 @@ const fetchCallers = [
   },
 ];
 
-const fixtures: { name: string; skip?: boolean; handler: NodeHttpHandler }[] = [
-  {
-    name: "node",
-    handler: async (req, res) => {
-      const body: any = await new Promise((resolve) => {
-        const chunks: Uint8Array[] = [];
-        req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () =>
-          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))),
-        );
-      });
+const fixtures: { name: string; skip?: boolean; handler: NodeHttp1Handler }[] =
+  [
+    {
+      name: "node",
+      handler: async (req, res) => {
+        const body: any = await new Promise((resolve) => {
+          const chunks: Uint8Array[] = [];
+          req.on("data", (chunk) => chunks.push(chunk));
+          req.on("end", () =>
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))),
+          );
+        });
 
-      setImmediate(() => {
-        // @ts-expect-error
-        res.writeHead(418, "I'm a Moka Pot", {
-          "Content-Type": "application/json; charset=utf-8",
+        setImmediate(() => {
+          res.writeHead(418, "I'm a Moka Pot", {
+            "Content-Type": "application/json; charset=utf-8",
+          });
+          const resBody = JSON.stringify({
+            header: req.headers["x-test"] === "1",
+            body: body?.test === true,
+          });
+          res.end(new TextEncoder().encode(resBody));
         });
-        const resBody = JSON.stringify({
-          header: req.headers["x-test"] === "1",
-          body: body?.test === true,
-        });
-        res.end(new TextEncoder().encode(resBody));
-      });
+      },
     },
-  },
-  {
-    name: "express",
-    handler: express()
-      .use(express.json())
-      .use("/", (req, res) => {
-        res.statusMessage = "I'm a Moka Pot";
-        res.status(418).json({
-          header: req.headers["x-test"] === "1",
-          body: req.body?.test === true,
+    {
+      name: "express",
+      handler: express()
+        .use(express.json())
+        .use("/", (req, res) => {
+          res.statusMessage = "I'm a Moka Pot";
+          res.status(418).json({
+            header: req.headers["x-test"] === "1",
+            body: req.body?.test === true,
+          });
+        }) as NodeHttp1Handler,
+    },
+    {
+      name: "fastify",
+      handler: await (async () => {
+        const app = fastify();
+        app.post("/", async (request, reply) => {
+          reply.status(418);
+          reply.raw.statusMessage = "I'm a Moka Pot";
+          return {
+            header: request.headers["x-test"] === "1",
+            body: (request.body as any)?.test === true,
+          };
         });
-      }) as NodeHttpHandler,
-  },
-  {
-    name: "fastify",
-    handler: await (async () => {
-      const app = fastify();
-      app.post("/", async (request, reply) => {
-        reply.status(418);
-        reply.raw.statusMessage = "I'm a Moka Pot";
-        return {
-          header: request.headers["x-test"] === "1",
-          body: (request.body as any)?.test === true,
-        };
-      });
-      await app.ready();
-      return app.routing as NodeHttpHandler;
-    })(),
-  },
-];
+        await app.ready();
+        return app.routing as NodeHttp1Handler;
+      })(),
+    },
+  ];
 
 describe("fetchNodeHandler", () => {
   for (const fixture of fixtures) {

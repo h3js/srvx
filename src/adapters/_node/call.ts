@@ -66,14 +66,14 @@ export function callNodeHandler(
     try {
       if (isMiddleware) {
         Promise.resolve(
-          handler(nodeReq, nodeRes, (error) =>
+          handler(nodeReq as any, nodeRes as any, (error) =>
             error ? reject(error) : streamPromise || resolve(webRes),
           ),
         ).catch((error) => reject(error));
       } else {
-        Promise.resolve((handler as NodeHttpHandler)(nodeReq, nodeRes)).then(
-          () => streamPromise || webRes,
-        );
+        Promise.resolve(
+          (handler as NodeHttpHandler)(nodeReq as any, nodeRes as any),
+        ).then(() => streamPromise || webRes);
       }
     } catch (error: unknown) {
       reject(error);

@@ -37,7 +37,7 @@ export async function fetchNodeHandler(
   const nodeRes = new WebServerResponse(nodeReq, socket);
 
   try {
-    await handler(nodeReq, nodeRes);
+    await handler(nodeReq as any, nodeRes as any);
     return await nodeRes.toWebResponse();
   } catch (error) {
     console.error(error, { cause: { req, handler } });

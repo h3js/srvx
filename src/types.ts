@@ -353,15 +353,30 @@ export type NodeServerResponse =
   | NodeHttp.ServerResponse
   | NodeHttp2.Http2ServerResponse;
 
-export type NodeHttpHandler = (
-  req: NodeServerRequest,
-  res: NodeServerResponse,
+export type NodeHttp1Handler = (
+  req: NodeHttp.IncomingMessage,
+  res: NodeHttp.ServerResponse,
 ) => void | Promise<void>;
 
-export type NodeHTTPMiddleware = (
-  req: NodeServerRequest,
-  res: NodeServerResponse,
+export type NodeHttp2Handler = (
+  req: NodeHttp2.Http2ServerRequest,
+  res: NodeHttp2.Http2ServerResponse,
+) => void | Promise<void>;
+
+export type NodeHttpHandler = NodeHttp1Handler | NodeHttp2Handler;
+
+export type NodeHTTP1Middleware = (
+  req: NodeHttp.IncomingMessage,
+  res: NodeHttp.ServerResponse,
   next: (error?: Error) => void,
 ) => unknown | Promise<unknown>;
+
+export type NodeHTTP2Middleware = (
+  req: NodeHttp2.Http2ServerRequest,
+  res: NodeHttp2.Http2ServerResponse,
+  next: (error?: Error) => void,
+) => unknown | Promise<unknown>;
+
+export type NodeHTTPMiddleware = NodeHTTP1Middleware | NodeHTTP2Middleware;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
