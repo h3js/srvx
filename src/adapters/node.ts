@@ -26,7 +26,7 @@ import type {
 } from "../types.ts";
 
 export { FastURL } from "../_url.ts";
-export { NodeRequest } from "./_node/request.ts";
+export { NodeRequest, patchGlobalRequest } from "./_node/request.ts";
 export { NodeResponse } from "./_node/response.ts";
 export { NodeResponse as FastResponse } from "./_node/response.ts";
 export { sendNodeResponse } from "./_node/send.ts";
