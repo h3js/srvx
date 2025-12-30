@@ -16,41 +16,7 @@ export type NodeRequestContext = {
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const NativeRequest = ((globalThis as any)[
-    Symbol.for("srvx.nativeRequest")
-  ] ??= globalThis.Request) as typeof globalThis.Request;
-
-  // Credits to hono/node adapter for global patching idea (https://github.com/honojs/node-server/blob/main/src/request.ts)
-  const PatchedRequest = class Request extends NativeRequest {
-    static _srvx = true;
-
-    // @ts-expect-error
-    static [Symbol.hasInstance](instance) {
-      if (this === PatchedRequest) {
-        return instance instanceof NativeRequest;
-      } else {
-        return Object.prototype.isPrototypeOf.call(this.prototype, instance);
-      }
-    }
-
-    constructor(
-      input: string | URL | globalThis.Request,
-      options?: RequestInit,
-    ) {
-      if (typeof input === "object" && "_request" in input) {
-        input = (input as any)._request;
-      }
-      if ((options?.body as ReadableStream)?.getReader !== undefined) {
-        (options as any).duplex ??= "half";
-      }
-      super(input, options);
-    }
-  };
-
-  // Fix new Request(request) issue with undici constructor by assigning it back to global
-  if (!(globalThis.Request as any)._srvx) {
-    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
-  }
+  const NativeRequest = globalThis.Request;
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
@@ -178,11 +144,14 @@ export const NodeRequest: {
 
     get _request(): globalThis.Request {
       if (!this.#request) {
-        this.#request = new PatchedRequest(this.url, {
+        const body = this.body;
+        this.#request = new NativeRequest(this.url, {
           method: this.method,
           headers: this.headers,
-          body: this.body,
           signal: this._abortController.signal,
+          body,
+          // @ts-expect-error Undici specific
+          duplex: body ? "half" : undefined,
         });
         this.#headers = undefined;
         this.#bodyStream = undefined;
@@ -198,6 +167,44 @@ export const NodeRequest: {
 
   return Request as any;
 })();
+
+/**
+ * Undici uses an incompatible Request constructor depending on private property accessors.
+ *
+ * This utility, patches global Request to support `new Request(req)` in Node.js.
+ *
+ * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
+ */
+export function patchGlobalRequest(): typeof Request {
+  const NativeRequest = ((globalThis as any)[
+    Symbol.for("srvx.nativeRequest")
+  ] ??= globalThis.Request) as typeof globalThis.Request;
+
+  const PatchedRequest = class Request extends NativeRequest {
+    static _srvx = true;
+    // @ts-expect-error
+    static [Symbol.hasInstance](instance) {
+      if (this === PatchedRequest) {
+        return instance instanceof NativeRequest;
+      } else {
+        return Object.prototype.isPrototypeOf.call(this.prototype, instance);
+      }
+    }
+    constructor(
+      input: string | URL | globalThis.Request,
+      options?: RequestInit,
+    ) {
+      if (typeof input === "object" && "_request" in input) {
+        input = (input as any)._request;
+      }
+      super(input, options);
+    }
+  };
+  if (!(globalThis.Request as any)._srvx) {
+    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
+  }
+  return PatchedRequest;
+}
 
 function readBody(req: NodeServerRequest): Promise<any> {
   return new Promise((resolve, reject) => {
