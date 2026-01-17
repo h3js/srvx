@@ -10,5 +10,6 @@ export default unjs({
     "unicorn/no-process-exit": "off",
     "@typescript-eslint/no-unused-vars": "off",
     "unicorn/prefer-code-point": "off",
+    "unicorn/prefer-response-static-json": "off",
   },
 });
