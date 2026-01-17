@@ -158,7 +158,7 @@ export function addTests(opts: {
     }
   });
 
-  test.only("cancel reading body", async () => {
+  test("cancel reading body", async () => {
     const res = await fetch(url("/body-cancel"), {
       method: "POST",
       // @ts-expect-error
