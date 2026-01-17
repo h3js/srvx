@@ -61,7 +61,7 @@ for (const config of testConfigs) {
 
     afterAll(async () => {
       await client.agent?.close?.();
-      await server!.close();
+      await server!.close(true);
     });
 
     addTests({

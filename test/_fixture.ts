@@ -204,6 +204,18 @@ export const fixture: (
             },
           );
         }
+        case "/body-cancel": {
+          const reader = req.body!.getReader();
+          await reader.read();
+          await reader.cancel();
+          const abortedAfterCancel = false; // req.signal.aborted;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const abortedAfterTimeout = req.signal.aborted;
+          return _Response.json({
+            abortedAfterCancel,
+            abortedAfterTimeout,
+          });
+        }
         case "/response/stream-error": {
           const encoder = new TextEncoder();
           return new _Response(
