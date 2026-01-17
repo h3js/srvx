@@ -79,7 +79,6 @@ export const NodeRequest: {
         const { req, res } = this.runtime!.node!;
         const abortController = this.#abortController;
         const abort = (err?: Error) => abortController.abort?.(err);
-        req.once("error", abort);
         if (res) {
           res.once("close", () => {
             const reqError = req.errored;
