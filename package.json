@@ -51,7 +51,7 @@
     "srvx": "./bin/srvx.mjs",
     "test": "pnpm lint && pnpm test:types && vitest run --coverage",
     "test:node-compat:deno": "deno run vitest test/node.test",
-    "test:node-compat:bun": "bun test test/node.test.ts",
+    "test:node-compat:bun": "bun vitest test/node.test.ts",
     "test:types": "tsgo --noEmit --skipLibCheck",
     "vitest": "vitest"
   },

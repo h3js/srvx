@@ -1,3 +1,4 @@
+import { describe, beforeAll, afterAll } from "vitest";
 import { fetch, Agent } from "undici";
 import { addTests } from "./_tests.ts";
 import { serve, FastResponse } from "../src/adapters/node.ts";
@@ -13,14 +14,6 @@ const runtime = isDeno
   : isBun
     ? `bun-node-compat`
     : "node";
-
-// Vitest is currently broken in Bun -_-
-const { describe, beforeAll, afterAll, expect, test } = globalThis.Bun
-  ? ((await import("bun:test")) as unknown as typeof import("vitest"))
-  : await import("vitest");
-if (!describe.sequential) {
-  describe.sequential = describe;
-}
 
 const testConfigs = [
   {
