@@ -1,7 +1,6 @@
 import * as c from "./_color.ts";
 import type { ServerMiddleware } from "./types.ts";
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface LogOptions {}
 
 const statusColors = { 1: c.blue, 2: c.green, 3: c.yellow } as const;
