@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest"
+import { describe, expect, test } from "vitest";
 
 import type {
   NodeHttp1Handler,
@@ -14,8 +14,6 @@ import {
 
 import express from "express";
 import fastify from "fastify";
-
-
 
 const fetchCallers = [
   {
