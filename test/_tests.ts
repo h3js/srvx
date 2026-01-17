@@ -158,6 +158,26 @@ export function addTests(opts: {
     }
   });
 
+  test("cancel reading body", async () => {
+    const res = await fetch(url("/body-cancel"), {
+      method: "POST",
+      // @ts-expect-error
+      duplex: "half",
+      body: new ReadableStream({
+        async pull(controller) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          controller.enqueue(new TextEncoder().encode("hello"));
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      abortedAfterCancel: false,
+      abortedAfterTimeout: false,
+    });
+  });
+
   // TODO: Investigate writing test for HTTP2/TLS
   test.skipIf(opts.http2)("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
