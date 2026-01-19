@@ -38,15 +38,21 @@ export function printListening(
     return;
   }
 
-  const _url = new URL(url);
-  const allInterfaces = _url.hostname === "[::]" || _url.hostname === "0.0.0.0";
-  if (allInterfaces) {
-    _url.hostname = "localhost";
-    url = _url.href;
+  let additionalInfo = "";
+  try {
+    const _url = new URL(url);
+    const allInterfaces =
+      _url.hostname === "[::]" || _url.hostname === "0.0.0.0";
+    if (allInterfaces) {
+      _url.hostname = "localhost";
+      url = _url.href;
+      additionalInfo = " (all interfaces)";
+    }
+  } catch {
+    // URL is not parsable (e.g., unix socket), use as-is
   }
 
   let listeningOn = `➜ Listening on:`;
-  let additionalInfo = allInterfaces ? " (all interfaces)" : "";
 
   if (globalThis.process.stdout?.isTTY) {
     listeningOn = `\u001B[32m${listeningOn}\u001B[0m`; // ANSI green
