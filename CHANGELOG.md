@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.10.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.10.0...v0.10.1)
+
+### 🚀 Enhancements
+
+- Support force close with double Control+C ([#163](https://github.com/h3js/srvx/pull/163))
+
+### 🩹 Fixes
+
+- **node:** Call request abort controller only on close ([#161](https://github.com/h3js/srvx/pull/161))
+- **node:** Handle multiple close calls ([#164](https://github.com/h3js/srvx/pull/164))
+- Handle non-parsable URLs in printListening ([#165](https://github.com/h3js/srvx/pull/165))
+
+### 🏡 Chore
+
+- Swtich to tsgo ([#159](https://github.com/h3js/srvx/pull/159))
+- Update undocs ([2b57ffe](https://github.com/h3js/srvx/commit/2b57ffe))
+- Update deps ([64a1485](https://github.com/h3js/srvx/commit/64a1485))
+- Update deps ([b553658](https://github.com/h3js/srvx/commit/b553658))
+
+### ✅ Tests
+
+- Use vitest for bun ([#162](https://github.com/h3js/srvx/pull/162))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Oskar Lebuda <oskar.lebuda@enp.pl>
+
 ## v0.10.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.9.8...v0.10.0)
