@@ -206,6 +206,8 @@ export function patchGlobalRequest(): typeof Request {
 }
 
 function readBody(req: NodeServerRequest): Promise<any> {
+  if ("rawBody" in req && Buffer.isBuffer(req.rawBody))
+    return Promise.resolve(req.rawBody);
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const onData = (chunk: any) => {
