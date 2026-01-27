@@ -206,6 +206,11 @@ export function patchGlobalRequest(): typeof Request {
 }
 
 function readBody(req: NodeServerRequest): Promise<any> {
+  // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
+  if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
+    return Promise.resolve(req.rawBody);
+  }
+
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const onData = (chunk: any) => {
