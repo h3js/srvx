@@ -206,8 +206,12 @@ export function patchGlobalRequest(): typeof Request {
 }
 
 function readBody(req: NodeServerRequest): Promise<any> {
-  if ("rawBody" in req && Buffer.isBuffer(req.rawBody))
+  // Google Cloud Functions provides req.rawBody as a Buffer with the original request body
+  // See: https://cloud.google.com/functions/docs/samples/functions-http-content
+  if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
     return Promise.resolve(req.rawBody);
+  }
+
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     const onData = (chunk: any) => {
