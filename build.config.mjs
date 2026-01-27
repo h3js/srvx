@@ -26,6 +26,7 @@ export default defineBuildConfig({
         define: {
           "globalThis.__srvx_version__": JSON.stringify(pkg.version),
         },
+        external: ["bun", "@cloudflare/workers-types"],
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",
