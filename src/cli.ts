@@ -214,7 +214,7 @@ function printInfo(
     entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
   } else {
     entryInfo = loaded.fetch
-      ? c.cyan("./" + relative(".", options._entry))
+      ? c.cyan("./" + relative(".", fileURLToPath(loaded.url!)))
       : c.red(
           `No fetch handler exported from ${loaded.url || resolve(options._entry)}`,
         );
