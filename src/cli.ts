@@ -117,12 +117,12 @@ async function serve() {
     } as Partial<ServerOptions>
 
     const server = srvxServe({
+      ...serverOptions,
       error: (error) => {
         console.error(error);
         return renderError(error);
       },
       fetch: loaded.fetch || (() => renderError(loaded.notFound ? "Server Entry Not Found" : "No Fetch Handler Exported", 501)),
-      ...serverOptions,
       middleware: [
         log(),
         options._static
