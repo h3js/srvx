@@ -1,0 +1,199 @@
+import type {
+  NodeHttpHandler,
+  Server,
+  ServerHandler,
+  ServerOptions,
+  ServerRequest,
+} from "srvx";
+import { pathToFileURL } from "node:url";
+import * as nodeHTTP from "node:http";
+import { relative, resolve } from "node:path";
+import { existsSync } from "node:fs";
+
+// prettier-ignore
+const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
+
+// prettier-ignore
+const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
+
+/**
+ * Options for loading a server entry module.
+ */
+export type LoadOptions = {
+  /**
+   * Path or URL to the server entry file.
+   *
+   * If not provided, common entry points will be searched automatically
+   * (e.g., `server.ts`, `index.ts`, `src/server.ts`).
+   */
+  url?: string;
+
+  /**
+   * Base directory for resolving relative paths.
+   *
+   * @default "."
+   */
+  base?: string;
+};
+
+/**
+ * Result of loading a server entry module.
+ */
+export type LoadedServerEntry = {
+  /**
+   * The web fetch handler extracted from the loaded module.
+   *
+   * This is resolved from `module.fetch`, `module.default.fetch`,
+   * or upgraded from a legacy Node.js handler.
+   */
+  fetch?: ServerHandler;
+
+  /**
+   * The raw loaded module.
+   */
+  module?: any;
+
+  /**
+   * Whether the handler was upgraded from a legacy Node.js HTTP handler.
+   *
+   * When `true`, the original module exported a Node.js-style `(req, res)` handler
+   * that has been wrapped for web fetch compatibility.
+   */
+  nodeCompat?: boolean;
+
+  /**
+   * The resolved `file://` URL of the loaded entry module.
+   */
+  url?: string;
+
+  /**
+   * Whether the specified entry file was not found.
+   *
+   * When `true`, no valid entry point could be located.
+   */
+  notFound?: boolean;
+};
+
+export async function loadServerEntry(
+  opts: LoadOptions,
+): Promise<LoadedServerEntry> {
+  // Guess entry if not provided
+  let entry: string | undefined = opts.url
+  if (entry) {
+    entry = resolve(opts.base || ".", entry);
+    if (!existsSync(entry)) {
+      return { notFound: true }
+    }
+  } else {
+    for (const defEntry of defaultEntries) {
+      for (const defExt of defaultExts) {
+        const entryPath = resolve(opts.base || ".", `${defEntry}${defExt}`);
+        if (existsSync(entryPath)) {
+          entry = entryPath;
+          break;
+        }
+      }
+      if (entry) break;
+    }
+    if (!entry) {
+      return { notFound: true };
+    }
+  }
+
+  // Convert to file:// URL for consistent imports
+  const url = entry.startsWith("file://")
+    ? entry
+    : pathToFileURL(resolve(entry)).href;
+
+  // Import the user file
+  let mod: any;
+  let listenHandler: NodeHttpHandler | undefined;
+  try {
+    const _loaded = await interceptListen(() => import(url));
+    mod = _loaded.res;
+    listenHandler = _loaded.listenHandler;
+  } catch (error) {
+    if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
+      const message = String(error);
+      if (/"\.(m|c)?ts"/g.test(message)) {
+        throw new Error(
+          `Make sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})`,
+          { cause: error },
+        );
+      } else if (/"\.(m|c)?tsx"/g.test(message)) {
+        throw new Error(
+          `You need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)`,
+          { cause: error },
+        );
+      }
+    }
+    throw error;
+  }
+
+  let fetchHandler =
+    mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
+
+  // Upgrade legacy Node.js handler
+  let nodeCompat = false;
+  if (!fetchHandler) {
+    const nodeHandler =
+      listenHandler ||
+      (typeof mod.default === "function" ? mod.default : undefined);
+    if (nodeHandler) {
+      nodeCompat = true;
+      const { callNodeHandler } = await import("./adapters/_node/call.ts");
+      fetchHandler = (webReq: ServerRequest) =>
+        callNodeHandler(nodeHandler, webReq);
+    }
+  }
+
+  return {
+    module: mod,
+    nodeCompat,
+    url,
+    fetch: fetchHandler,
+  };
+}
+
+async function interceptListen<T = unknown>(
+  cb: () => T | Promise<T>,
+): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
+  const originalListen = nodeHTTP.Server.prototype.listen;
+  let res: T;
+  let listenHandler: NodeHttpHandler | undefined;
+  try {
+    // @ts-expect-error
+    nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
+      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+      // @ts-expect-error
+      listenHandler = this._events.request;
+      if (Array.isArray(listenHandler)) {
+        listenHandler = listenHandler[0]; // Bun compatibility
+      }
+
+      // Restore original listen method
+      nodeHTTP.Server.prototype.listen = originalListen;
+
+      // Defer callback execution
+      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
+        (arg) => typeof arg === "function",
+      );
+
+      // Return a deferred proxy for the server instance
+      return new Proxy(
+        {},
+        {
+          get(_, prop) {
+            const server = globalThis.__srvx__;
+            // @ts-expect-error
+            return server?.node?.server?.[prop];
+          },
+        },
+      );
+    };
+    res = await cb();
+  } finally {
+    nodeHTTP.Server.prototype.listen = originalListen;
+  }
+  return { res, listenHandler };
+}
