@@ -496,6 +496,7 @@ ${c.gray("$")} ${c.cyan(command)} --import=jiti/register ${c.gray(`# Enable ${c.
 ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
 ${c.bold("FETCH MODE")}
+
 ${c.gray("# srvx fetch [options] [entry] [path]")}
 ${c.gray("$")} ${c.cyan(command)} fetch                  ${c.gray("# Fetch from default entry")}
 ${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific path")}
