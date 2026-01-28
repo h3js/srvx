@@ -1,42 +1,33 @@
-import type { NodeHttpHandler, ServerOptions, ServerRequest } from "srvx";
+import type { NodeHttpHandler, ServerRequest } from "srvx";
 import { pathToFileURL } from "node:url";
-import * as nodeHTTP from "node:http";
 import { relative, resolve } from "node:path";
 import { existsSync } from "node:fs";
 
-declare global {
-  // Assigned at runtime by the CLI server bootstrap
-  // (used for legacy Node.js handler detection via interceptListen)
-  var __srvx__: unknown;
-  var __srvx_listen_cb__: unknown;
-}
+import type { CLIOptions, LoadEntryResult } from "./cli.ts";
 
-// prettier-ignore
-const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
-// prettier-ignore
-const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
+type InterceptListenResult<T> = { res?: T; listenHandler?: NodeHttpHandler };
 
-export type CLIOptions = Partial<ServerOptions> & {
-  _entry: string;
-  _dir: string;
-  _prod: boolean;
-  _static: string;
-  _help?: boolean;
-  _version?: boolean;
-  _import?: string;
+type LoadEntryContext = {
+  defaultEntries: string[];
+  defaultExts: string[];
+  interceptListen: <T = unknown>(
+    cb: () => T | Promise<T>,
+  ) => Promise<InterceptListenResult<T>>;
+  renderError: (error: unknown, status?: number, title?: string) => Response;
+  colors?: {
+    red: (input: string) => string;
+  };
 };
 
-export type LoadEntryResult = ServerOptions & {
-  _legacyNode?: boolean;
-  _error?: string;
-};
-
-export async function loadEntry(opts: CLIOptions): Promise<LoadEntryResult> {
+export async function loadEntry(
+  opts: CLIOptions,
+  ctx: LoadEntryContext,
+): Promise<LoadEntryResult> {
   try {
     // Guess entry if not provided
     if (!opts._entry) {
-      for (const entry of defaultEntries) {
-        for (const ext of defaultExts) {
+      for (const entry of ctx.defaultEntries) {
+        for (const ext of ctx.defaultExts) {
           const entryPath = resolve(opts._dir, `${entry}${ext}`);
           if (existsSync(entryPath)) {
             opts._entry = entryPath;
@@ -48,10 +39,10 @@ export async function loadEntry(opts: CLIOptions): Promise<LoadEntryResult> {
     }
 
     if (!opts._entry) {
-      const _error = `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${defaultEntries.join(", ")}).`;
+      const _error = `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${ctx.defaultEntries.join(", ")}).`;
       return {
         _error,
-        fetch: () => renderError(opts._prod, _error, 404, "No Server Entry"),
+        fetch: () => ctx.renderError(_error, 404, "No Server Entry"),
         ...opts,
       };
     }
@@ -62,7 +53,7 @@ export async function loadEntry(opts: CLIOptions): Promise<LoadEntryResult> {
       : pathToFileURL(resolve(opts._entry)).href;
 
     // Import the user file
-    const { res: mod, listenHandler } = await interceptListen(
+    const { res: mod, listenHandler } = await ctx.interceptListen(
       () => import(entryURL),
     );
 
@@ -87,8 +78,7 @@ export async function loadEntry(opts: CLIOptions): Promise<LoadEntryResult> {
     let _error: string | undefined;
     if (!fetchHandler) {
       _error = `The entry file "${relative(".", opts._entry)}" does not export a valid fetch handler.`;
-      fetchHandler = () =>
-        renderError(opts._prod, _error!, 500, "Invalid Entry");
+      fetchHandler = () => ctx.renderError(_error!, 500, "Invalid Entry");
     }
 
     return {
@@ -103,91 +93,13 @@ export async function loadEntry(opts: CLIOptions): Promise<LoadEntryResult> {
     if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
       const message = String(error);
       if (/"\.(m|c)?ts"/g.test(message)) {
-        console.error(
-          `\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
-        );
+        const msg = `\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`;
+        console.error(ctx.colors?.red ? ctx.colors.red(msg) : msg);
       } else if (/"\.(m|c)?tsx"/g.test(message)) {
-        console.error(
-          `\nYou need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)\n\n`,
-        );
+        const msg = `\nYou need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)\n\n`;
+        console.error(ctx.colors?.red ? ctx.colors.red(msg) : msg);
       }
     }
     throw error;
   }
-}
-
-function renderError(
-  prod: boolean,
-  error: unknown,
-  status = 500,
-  title = "Server Error",
-): Response {
-  let html = `<!DOCTYPE html><html><head><title>${title}</title></head><body>`;
-  if (prod) {
-    html += `<h1>${title}</h1><p>Something went wrong while processing your request.</p>`;
-  } else {
-    html += /* html */ `
-    <style>
-      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f8f9fa; color: #333; }
-      h1 { color: #dc3545; }
-      pre { background: #fff; padding: 10px; border-radius: 5px; overflow: auto; }
-      code { font-family: monospace; }
-      #error { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; }
-    </style>
-    <div id="error"><h1>${title}</h1><pre>${error instanceof Error ? error.stack || error.message : String(error)}</pre></div>
-    `;
-  }
-
-  return new Response(html, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-async function interceptListen<T = unknown>(
-  cb: () => T | Promise<T>,
-): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
-  const originalListen = nodeHTTP.Server.prototype.listen;
-  let res: T;
-  let listenHandler: NodeHttpHandler | undefined;
-  try {
-    // @ts-expect-error
-    nodeHTTP.Server.prototype.listen = function (
-      this: any,
-      arg1: any,
-      arg2: any,
-    ) {
-      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
-      // @ts-expect-error
-      listenHandler = this._events.request;
-      if (Array.isArray(listenHandler)) {
-        listenHandler = listenHandler[0]; // Bun compatibility
-      }
-
-      // Restore original listen method
-      nodeHTTP.Server.prototype.listen = originalListen;
-
-      // Defer callback execution
-      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
-        (arg) => typeof arg === "function",
-      );
-
-      // Return a deferred proxy for the server instance
-      return new Proxy(
-        {},
-        {
-          get(_, prop) {
-            const server = (globalThis as any).__srvx__;
-            // @ts-expect-error
-            return server?.node?.server?.[prop];
-          },
-        },
-      );
-    };
-
-    res = await cb();
-  } finally {
-    nodeHTTP.Server.prototype.listen = originalListen;
-  }
-  return { res, listenHandler };
 }

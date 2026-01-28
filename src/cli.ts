@@ -1,14 +1,23 @@
-import type { Server, ServerMiddleware, ServerOptions } from "srvx";
+import type {
+  NodeHttpHandler,
+  Server,
+  ServerMiddleware,
+  ServerOptions,
+  ServerRequest,
+} from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
-// node:http import moved to loader
+import * as nodeHTTP from "node:http";
 import { dirname, extname, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as c from "./_color.ts";
-import { loadEntry, type CLIOptions, type LoadEntryResult } from "./loader.ts";
+import { loadEntry } from "./loader.ts";
 
-// defaultEntries/defaultExts are defined in loader.ts
+// prettier-ignore
+const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
+// prettier-ignore
+const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
 
 const args = process.argv.slice(2);
 const options = parseArgs(args);
@@ -97,7 +106,13 @@ async function serve() {
     }
 
     // Load server entry file and create a new server instance
-    const entry = await loadEntry(options);
+    const entry = await loadEntry(options, {
+      defaultEntries,
+      defaultExts,
+      interceptListen,
+      renderError,
+      colors: c,
+    });
 
     const forceUseNode = entry._legacyNode;
     const { serve: srvxServe } = forceUseNode
@@ -149,7 +164,20 @@ type MainOpts = {
   issues: string;
 };
 
-// CLIOptions type moved to loader.ts
+export type CLIOptions = Partial<ServerOptions> & {
+  _entry: string;
+  _dir: string;
+  _prod: boolean;
+  _static: string;
+  _help?: boolean;
+  _version?: boolean;
+  _import?: string;
+};
+
+export type LoadEntryResult = ServerOptions & {
+  _legacyNode?: boolean;
+  _error?: string;
+};
 
 function renderError(
   error: unknown,
@@ -196,6 +224,49 @@ function printInfo(entry: LoadEntryResult) {
     staticInfo = c.gray(`(add ${c.bold("public/")} dir to enable)`);
   }
   console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
+}
+
+async function interceptListen<T = unknown>(
+  cb: () => T | Promise<T>,
+): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
+  const originalListen = nodeHTTP.Server.prototype.listen;
+  let res: T;
+  let listenHandler: NodeHttpHandler | undefined;
+  try {
+    // @ts-expect-error
+    nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
+      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+      // @ts-expect-error
+      listenHandler = this._events.request;
+      if (Array.isArray(listenHandler)) {
+        listenHandler = listenHandler[0]; // Bun compatibility
+      }
+
+      // Restore original listen method
+      nodeHTTP.Server.prototype.listen = originalListen;
+
+      // Defer callback execution
+      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
+        (arg) => typeof arg === "function",
+      );
+
+      // Return a deferred proxy for the server instance
+      return new Proxy(
+        {},
+        {
+          get(_, prop) {
+            const server = globalThis.__srvx__;
+            // @ts-expect-error
+            return server?.node?.server?.[prop];
+          },
+        },
+      );
+    };
+    res = await cb();
+  } finally {
+    nodeHTTP.Server.prototype.listen = originalListen;
+  }
+  return { res, listenHandler };
 }
 
 async function version() {
