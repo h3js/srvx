@@ -99,7 +99,10 @@ async function serve() {
     }
 
     // Load server entry file and create a new server instance
-    const loaded = await loadServerEntry({ url: options._entry, base: options._dir });
+    const loaded = await loadServerEntry({
+      url: options._entry,
+      base: options._dir,
+    });
 
     const { serve: srvxServe } = loaded.nodeCompat
       ? await import("srvx/node")
@@ -114,7 +117,7 @@ async function serve() {
       ...loaded.module?.default,
       default: undefined,
       ...loaded.module,
-    } as Partial<ServerOptions>
+    } as Partial<ServerOptions>;
 
     const server = srvxServe({
       ...serverOptions,
@@ -122,7 +125,15 @@ async function serve() {
         console.error(error);
         return renderError(error);
       },
-      fetch: loaded.fetch || (() => renderError(loaded.notFound ? "Server Entry Not Found" : "No Fetch Handler Exported", 501)),
+      fetch:
+        loaded.fetch ||
+        (() =>
+          renderError(
+            loaded.notFound
+              ? "Server Entry Not Found"
+              : "No Fetch Handler Exported",
+            501,
+          )),
       middleware: [
         log(),
         options._static
@@ -167,7 +178,6 @@ type CLIOptions = Partial<ServerOptions> & {
   _import?: string;
 };
 
-
 function renderError(
   error: unknown,
   status = 500,
@@ -195,12 +205,19 @@ function renderError(
   });
 }
 
-function printInfo(options: CLIOptions, loaded: Awaited<ReturnType<typeof loadServerEntry>>) {
+function printInfo(
+  options: CLIOptions,
+  loaded: Awaited<ReturnType<typeof loadServerEntry>>,
+) {
   let entryInfo: string;
   if (loaded.notFound) {
     entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
   } else {
-    entryInfo = loaded.fetch ? c.cyan("./" + relative(".", options._entry)) : c.red(`No fetch handler exported from ${loaded.url || resolve(options._entry)}`);
+    entryInfo = loaded.fetch
+      ? c.cyan("./" + relative(".", options._entry))
+      : c.red(
+          `No fetch handler exported from ${loaded.url || resolve(options._entry)}`,
+        );
   }
   console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
   let staticInfo: string;

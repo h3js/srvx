@@ -78,11 +78,11 @@ export async function loadServerEntry(
   opts: LoadOptions,
 ): Promise<LoadedServerEntry> {
   // Guess entry if not provided
-  let entry: string | undefined = opts.url
+  let entry: string | undefined = opts.url;
   if (entry) {
     entry = resolve(opts.base || ".", entry);
     if (!existsSync(entry)) {
-      return { notFound: true }
+      return { notFound: true };
     }
   } else {
     for (const defEntry of defaultEntries) {
