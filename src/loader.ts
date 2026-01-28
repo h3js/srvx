@@ -141,9 +141,9 @@ export async function loadServerEntry(
       (typeof mod.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
       nodeCompat = true;
-      const { callNodeHandler } = await import("./adapters/_node/call.ts");
+      const { fetchNodeHandler } = await import("srvx/node");
       fetchHandler = (webReq: ServerRequest) =>
-        callNodeHandler(nodeHandler, webReq);
+        fetchNodeHandler(nodeHandler, webReq);
     }
   }
 
