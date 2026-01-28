@@ -120,6 +120,7 @@ async function serve() {
     } as Partial<ServerOptions>;
 
     const server = srvxServe({
+      gracefulShutdown: options._prod,
       ...serverOptions,
       error: (error) => {
         console.error(error);
