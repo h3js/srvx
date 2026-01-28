@@ -186,6 +186,12 @@ importers:
         specifier: link:../..
         version: link:../..
 
+  examples/streaming:
+    devDependencies:
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
   examples/tracing:
     devDependencies:
       srvx:
