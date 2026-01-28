@@ -155,45 +155,56 @@ export async function loadServerEntry(
   };
 }
 
+// Concurrency lock to prevent parallel interceptions
+let _interceptQueue: Promise<unknown> = Promise.resolve();
+
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
 ): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
-  const originalListen = nodeHTTP.Server.prototype.listen;
-  let res: T;
-  let listenHandler: NodeHttpHandler | undefined;
-  try {
-    // @ts-expect-error
-    nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
-      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+  // Chain onto the queue to ensure sequential execution
+  const result = _interceptQueue.then(async () => {
+    const originalListen = nodeHTTP.Server.prototype.listen;
+    let res: T;
+    let listenHandler: NodeHttpHandler | undefined;
+    try {
       // @ts-expect-error
-      listenHandler = this._events.request;
-      if (Array.isArray(listenHandler)) {
-        listenHandler = listenHandler[0]; // Bun compatibility
-      }
+      nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
+        // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
+        // @ts-expect-error
+        listenHandler = this._events.request;
+        if (Array.isArray(listenHandler)) {
+          listenHandler = listenHandler[0]; // Bun compatibility
+        }
 
-      // Restore original listen method
-      nodeHTTP.Server.prototype.listen = originalListen;
+        // Restore original listen method
+        nodeHTTP.Server.prototype.listen = originalListen;
 
-      // Defer callback execution
-      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
-        (arg) => typeof arg === "function",
-      );
+        // Defer callback execution
+        globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
+          (arg) => typeof arg === "function",
+        );
 
-      // Return a deferred proxy for the server instance
-      return new Proxy(
-        {},
-        {
-          get(_, prop) {
-            const server = globalThis.__srvx__;
-            // @ts-expect-error
-            return server?.node?.server?.[prop];
+        // Return a deferred proxy for the server instance
+        return new Proxy(
+          {},
+          {
+            get(_, prop) {
+              const server = globalThis.__srvx__;
+              // @ts-expect-error
+              return server?.node?.server?.[prop];
+            },
           },
-        },
-      );
-    };
-    res = await cb();
-  } finally {
-    nodeHTTP.Server.prototype.listen = originalListen;
-  }
-  return { res, listenHandler };
+        );
+      };
+      res = await cb();
+    } finally {
+      nodeHTTP.Server.prototype.listen = originalListen;
+    }
+    return { res, listenHandler };
+  });
+
+  // Update queue to point to this operation (swallow errors for queue chaining)
+  _interceptQueue = result.catch(() => {});
+
+  return result;
 }
