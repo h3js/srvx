@@ -1,17 +1,11 @@
-import type {
-  NodeHttpHandler,
-  Server,
-  ServerMiddleware,
-  ServerOptions,
-  ServerRequest,
-} from "srvx";
+import type { Server, ServerMiddleware, ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import * as nodeHTTP from "node:http";
+import { fileURLToPath } from "node:url";
 import { dirname, extname, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 import * as c from "./_color.ts";
+import { loadServerEntry } from "./loader.ts";
 
 // prettier-ignore
 const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
@@ -105,10 +99,12 @@ async function serve() {
     }
 
     // Load server entry file and create a new server instance
-    const entry = await loadEntry(options);
+    const loaded = await loadServerEntry({
+      url: options._entry,
+      base: options._dir,
+    });
 
-    const forceUseNode = entry._legacyNode;
-    const { serve: srvxServe } = forceUseNode
+    const { serve: srvxServe } = loaded.nodeCompat
       ? await import("srvx/node")
       : await import("srvx");
     const { serveStatic } = await import("srvx/static");
@@ -117,12 +113,27 @@ async function serve() {
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
 
+    const serverOptions = {
+      ...loaded.module?.default,
+      default: undefined,
+      ...loaded.module,
+    } as Partial<ServerOptions>;
+
     const server = srvxServe({
+      ...serverOptions,
       error: (error) => {
         console.error(error);
         return renderError(error);
       },
-      ...entry,
+      fetch:
+        loaded.fetch ||
+        (() =>
+          renderError(
+            loaded.notFound
+              ? "Server Entry Not Found"
+              : "No Fetch Handler Exported",
+            501,
+          )),
       middleware: [
         log(),
         options._static
@@ -130,7 +141,7 @@ async function serve() {
               dir: options._static,
             })
           : undefined,
-        ...(entry.middleware || []),
+        ...(serverOptions.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
     });
 
@@ -138,7 +149,7 @@ async function serve() {
     await server.ready();
     await globalThis.__srvx_listen_cb__?.();
 
-    printInfo(entry);
+    printInfo(options, loaded);
   } catch (error) {
     console.error(error);
     process.exit(1);
@@ -167,97 +178,6 @@ type CLIOptions = Partial<ServerOptions> & {
   _import?: string;
 };
 
-async function loadEntry(
-  opts: CLIOptions,
-): Promise<ServerOptions & { _legacyNode?: boolean; _error?: string }> {
-  try {
-    // Guess entry if not provided
-    if (!opts._entry) {
-      for (const entry of defaultEntries) {
-        for (const ext of defaultExts) {
-          const entryPath = resolve(opts._dir, `${entry}${ext}`);
-          if (existsSync(entryPath)) {
-            opts._entry = entryPath;
-            break;
-          }
-        }
-        if (opts._entry) break;
-      }
-    }
-    if (!opts._entry) {
-      const _error = `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${defaultEntries.join(", ")}).`;
-      return {
-        _error,
-        fetch: () => renderError(_error, 404, "No Server Entry"),
-        ...opts,
-      };
-    }
-
-    // Convert to file:// URL for consistent imports
-    const entryURL = opts._entry.startsWith("file://")
-      ? opts._entry
-      : pathToFileURL(resolve(opts._entry)).href;
-
-    // Import the user file
-    const { res: mod, listenHandler } = await interceptListen(
-      () => import(entryURL),
-    );
-    let fetchHandler =
-      mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
-
-    // Upgrade legacy Node.js handler
-    let _legacyNode = false;
-    if (!fetchHandler) {
-      const nodeHandler =
-        listenHandler ||
-        (typeof mod.default === "function" ? mod.default : undefined);
-      if (nodeHandler) {
-        _legacyNode = true;
-        const { callNodeHandler } = await import("./adapters/_node/call.ts");
-        fetchHandler = (webReq: ServerRequest) =>
-          callNodeHandler(nodeHandler, webReq);
-      }
-    }
-
-    // Runtime warning if no fetch handler is found
-    let _error: string | undefined;
-    if (!fetchHandler) {
-      _error = `The entry file "${relative(".", opts._entry)}" does not export a valid fetch handler.`;
-      fetchHandler = () => renderError(_error, 500, "Invalid Entry");
-    }
-
-    return {
-      ...mod,
-      ...mod.default,
-      ...opts,
-      _error,
-      _legacyNode,
-      fetch: fetchHandler,
-    };
-  } catch (error) {
-    if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
-      const message = String(error);
-      if (/"\.(m|c)?ts"/g.test(message)) {
-        console.error(
-          c.red(
-            `\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
-          ),
-        );
-      } else if (/"\.(m|c)?tsx"/g.test(message)) {
-        console.error(
-          c.red(
-            `\nYou need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)\n\n`,
-          ),
-        );
-      }
-    }
-    if (error instanceof Error) {
-      Error.captureStackTrace?.(error, serve);
-    }
-    throw error;
-  }
-}
-
 function renderError(
   error: unknown,
   status = 500,
@@ -285,17 +205,21 @@ function renderError(
   });
 }
 
-function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
+function printInfo(
+  options: CLIOptions,
+  loaded: Awaited<ReturnType<typeof loadServerEntry>>,
+) {
   let entryInfo: string;
-  if (options._entry) {
-    entryInfo = c.cyan("./" + relative(".", options._entry));
-  } else {
+  if (loaded.notFound) {
     entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
+  } else {
+    entryInfo = loaded.fetch
+      ? c.cyan("./" + relative(".", fileURLToPath(loaded.url!)))
+      : c.red(
+          `No fetch handler exported from ${loaded.url || resolve(options._entry)}`,
+        );
   }
   console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
-  if (options._entry && entry._error) {
-    console.error(c.red(`  ${entry._error}`));
-  }
   let staticInfo: string;
   if (options._static) {
     staticInfo = c.cyan("./" + relative(".", options._static) + "/");
@@ -303,49 +227,6 @@ function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
     staticInfo = c.gray(`(add ${c.bold("public/")} dir to enable)`);
   }
   console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
-}
-
-async function interceptListen<T = unknown>(
-  cb: () => T | Promise<T>,
-): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
-  const originalListen = nodeHTTP.Server.prototype.listen;
-  let res: T;
-  let listenHandler: NodeHttpHandler | undefined;
-  try {
-    // @ts-expect-error
-    nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
-      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
-      // @ts-expect-error
-      listenHandler = this._events.request;
-      if (Array.isArray(listenHandler)) {
-        listenHandler = listenHandler[0]; // Bun compatibility
-      }
-
-      // Restore original listen method
-      nodeHTTP.Server.prototype.listen = originalListen;
-
-      // Defer callback execution
-      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
-        (arg) => typeof arg === "function",
-      );
-
-      // Return a deferred proxy for the server instance
-      return new Proxy(
-        {},
-        {
-          get(_, prop) {
-            const server = globalThis.__srvx__;
-            // @ts-expect-error
-            return server?.node?.server?.[prop];
-          },
-        },
-      );
-    };
-    res = await cb();
-  } finally {
-    nodeHTTP.Server.prototype.listen = originalListen;
-  }
-  return { res, listenHandler };
 }
 
 async function version() {

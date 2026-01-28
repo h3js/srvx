@@ -18,6 +18,7 @@
     "./static": "./dist/static.mjs",
     "./log": "./dist/log.mjs",
     "./tracing": "./dist/tracing.mjs",
+    "./loader": "./dist/loader.mjs",
     ".": {
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
