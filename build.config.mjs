@@ -10,6 +10,7 @@ export default defineBuildConfig({
       input: [
         "src/types.ts",
         "src/cli.ts",
+        "src/loader.ts",
         "src/static.ts",
         "src/log.ts",
         "src/tracing.ts",

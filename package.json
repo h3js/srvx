@@ -15,6 +15,7 @@
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
     "./cli": "./dist/cli.mjs",
+    "./loader": "./dist/loader.mjs",
     "./static": "./dist/static.mjs",
     "./log": "./dist/log.mjs",
     "./tracing": "./dist/tracing.mjs",
