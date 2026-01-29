@@ -30,10 +30,7 @@ export function fmtURL(
   return `http${secure ? "s" : ""}://${host}:${port}/`;
 }
 
-export function printListening(
-  opts: ServerOptions,
-  url: string | undefined,
-): void {
+export function printListening(opts: ServerOptions, url: string | undefined): void {
   if (!url || (opts.silent ?? globalThis.process?.env?.TEST)) {
     return;
   }
@@ -41,8 +38,7 @@ export function printListening(
   let additionalInfo = "";
   try {
     const _url = new URL(url);
-    const allInterfaces =
-      _url.hostname === "[::]" || _url.hostname === "0.0.0.0";
+    const allInterfaces = _url.hostname === "[::]" || _url.hostname === "0.0.0.0";
     if (allInterfaces) {
       _url.hostname = "localhost";
       url = _url.href;
@@ -77,9 +73,7 @@ export function resolveTLSOptions(opts: ServerOptions):
   const key = resolveCertOrKey(opts.tls.key);
   if (!cert && !key) {
     if (opts.protocol === "https") {
-      throw new TypeError(
-        "TLS `cert` and `key` must be provided for `https` protocol.",
-      );
+      throw new TypeError("TLS `cert` and `key` must be provided for `https` protocol.");
     }
     return;
   }
@@ -98,9 +92,7 @@ function resolveCertOrKey(value?: unknown): undefined | string {
     return;
   }
   if (typeof value !== "string") {
-    throw new TypeError(
-      "TLS certificate and key must be strings in PEM format or file paths.",
-    );
+    throw new TypeError("TLS certificate and key must be strings in PEM format or file paths.");
   }
   if (value.startsWith("-----BEGIN ")) {
     return value;

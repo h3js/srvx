@@ -66,10 +66,7 @@ class NodeServer implements Server {
 
     this.#wait = createWaitUntil();
 
-    const handler = (
-      nodeReq: NodeServerRequest,
-      nodeRes: NodeServerResponse,
-    ) => {
+    const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait.waitUntil;
       const res = fetchHandler(request);
@@ -84,9 +81,7 @@ class NodeServer implements Server {
       port,
       host,
       exclusive: !this.options.reusePort,
-      ...(tls
-        ? { cert: tls.cert, key: tls.key, passphrase: tls.passphrase }
-        : {}),
+      ...(tls ? { cert: tls.cert, key: tls.key, passphrase: tls.passphrase } : {}),
       ...this.options.node,
     };
 
@@ -99,23 +94,14 @@ class NodeServer implements Server {
 
     if (isHttp2) {
       if (this.#isSecure) {
-        server = nodeHTTP2.createSecureServer(
-          { allowHTTP1: true, ...this.serveOptions },
-          handler,
-        );
+        server = nodeHTTP2.createSecureServer({ allowHTTP1: true, ...this.serveOptions }, handler);
       } else {
         throw new Error("node.http2 option requires tls certificate!");
       }
     } else if (this.#isSecure) {
-      server = nodeHTTPS.createServer(
-        this.serveOptions as NodeHttps.ServerOptions,
-        handler,
-      );
+      server = nodeHTTPS.createServer(this.serveOptions as NodeHttps.ServerOptions, handler);
     } else {
-      server = nodeHTTP.createServer(
-        this.serveOptions as NodeHttp.ServerOptions,
-        handler,
-      );
+      server = nodeHTTP.createServer(this.serveOptions as NodeHttp.ServerOptions, handler);
     }
 
     this.node = { server, handler };

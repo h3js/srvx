@@ -21,6 +21,4 @@ export const cyan: ColorType = /* @__PURE__ */ _c(36);
 export const gray: ColorType = /* @__PURE__ */ _c(90);
 
 export const url: (title: string, url: string) => string = (title, url) =>
-  noColor
-    ? `[${title}](${url})`
-    : `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`;
+  noColor ? `[${title}](${url})` : `\u001B]8;;${url}\u001B\\${title}\u001B]8;;\u001B\\`;

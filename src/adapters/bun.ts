@@ -90,15 +90,10 @@ class BunServer implements Server<BunFetchHandler> {
       return;
     }
     // Prefer address since server.url hostname is not reliable
-    const address = (
-      server as { address?: { address: string; family: string; port: number } }
-    ).address;
+    const address = (server as { address?: { address: string; family: string; port: number } })
+      .address;
     if (address) {
-      return fmtURL(
-        address.address,
-        address.port,
-        (server as any).protocol === "https",
-      );
+      return fmtURL(address.address, address.port, (server as any).protocol === "https");
     }
     return server.url.href;
   }
@@ -108,9 +103,6 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   async close(closeAll?: boolean): Promise<void> {
-    await Promise.all([
-      this.#wait.wait(),
-      Promise.resolve(this.bun?.server?.stop(closeAll)),
-    ]);
+    await Promise.all([this.#wait.wait(), Promise.resolve(this.bun?.server?.stop(closeAll))]);
   }
 }

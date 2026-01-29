@@ -7,7 +7,7 @@
     "dev": "srvx"
   },
   "devDependencies": {
-    "srvx": "latest",
-    "crossws": "latest"
+    "crossws": "latest",
+    "srvx": "latest"
   }
 }

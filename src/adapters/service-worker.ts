@@ -11,8 +11,7 @@ export type ServiceWorkerHandler = (
   event: FetchEvent,
 ) => Response | Promise<Response>;
 
-const isBrowserWindow =
-  typeof window !== "undefined" && typeof navigator !== "undefined";
+const isBrowserWindow = typeof window !== "undefined" && typeof navigator !== "undefined";
 
 const isServiceWorker = /* @__PURE__ */ (() =>
   typeof self !== "undefined" && "skipWaiting" in self)();
@@ -55,9 +54,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
   serve() {
     if (isBrowserWindow) {
       if (!navigator.serviceWorker) {
-        throw new Error(
-          "Service worker is not supported in the current window.",
-        );
+        throw new Error("Service worker is not supported in the current window.");
       }
       const swURL = this.options.serviceWorker?.url;
       if (!swURL) {
@@ -84,9 +81,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
       // Listen for the 'fetch' event to handle requests
       this.#fetchListener = async (event) => {
         // skip if event url ends with file with extension
-        if (
-          /\/[^/]*\.[a-zA-Z0-9]+$/.test(new URL(event.request.url).pathname)
-        ) {
+        if (/\/[^/]*\.[a-zA-Z0-9]+$/.test(new URL(event.request.url).pathname)) {
           return;
         }
         Object.defineProperty(event.request, "waitUntil", {

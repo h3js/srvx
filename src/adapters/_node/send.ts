@@ -33,9 +33,7 @@ export async function sendNodeResponse(
   const rawHeaders = [...webRes.headers];
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
-  return webRes.body
-    ? streamBody(webRes.body, nodeRes)
-    : endNodeResponse(nodeRes);
+  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
 }
 
 function writeHead(
@@ -99,9 +97,7 @@ export function streamBody(
         reader.read().then(streamHandle, streamCancel);
       } else {
         // Wait for the drain event to continue reading
-        nodeRes.once("drain", () =>
-          reader.read().then(streamHandle, streamCancel),
-        );
+        nodeRes.once("drain", () => reader.read().then(streamHandle, streamCancel));
       }
     } catch (error) {
       streamCancel(error instanceof Error ? error : undefined);

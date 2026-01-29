@@ -40,7 +40,7 @@
 
 ### 💅 Refactors
 
-- **node:** ⚠️  Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+- **node:** ⚠️ Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
 
 ### 📖 Documentation
 
@@ -53,7 +53,7 @@
 
 #### ⚠️ Breaking Changes
 
-- **node:** ⚠️  Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+- **node:** ⚠️ Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
 
 ### ❤️ Contributors
 
@@ -242,12 +242,12 @@
 
 ### 💅 Refactors
 
-- ⚠️  Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
-- ⚠️  Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- ⚠️ Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️ Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
 - Rename to `toWebHandler` ([3124480](https://github.com/h3js/srvx/commit/3124480))
-- **node:** ⚠️  Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- **node:** ⚠️ Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
 - Fix type issues ([83cc771](https://github.com/h3js/srvx/commit/83cc771))
-- **node:** ⚠️  Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+- **node:** ⚠️ Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
 
 ### 🏡 Chore
 
@@ -266,10 +266,10 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
-- ⚠️  Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
-- **node:** ⚠️  Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
-- **node:** ⚠️  Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+- ⚠️ Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️ Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- **node:** ⚠️ Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- **node:** ⚠️ Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
 
 ### ❤️ Contributors
 
@@ -630,7 +630,7 @@
 
 ### 📦 Build
 
-- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+- ⚠️ Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
 
 ### 🌊 Types
 
@@ -645,7 +645,7 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+- ⚠️ Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
 
 ### ❤️ Contributors
 
@@ -760,7 +760,7 @@
 ### 🚀 Enhancements
 
 - **node:** Support http2 ([#58](https://github.com/h3js/srvx/pull/58))
-- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- ⚠️ Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
 - Clone options and init `middleware: []` ([16798c1](https://github.com/h3js/srvx/commit/16798c1))
 
 ### 🩹 Fixes
@@ -770,8 +770,8 @@
 
 ### 💅 Refactors
 
-- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
-- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+- ⚠️ Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️ Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
 - Move node compat to `adapters/_node` ([e594009](https://github.com/h3js/srvx/commit/e594009))
 
 ### 📦 Build
@@ -794,9 +794,9 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
-- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
-- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+- ⚠️ Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- ⚠️ Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️ Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
 
 ### ❤️ Contributors
 
@@ -809,7 +809,7 @@
 
 ### 🚀 Enhancements
 
-- ⚠️  Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
+- ⚠️ Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
 - Support `upgrade` hook (experimental) ([#63](https://github.com/h3js/srvx/pull/63))
 
 ### 🩹 Fixes
@@ -818,8 +818,8 @@
 
 ### 💅 Refactors
 
-- ⚠️  Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
-- ⚠️  Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
+- ⚠️ Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
+- ⚠️ Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
 
 ### 🏡 Chore
 
@@ -827,9 +827,9 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
-- ⚠️  Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
-- ⚠️  Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
+- ⚠️ Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
+- ⚠️ Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
+- ⚠️ Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
 
 ### ❤️ Contributors
 

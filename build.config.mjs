@@ -14,14 +14,9 @@ export default defineBuildConfig({
         "src/log.ts",
         "src/tracing.ts",
         "src/loader.ts",
-        ...[
-          "deno",
-          "bun",
-          "node",
-          "cloudflare",
-          "generic",
-          "service-worker",
-        ].map((adapter) => `src/adapters/${adapter}.ts`),
+        ...["deno", "bun", "node", "cloudflare", "generic", "service-worker"].map(
+          (adapter) => `src/adapters/${adapter}.ts`,
+        ),
       ],
       rolldown: {
         external: ["bun", "@cloudflare/workers-types"],

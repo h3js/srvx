@@ -189,9 +189,7 @@ export const fixture: (
             new ReadableStream({
               async start(controller) {
                 while (!req.signal.aborted) {
-                  controller.enqueue(
-                    new TextEncoder().encode(new Date().toISOString() + "\n"),
-                  );
+                  controller.enqueue(new TextEncoder().encode(new Date().toISOString() + "\n"));
                   await new Promise((resolve) => setTimeout(resolve, 100));
                 }
                 controller.close();

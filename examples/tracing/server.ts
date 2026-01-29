@@ -13,9 +13,7 @@ debugChannel("srvx.middleware");
 debugChannel("srvx.fetch");
 
 function debugChannel(name: string) {
-  const { tracingChannel } = process.getBuiltinModule(
-    "node:diagnostics_channel",
-  );
+  const { tracingChannel } = process.getBuiltinModule("node:diagnostics_channel");
 
   const log = (...args: unknown[]) => console.log(`[tracing:${name}]`, ...args);
   const noop = () => {};

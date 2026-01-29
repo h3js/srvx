@@ -132,9 +132,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     callback: (error?: Error | null) => void,
   ): void {
     if (this.#headersWritten) {
-      this.#_writeBody(
-        typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk,
-      );
+      this.#_writeBody(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
     } else if (chunk?.length > 0) {
       this.#headersWritten = true;
       const headerEnd = chunk.lastIndexOf("\r\n\r\n");
@@ -155,10 +153,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     callback(null);
   }
 
-  override _destroy(
-    err: Error | null,
-    cb: (error?: Error | null) => void,
-  ): void {
+  override _destroy(err: Error | null, cb: (error?: Error | null) => void): void {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
     }

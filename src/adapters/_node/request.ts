@@ -1,8 +1,4 @@
-import type {
-  NodeServerRequest,
-  NodeServerResponse,
-  ServerRequest,
-} from "../../types.ts";
+import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
@@ -100,9 +96,7 @@ export const NodeRequest: {
     }
 
     get signal() {
-      return this.#request
-        ? this.#request.signal
-        : this._abortController.signal;
+      return this.#request ? this.#request.signal : this._abortController.signal;
     }
 
     get body(): ReadableStream | null {
@@ -114,9 +108,7 @@ export const NodeRequest: {
         const hasBody = !(method === "GET" || method === "HEAD");
         this.#bodyStream = hasBody
           ? // TODO: HTTP2ServerRequest
-            (Readable.toWeb(
-              this.#req as NodeJS.ReadableStream,
-            ) as unknown as ReadableStream)
+            (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
           : null;
       }
       return this.#bodyStream;
@@ -127,9 +119,7 @@ export const NodeRequest: {
         return this.#request.text();
       }
       if (this.#bodyStream !== undefined) {
-        return this.#bodyStream
-          ? new Response(this.#bodyStream).text()
-          : Promise.resolve("");
+        return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
       return readBody(this.#req).then((buf) => buf.toString());
     }
@@ -175,9 +165,8 @@ export const NodeRequest: {
  * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
  */
 export function patchGlobalRequest(): typeof Request {
-  const NativeRequest = ((globalThis as any)[
-    Symbol.for("srvx.nativeRequest")
-  ] ??= globalThis.Request) as typeof globalThis.Request;
+  const NativeRequest = ((globalThis as any)[Symbol.for("srvx.nativeRequest")] ??=
+    globalThis.Request) as typeof globalThis.Request;
 
   const PatchedRequest = class Request extends NativeRequest {
     static _srvx = true;
@@ -189,10 +178,7 @@ export function patchGlobalRequest(): typeof Request {
         return Object.prototype.isPrototypeOf.call(this.prototype, instance);
       }
     }
-    constructor(
-      input: string | URL | globalThis.Request,
-      options?: RequestInit,
-    ) {
+    constructor(input: string | URL | globalThis.Request, options?: RequestInit) {
       if (typeof input === "object" && "_request" in input) {
         input = (input as any)._request;
       }

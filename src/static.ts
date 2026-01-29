@@ -56,9 +56,7 @@ const COMMON_MIME_TYPES: Record<string, string> = {
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const dir = resolve(options.dir) + "/";
-  const methods = new Set(
-    (options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()),
-  );
+  const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
 
   return async (req, next) => {
     if (!methods.has(req.method)) {
@@ -84,8 +82,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         const fileExt = extname(filePath);
         const headers: HeadersInit = {
           "Content-Length": fileStat.size.toString(),
-          "Content-Type":
-            COMMON_MIME_TYPES[fileExt] || "application/octet-stream",
+          "Content-Type": COMMON_MIME_TYPES[fileExt] || "application/octet-stream",
         };
         if (options.renderHTML && fileExt === ".html") {
           return options.renderHTML({

@@ -108,9 +108,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     });
 
     if (loaded.notFound) {
-      console.error(
-        `Server entry file not found at ${options._entry || "server.ts"}`,
-      );
+      console.error(`Server entry file not found at ${options._entry || "server.ts"}`);
       process.exit(1);
     }
 
@@ -120,10 +118,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     }
 
     // Build request URL
-    const url = new URL(
-      options._url || "/",
-      `http://${options.hostname || "cli"}`,
-    ).toString();
+    const url = new URL(options._url || "/", `http://${options.hostname || "cli"}`).toString();
 
     // Build headers
     const headers = new Headers();
@@ -173,9 +168,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     // Verbose: print request info
     if (options._verbose) {
       const parsedUrl = new URL(url);
-      console.error(
-        `> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`,
-      );
+      console.error(`> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`);
       console.error(`> Host: ${parsedUrl.host}`);
       for (const [name, value] of headers) {
         console.error(`> ${name}: ${value}`);
@@ -268,9 +261,7 @@ async function serve() {
         loaded.fetch ||
         (() =>
           renderError(
-            loaded.notFound
-              ? "Server Entry Not Found"
-              : "No Fetch Handler Exported",
+            loaded.notFound ? "Server Entry Not Found" : "No Fetch Handler Exported",
             501,
           )),
       middleware: [
@@ -322,11 +313,7 @@ type CLIOptions = Partial<ServerOptions> & {
   _data?: string;
 };
 
-function renderError(
-  error: unknown,
-  status = 500,
-  title = "Server Error",
-): Response {
+function renderError(error: unknown, status = 500, title = "Server Error"): Response {
   let html = `<!DOCTYPE html><html><head><title>${title}</title></head><body>`;
   if (options._prod) {
     html += `<h1>${title}</h1><p>Something went wrong while processing your request.</p>`;
@@ -349,19 +336,14 @@ function renderError(
   });
 }
 
-function printInfo(
-  options: CLIOptions,
-  loaded: Awaited<ReturnType<typeof loadServerEntry>>,
-) {
+function printInfo(options: CLIOptions, loaded: Awaited<ReturnType<typeof loadServerEntry>>) {
   let entryInfo: string;
   if (loaded.notFound) {
     entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
   } else {
     entryInfo = loaded.fetch
       ? c.cyan("./" + relative(".", fileURLToPath(loaded.url!)))
-      : c.red(
-          `No fetch handler exported from ${loaded.url || resolve(options._entry)}`,
-        );
+      : c.red(`No fetch handler exported from ${loaded.url || resolve(options._entry)}`);
   }
   console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
   let staticInfo: string;

@@ -1,4 +1,3 @@
-import type NodeHttp from "node:http";
 import type { Readable as NodeReadable } from "node:stream";
 
 import { lazyInherit } from "../../_inherit.ts";
@@ -28,8 +27,7 @@ export const NodeResponse: {
 } = /* @__PURE__ */ (() => {
   const NativeResponse = globalThis.Response;
 
-  const STATUS_CODES =
-    globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
+  const STATUS_CODES = globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
 
   class NodeResponse implements Partial<Response> {
     #body?: BodyInit | null;
@@ -52,10 +50,7 @@ export const NodeResponse: {
 
     get statusText(): string {
       return (
-        this.#response?.statusText ||
-        this.#init?.statusText ||
-        STATUS_CODES[this.status] ||
-        ""
+        this.#response?.statusText || this.#init?.statusText || STATUS_CODES[this.status] || ""
       );
     }
 
@@ -68,9 +63,7 @@ export const NodeResponse: {
       }
       const initHeaders = this.#init?.headers;
       return (this.#headers =
-        initHeaders instanceof Headers
-          ? initHeaders
-          : new Headers(initHeaders));
+        initHeaders instanceof Headers ? initHeaders : new Headers(initHeaders));
     }
 
     get ok(): boolean {
@@ -126,9 +119,7 @@ export const NodeResponse: {
           body = this.#body.stream();
           contentType = this.#body.type;
           contentLength = this.#body.size;
-        } else if (
-          typeof (this.#body as unknown as NodeReadable).pipe === "function"
-        ) {
+        } else if (typeof (this.#body as unknown as NodeReadable).pipe === "function") {
           body = this.#body as unknown as NodeReadable;
         } else {
           body = this._response.body;

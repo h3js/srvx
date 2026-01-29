@@ -1,8 +1,4 @@
-import type {
-  CloudflareFetchHandler,
-  Server,
-  ServerOptions,
-} from "../types.ts";
+import type { CloudflareFetchHandler, Server, ServerOptions } from "../types.ts";
 import type * as CF from "@cloudflare/workers-types";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -10,9 +6,7 @@ import { errorPlugin } from "../_plugins.ts";
 export const FastURL: typeof globalThis.URL = URL;
 export const FastResponse: typeof globalThis.Response = Response;
 
-export function serve(
-  options: ServerOptions,
-): Server<CF.ExportedHandlerFetchHandler> {
+export function serve(options: ServerOptions): Server<CF.ExportedHandlerFetchHandler> {
   return new CloudflareServer(options);
 }
 

@@ -52,15 +52,8 @@ for (const name of names) {
 
   assert.equal(res.status, 200, `${name} - invalid status code`);
   assert.equal((await res.json()).message, "Hello!");
-  assert.equal(
-    res.headers.get("content-type"),
-    "application/json;charset=UTF-8",
-  );
-  assert.equal(
-    res.headers.get("x-test"),
-    "123",
-    `${name} - missing custom header`,
-  );
+  assert.equal(res.headers.get("content-type"), "application/json;charset=UTF-8");
+  assert.equal(res.headers.get("x-test"), "123", `${name} - missing custom header`);
 
   // https://github.com/hatoo/oha
   const stdout = execSync(

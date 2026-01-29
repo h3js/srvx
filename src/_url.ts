@@ -80,11 +80,8 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
           const url = this.href;
           const protoIndex = url.indexOf("://");
           const pathnameIndex =
-            protoIndex === -1
-              ? -1 /* deoptimize */
-              : url.indexOf("/", protoIndex + 4);
-          const qIndex =
-            pathnameIndex === -1 ? -1 : url.indexOf("?", pathnameIndex);
+            protoIndex === -1 ? -1 /* deoptimize */ : url.indexOf("/", protoIndex + 4);
+          const qIndex = pathnameIndex === -1 ? -1 : url.indexOf("?", pathnameIndex);
           this.#pos = [protoIndex, pathnameIndex, qIndex];
         }
         return this.#pos;
@@ -118,9 +115,7 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
           }
           const url = this.href;
           this.#search =
-            queryIndex === -1 || queryIndex === url.length - 1
-              ? ""
-              : url.slice(queryIndex);
+            queryIndex === -1 || queryIndex === url.length - 1 ? "" : url.slice(queryIndex);
         }
         return this.#search;
       }

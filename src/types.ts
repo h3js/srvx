@@ -9,9 +9,7 @@ import type * as CF from "@cloudflare/workers-types";
 type MaybePromise<T> = T | Promise<T>;
 type IsAny<T> = Equal<T, any> extends true ? true : false;
 type Equal<X, Y> =
-  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
-    ? true
-    : false;
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
@@ -121,9 +119,7 @@ export interface ServerOptions {
    *
    * @default true (disabled in test and ci environments)
    */
-  gracefulShutdown?:
-    | boolean
-    | { gracefulTimeout?: number; forceTimeout?: number };
+  gracefulShutdown?: boolean | { gracefulTimeout?: number; forceTimeout?: number };
 
   /**
    * TLS server options.
@@ -148,11 +144,7 @@ export interface ServerOptions {
   /**
    * Node.js server options.
    */
-  node?: (
-    | NodeHttp.ServerOptions
-    | NodeHttps.ServerOptions
-    | NodeHttp2.ServerOptions
-  ) &
+  node?: (NodeHttp.ServerOptions | NodeHttps.ServerOptions | NodeHttp2.ServerOptions) &
     NodeNet.ListenOptions & { http2?: boolean };
 
   /**
@@ -190,13 +182,7 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Current runtime name
    */
-  readonly runtime:
-    | "node"
-    | "deno"
-    | "bun"
-    | "cloudflare"
-    | "service-worker"
-    | "generic";
+  readonly runtime: "node" | "deno" | "bun" | "cloudflare" | "service-worker" | "generic";
 
   /**
    * Server options
@@ -213,10 +199,7 @@ export interface Server<Handler = ServerHandler> {
    */
   readonly node?: {
     server?: NodeHttp.Server | NodeHttp2.Http2Server;
-    handler: (
-      req: NodeServerRequest,
-      res: NodeServerResponse,
-    ) => void | Promise<void>;
+    handler: (req: NodeServerRequest, res: NodeServerResponse) => void | Promise<void>;
   };
 
   /**
@@ -352,13 +335,9 @@ export type DenoFetchHandler = (
   info?: Deno.ServeHandlerInfo<Deno.NetAddr>,
 ) => Response | Promise<Response>;
 
-export type NodeServerRequest =
-  | NodeHttp.IncomingMessage
-  | NodeHttp2.Http2ServerRequest;
+export type NodeServerRequest = NodeHttp.IncomingMessage | NodeHttp2.Http2ServerRequest;
 
-export type NodeServerResponse =
-  | NodeHttp.ServerResponse
-  | NodeHttp2.Http2ServerResponse;
+export type NodeServerResponse = NodeHttp.ServerResponse | NodeHttp2.Http2ServerResponse;
 
 export type NodeHttp1Handler = (
   req: NodeHttp.IncomingMessage,

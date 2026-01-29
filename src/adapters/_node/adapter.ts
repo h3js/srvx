@@ -17,17 +17,12 @@ export type AdapterMeta = {
 /**
  * Converts a Fetch API handler to a Node.js HTTP handler.
  */
-export function toNodeHandler(
-  handler: FetchHandler & AdapterMeta,
-): NodeHttpHandler & AdapterMeta {
+export function toNodeHandler(handler: FetchHandler & AdapterMeta): NodeHttpHandler & AdapterMeta {
   if (handler.__nodeHandler) {
     return handler.__nodeHandler;
   }
 
-  function convertedNodeHandler(
-    nodeReq: NodeServerRequest,
-    nodeRes: NodeServerResponse,
-  ) {
+  function convertedNodeHandler(nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) {
     const request = new NodeRequest({ req: nodeReq, res: nodeRes });
     const res = handler(request);
     return res instanceof Promise
@@ -46,9 +41,7 @@ export function toNodeHandler(
  *
  * @experimental Behavior might be unstable and won't work in Bun and Deno currently (tracker: https://github.com/h3js/srvx/issues/132)
  */
-export function toFetchHandler(
-  handler: NodeHttpHandler & AdapterMeta,
-): FetchHandler & AdapterMeta {
+export function toFetchHandler(handler: NodeHttpHandler & AdapterMeta): FetchHandler & AdapterMeta {
   if (handler.__fetchHandler) {
     return handler.__fetchHandler;
   }
@@ -57,8 +50,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler as NodeHttpHandler, req);
   }
 
-  (convertedNodeHandler as AdapterMeta).__nodeHandler =
-    handler as NodeHttpHandler;
+  (convertedNodeHandler as AdapterMeta).__nodeHandler = handler as NodeHttpHandler;
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
 
   return convertedNodeHandler;

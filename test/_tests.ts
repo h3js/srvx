@@ -95,9 +95,7 @@ export function addTests(opts: {
       body: new Uint8Array([1, 2, 3]),
     });
     expect(response.status).toBe(200);
-    expect(new Uint8Array(await response.arrayBuffer())).toEqual(
-      new Uint8Array([1, 2, 3]),
-    );
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   test("POST works (text body)", async () => {
@@ -185,9 +183,7 @@ export function addTests(opts: {
     const reader = res.body?.getReader();
     const chunks: Uint8Array[] = [];
     while (true) {
-      const { done, value } = await reader!
-        .read()
-        .catch(() => ({ done: true, value: undefined }));
+      const { done, value } = await reader!.read().catch(() => ({ done: true, value: undefined }));
       if (value) {
         chunks.push(value);
       }

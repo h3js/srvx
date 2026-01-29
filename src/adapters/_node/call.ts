@@ -71,9 +71,9 @@ export function callNodeHandler(
           ),
         ).catch((error) => reject(error));
       } else {
-        Promise.resolve(
-          (handler as NodeHttpHandler)(nodeReq as any, nodeRes as any),
-        ).then(() => streamPromise || webRes);
+        Promise.resolve((handler as NodeHttpHandler)(nodeReq as any, nodeRes as any)).then(
+          () => streamPromise || webRes,
+        );
       }
     } catch (error: unknown) {
       reject(error);

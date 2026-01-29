@@ -9,11 +9,7 @@ const tls = await getTLSCert();
 
 const isDeno = !!globalThis.Deno;
 const isBun = !!globalThis.Bun;
-const runtime = isDeno
-  ? `deno-node-compat`
-  : isBun
-    ? `bun-node-compat`
-    : "node";
+const runtime = isDeno ? `deno-node-compat` : isBun ? `bun-node-compat` : "node";
 
 const testConfigs = [
   {

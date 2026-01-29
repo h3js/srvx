@@ -1,21 +1,15 @@
 import { bench, compact, summary, group, run, do_not_optimize } from "mitata";
 import { FastURL } from "../src/_url.ts";
 
-const input =
-  "https://user:password@example.com:8080/path/to/resource?query=string";
+const input = "https://user:password@example.com:8080/path/to/resource?query=string";
 
 const scenarios = {
   pathname: (url: URL) => do_not_optimize([url.pathname]),
   params: (url: URL) => do_not_optimize([url.searchParams.get("query")]),
   protocol: (url: URL) => do_not_optimize([url.protocol]),
-  "pathname+params": (url: URL) =>
-    do_not_optimize([url.pathname, url.searchParams.get("query")]),
+  "pathname+params": (url: URL) => do_not_optimize([url.pathname, url.searchParams.get("query")]),
   "pathname+params+username": (url: URL) =>
-    do_not_optimize([
-      url.pathname,
-      url.searchParams.get("query"),
-      url.username,
-    ]),
+    do_not_optimize([url.pathname, url.searchParams.get("query"), url.username]),
 };
 
 const benchnames = process.argv[2]?.split(",");

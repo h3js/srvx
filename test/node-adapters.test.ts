@@ -1,16 +1,7 @@
 import { describe, expect, test } from "vitest";
 
-import type {
-  NodeHttp1Handler,
-  NodeServerRequest,
-  NodeServerResponse,
-} from "../src/types.ts";
-import {
-  fetchNodeHandler,
-  serve,
-  toNodeHandler,
-  toFetchHandler,
-} from "../src/adapters/node.ts";
+import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
+import { fetchNodeHandler, serve, toNodeHandler, toFetchHandler } from "../src/adapters/node.ts";
 
 import express from "express";
 import fastify from "fastify";
@@ -37,60 +28,57 @@ const fetchCallers = [
   },
 ];
 
-const fixtures: { name: string; skip?: boolean; handler: NodeHttp1Handler }[] =
-  [
-    {
-      name: "node",
-      handler: async (req, res) => {
-        const body: any = await new Promise((resolve) => {
-          const chunks: Uint8Array[] = [];
-          req.on("data", (chunk) => chunks.push(chunk));
-          req.on("end", () =>
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))),
-          );
-        });
+const fixtures: { name: string; skip?: boolean; handler: NodeHttp1Handler }[] = [
+  {
+    name: "node",
+    handler: async (req, res) => {
+      const body: any = await new Promise((resolve) => {
+        const chunks: Uint8Array[] = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      });
 
-        setImmediate(() => {
-          res.writeHead(418, "I'm a Moka Pot", {
-            "Content-Type": "application/json; charset=utf-8",
-          });
-          const resBody = JSON.stringify({
-            header: req.headers["x-test"] === "1",
-            body: body?.test === true,
-          });
-          res.end(new TextEncoder().encode(resBody));
+      setImmediate(() => {
+        res.writeHead(418, "I'm a Moka Pot", {
+          "Content-Type": "application/json; charset=utf-8",
         });
-      },
-    },
-    {
-      name: "express",
-      handler: express()
-        .use(express.json())
-        .use("/", (req, res) => {
-          res.statusMessage = "I'm a Moka Pot";
-          res.status(418).json({
-            header: req.headers["x-test"] === "1",
-            body: req.body?.test === true,
-          });
-        }) as NodeHttp1Handler,
-    },
-    {
-      name: "fastify",
-      handler: await (async () => {
-        const app = fastify();
-        app.post("/", async (request, reply) => {
-          reply.status(418);
-          reply.raw.statusMessage = "I'm a Moka Pot";
-          return {
-            header: request.headers["x-test"] === "1",
-            body: (request.body as any)?.test === true,
-          };
+        const resBody = JSON.stringify({
+          header: req.headers["x-test"] === "1",
+          body: body?.test === true,
         });
-        await app.ready();
-        return app.routing as NodeHttp1Handler;
-      })(),
+        res.end(new TextEncoder().encode(resBody));
+      });
     },
-  ];
+  },
+  {
+    name: "express",
+    handler: express()
+      .use(express.json())
+      .use("/", (req, res) => {
+        res.statusMessage = "I'm a Moka Pot";
+        res.status(418).json({
+          header: req.headers["x-test"] === "1",
+          body: req.body?.test === true,
+        });
+      }) as NodeHttp1Handler,
+  },
+  {
+    name: "fastify",
+    handler: await (async () => {
+      const app = fastify();
+      app.post("/", async (request, reply) => {
+        reply.status(418);
+        reply.raw.statusMessage = "I'm a Moka Pot";
+        return {
+          header: request.headers["x-test"] === "1",
+          body: (request.body as any)?.test === true,
+        };
+      });
+      await app.ready();
+      return app.routing as NodeHttp1Handler;
+    })(),
+  },
+];
 
 describe("fetchNodeHandler", () => {
   for (const fixture of fixtures) {
@@ -111,9 +99,7 @@ describe("fetchNodeHandler", () => {
           expect(res.status).toBe(418);
           expect(res.statusText).toBe("I'm a Moka Pot");
 
-          expect(res.headers.get("Content-Type")).toBe(
-            "application/json; charset=utf-8",
-          );
+          expect(res.headers.get("Content-Type")).toBe("application/json; charset=utf-8");
           // TODO: body
           expect(await res.json()).toMatchObject({ header: true, body: true });
         });
@@ -136,9 +122,7 @@ describe("adapters", () => {
   test("toFetchHandler", async () => {
     const webHandler = toFetchHandler(simpleNodeHandler);
     expect(webHandler.__nodeHandler).toBe(simpleNodeHandler);
-    expect(webHandler.name).toBe(
-      "simpleNodeHandler (converted to Web handler)",
-    );
+    expect(webHandler.name).toBe("simpleNodeHandler (converted to Web handler)");
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ok");
@@ -147,28 +131,19 @@ describe("adapters", () => {
   test("toNodeHandler", async () => {
     const nodeHandler = toNodeHandler(simpleWebHandler);
     expect(nodeHandler.__fetchHandler).toBe(simpleWebHandler);
-    expect(nodeHandler.name).toBe(
-      "simpleWebHandler (converted to Node handler)",
-    );
+    expect(nodeHandler.name).toBe("simpleWebHandler (converted to Node handler)");
 
-    const res = await fetchNodeHandler(
-      nodeHandler,
-      new Request("http://localhost/"),
-    );
+    const res = await fetchNodeHandler(nodeHandler, new Request("http://localhost/"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ok");
   });
 
   test("toFetchHandler(toNodeHandler())", async () => {
-    expect(toFetchHandler(toNodeHandler(simpleWebHandler))).toBe(
-      simpleWebHandler,
-    );
+    expect(toFetchHandler(toNodeHandler(simpleWebHandler))).toBe(simpleWebHandler);
   });
 
   test("toNodeHandler(toFetchHandler())", async () => {
-    expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(
-      simpleNodeHandler,
-    );
+    expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(simpleNodeHandler);
   });
 });
 
@@ -275,10 +250,7 @@ describe("request signal", () => {
     await Promise.race([
       abortFiredPromise,
       new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Abort signal not fired within 1s")),
-          1000,
-        ),
+        setTimeout(() => reject(new Error("Abort signal not fired within 1s")), 1000),
       ),
     ]);
 

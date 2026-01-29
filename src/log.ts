@@ -11,9 +11,7 @@ export const log = (_options: LogOptions = {}): ServerMiddleware => {
     const res = await next();
     const duration = performance.now() - start;
     const statusColor =
-      statusColors[
-        Math.floor(res.status / 100) as unknown as keyof typeof statusColors
-      ] || c.red;
+      statusColors[Math.floor(res.status / 100) as unknown as keyof typeof statusColors] || c.red;
     console.log(
       `${c.gray(`[${new Date().toLocaleTimeString()}]`)} ${c.bold(req.method)} ${c.blue(req.url)} [${statusColor(res.status + "")}] ${c.gray(`(${duration.toFixed(2)}ms)`)}`,
     );

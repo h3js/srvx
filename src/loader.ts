@@ -1,13 +1,7 @@
-import type {
-  NodeHttpHandler,
-  Server,
-  ServerHandler,
-  ServerOptions,
-  ServerRequest,
-} from "srvx";
+import type { NodeHttpHandler, Server, ServerHandler, ServerRequest } from "srvx";
 import { pathToFileURL } from "node:url";
 import * as nodeHTTP from "node:http";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 
 // prettier-ignore
@@ -74,9 +68,7 @@ export type LoadedServerEntry = {
   notFound?: boolean;
 };
 
-export async function loadServerEntry(
-  opts: LoadOptions,
-): Promise<LoadedServerEntry> {
+export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEntry> {
   // Guess entry if not provided
   let entry: string | undefined = opts.url;
   if (entry) {
@@ -101,9 +93,7 @@ export async function loadServerEntry(
   }
 
   // Convert to file:// URL for consistent imports
-  const url = entry.startsWith("file://")
-    ? entry
-    : pathToFileURL(resolve(entry)).href;
+  const url = entry.startsWith("file://") ? entry : pathToFileURL(resolve(entry)).href;
 
   // Import the user file
   let mod: any;
@@ -130,20 +120,17 @@ export async function loadServerEntry(
     throw error;
   }
 
-  let fetchHandler =
-    mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
+  let fetchHandler = mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
   if (!fetchHandler) {
     const nodeHandler =
-      listenHandler ||
-      (typeof mod.default === "function" ? mod.default : undefined);
+      listenHandler || (typeof mod.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
       nodeCompat = true;
       const { fetchNodeHandler } = await import("srvx/node");
-      fetchHandler = (webReq: ServerRequest) =>
-        fetchNodeHandler(nodeHandler, webReq);
+      fetchHandler = (webReq: ServerRequest) => fetchNodeHandler(nodeHandler, webReq);
     }
   }
 
@@ -180,9 +167,7 @@ async function interceptListen<T = unknown>(
         nodeHTTP.Server.prototype.listen = originalListen;
 
         // Defer callback execution
-        globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
-          (arg) => typeof arg === "function",
-        );
+        globalThis.__srvx_listen_cb__ = [arg1, arg2].find((arg) => typeof arg === "function");
 
         // Return a deferred proxy for the server instance
         return new Proxy(

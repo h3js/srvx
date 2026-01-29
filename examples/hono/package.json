@@ -7,7 +7,7 @@
     "dev": "srvx"
   },
   "devDependencies": {
-    "srvx": "latest",
-    "hono": "latest"
+    "hono": "latest",
+    "srvx": "latest"
   }
 }
