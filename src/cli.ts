@@ -213,8 +213,11 @@ async function handleFetch(options: CLIOptions): Promise<never> {
         if (remaining) {
           process.stdout.write(remaining);
         }
-        // Add trailing newline for text content
-        process.stdout.write("\n");
+        // Add trailing newline for text content when interactive
+        // (avoid changing byte-for-byte output in scripts/pipes)
+        if (process.stdout.isTTY) {
+          process.stdout.write("\n");
+        }
       }
     }
     process.exit(0);
@@ -407,15 +410,23 @@ function parseArgs(args: string[]): CLIOptions {
       },
     });
 
+    // Positionals: [entry] [path]
+    // If first positional starts with "/" (or is empty), treat it as path.
+    // Otherwise treat first positional as entry and second as path.
+    const p0 = positionals[0];
+    const p1 = positionals[1];
+    const positionalEntry = p0 && !p0.startsWith("/") ? p0 : "";
+    const positionalPath = p0 && p0.startsWith("/") ? p0 : p1;
+
     return {
       _mode: "fetch",
       _help: values.help,
       _version: values.version,
       _method: values.request,
       _headers: values.header,
-      _url: positionals[0] || "/",
+      _url: positionalPath || "/",
       _verbose: values.verbose,
-      _entry: values.entry || "",
+      _entry: values.entry || positionalEntry,
       _static: "public",
       _dir: values.cwd ? resolve(values.cwd) : process.cwd(),
       _prod: process.env.NODE_ENV === "production",
