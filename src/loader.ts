@@ -203,6 +203,9 @@ async function interceptListen<T = unknown>(
           {
             get(_, prop) {
               const server = globalThis.__srvx__;
+              if (!server && prop === "address") {
+                return () => ({ address: "", family: "", port: 0 });
+              }
               // @ts-expect-error
               return server?.node?.server?.[prop];
             },
