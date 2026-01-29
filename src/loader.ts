@@ -120,13 +120,13 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
     throw error;
   }
 
-  let fetchHandler = mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
+  let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
   if (!fetchHandler) {
     const nodeHandler =
-      listenHandler || (typeof mod.default === "function" ? mod.default : undefined);
+      listenHandler || (typeof mod?.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
       nodeCompat = true;
       const { fetchNodeHandler } = await import("srvx/node");
