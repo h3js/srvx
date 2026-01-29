@@ -6,7 +6,7 @@ import { fork } from "node:child_process";
 import { createReadStream, existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import * as c from "./_color.ts";
-import { loadServerEntry } from "./loader.ts";
+import { loadServerEntry, type LoadOptions } from "./loader.ts";
 import pkg from "../package.json" with { type: "json" };
 
 // prettier-ignore
@@ -39,7 +39,16 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
   // Fetch mode
   if (options._mode === "fetch") {
-    await handleFetch(options);
+    await cliFetch({
+      url: options._url,
+      entry: options._entry,
+      dir: options._dir,
+      method: options._method,
+      headers: options._headers,
+      data: options._data,
+      verbose: options._verbose,
+      hostname: options.hostname,
+    });
     return;
   }
 
@@ -100,30 +109,42 @@ export async function main(mainOpts: MainOpts): Promise<void> {
   process.on("SIGTERM", () => cleanup("SIGTERM", 143));
 }
 
-async function handleFetch(options: CLIOptions): Promise<never> {
+export async function cliFetch(
+  options: LoadOptions & {
+    url?: string;
+    method?: string;
+    headers?: string[];
+    data?: string;
+    verbose?: boolean;
+    hostname?: string;
+  },
+): Promise<never> {
   try {
-    const loaded = await loadServerEntry({
-      url: options._entry,
-      base: options._dir,
-    });
+    const loaded = await loadServerEntry(options);
 
     if (loaded.notFound) {
-      console.error(`Server entry file not found at ${options._entry || "server.ts"}`);
+      console.error(
+        "Server entry file not found.",
+        loaded.url || {
+          dir: options.dir || process.cwd(),
+          entry: options.entry || undefined,
+        },
+      );
       process.exit(1);
     }
 
     if (!loaded.fetch) {
-      console.error(`No fetch handler exported from ${loaded.url}`);
+      console.error(`No fetch handler exported from ${loaded.url || "?"}`);
       process.exit(1);
     }
 
     // Build request URL
-    const url = new URL(options._url || "/", `http://${options.hostname || "cli"}`).toString();
+    const url = new URL(options.url || "/", `http://${options.hostname || "cli"}`).toString();
 
-    // Build headers
+    // Build Headers
     const headers = new Headers();
-    if (options._headers) {
-      for (const header of options._headers) {
+    if (options.headers) {
+      for (const header of options.headers) {
         const colonIndex = header.indexOf(":");
         if (colonIndex > 0) {
           const name = header.slice(0, colonIndex).trim();
@@ -135,8 +156,8 @@ async function handleFetch(options: CLIOptions): Promise<never> {
 
     // Build body
     let body: BodyInit | undefined;
-    if (options._data !== undefined) {
-      if (options._data === "@-") {
+    if (options.data !== undefined) {
+      if (options.data === "@-") {
         // Read from stdin
         body = new ReadableStream({
           async start(controller) {
@@ -146,17 +167,15 @@ async function handleFetch(options: CLIOptions): Promise<never> {
             controller.close();
           },
         });
-      } else if (options._data.startsWith("@")) {
+      } else if (options.data.startsWith("@")) {
         // Read from file as stream
-        body = Readable.toWeb(
-          createReadStream(options._data.slice(1)),
-        ) as unknown as ReadableStream;
+        body = Readable.toWeb(createReadStream(options.data.slice(1))) as unknown as ReadableStream;
       } else {
-        body = options._data;
+        body = options.data;
       }
     }
 
-    const method = options._method || (body === undefined ? "GET" : "POST");
+    const method = options.method || (body === undefined ? "GET" : "POST");
 
     // Build request
     const req = new Request(url, {
@@ -166,7 +185,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     });
 
     // Verbose: print request info
-    if (options._verbose) {
+    if (options.verbose) {
       const parsedUrl = new URL(url);
       console.error(`> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`);
       console.error(`> Host: ${parsedUrl.host}`);
@@ -179,7 +198,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     const res = await loaded.fetch(req);
 
     // Verbose: print response info
-    if (options._verbose) {
+    if (options.verbose) {
       console.error(`< HTTP/1.1 ${res.status} ${res.statusText}`);
       for (const [name, value] of res.headers) {
         console.error(`< ${name}: ${value}`);
@@ -214,7 +233,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
         }
       }
     }
-    process.exit(0);
+    process.exit(res.ok ? 0 : 1);
   } catch (error) {
     console.error("Error in fetch mode:", error);
     process.exit(1);
@@ -230,8 +249,8 @@ async function serve() {
 
     // Load server entry file and create a new server instance
     const loaded = await loadServerEntry({
-      url: options._entry,
-      base: options._dir,
+      entry: options._entry,
+      dir: options._dir,
     });
 
     const { serve: srvxServe } = loaded.nodeCompat
@@ -379,7 +398,7 @@ function parseArgs(args: string[]): CLIOptions {
         help: { type: "boolean" },
         version: { type: "boolean" },
         prod: { type: "boolean" },
-        cwd: { type: "string" },
+        dir: { type: "string" },
         host: { type: "string", short: "H" },
         entry: { type: "string" },
         request: { type: "string", short: "X" },
@@ -399,7 +418,7 @@ function parseArgs(args: string[]): CLIOptions {
       _verbose: values.verbose,
       _entry: values.entry || "",
       _static: "public",
-      _dir: values.cwd ? resolve(values.cwd) : process.cwd(),
+      _dir: values.dir ? resolve(values.dir) : process.cwd(),
       _prod: process.env.NODE_ENV === "production",
       hostname: values.host || "cli",
       _data: values.data,
