@@ -102,7 +102,6 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
 export async function handleFetch(options: CLIOptions): Promise<never> {
   try {
-
     if (!options._fetch) {
       console.error("No fetch handler found!");
       process.exit(1);
@@ -167,7 +166,7 @@ export async function handleFetch(options: CLIOptions): Promise<never> {
       console.error(">");
     }
 
-    const res = await options._fetch(req) ?? renderError("No fetch handler exported", 501);
+    const res = (await options._fetch(req)) ?? renderError("No fetch handler exported", 501);
 
     // Verbose: print response info
     if (options._verbose) {
@@ -231,7 +230,7 @@ async function handleServerFetch(options: CLIOptions): Promise<Response> {
   return handleFetch({
     ...options,
     _fetch: loaded.fetch,
-  })
+  });
 }
 
 async function serve() {
