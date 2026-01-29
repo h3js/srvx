@@ -294,7 +294,7 @@ function parseArgs(args: string[]): CLIOptions {
       _static: "public",
       _dir: values.dir ? resolve(values.dir) : process.cwd(),
       _prod: process.env.NODE_ENV === "production",
-      hostname: values.host || "cli",
+      hostname: values.host || "localhost",
       _data: values.data,
     };
   }
