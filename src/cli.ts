@@ -1,4 +1,4 @@
-import type { Server, ServerMiddleware, ServerOptions } from "srvx";
+import type { Server, ServerHandler, ServerMiddleware, ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { dirname, extname, relative, resolve } from "node:path";
@@ -39,7 +39,7 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
   // Fetch mode
   if (options._mode === "fetch") {
-    await handleFetch(options);
+    await handleServerFetch(options);
     return;
   }
 
@@ -100,20 +100,11 @@ export async function main(mainOpts: MainOpts): Promise<void> {
   process.on("SIGTERM", () => cleanup("SIGTERM", 143));
 }
 
-async function handleFetch(options: CLIOptions): Promise<never> {
+export async function handleFetch(options: CLIOptions): Promise<never> {
   try {
-    const loaded = await loadServerEntry({
-      url: options._entry,
-      base: options._dir,
-    });
 
-    if (loaded.notFound) {
-      console.error(`Server entry file not found at ${options._entry || "server.ts"}`);
-      process.exit(1);
-    }
-
-    if (!loaded.fetch) {
-      console.error(`No fetch handler exported from ${loaded.url}`);
+    if (!options._fetch) {
+      console.error("No fetch handler found!");
       process.exit(1);
     }
 
@@ -176,7 +167,7 @@ async function handleFetch(options: CLIOptions): Promise<never> {
       console.error(">");
     }
 
-    const res = await loaded.fetch(req);
+    const res = await options._fetch(req) ?? renderError("No fetch handler exported", 501);
 
     // Verbose: print response info
     if (options._verbose) {
@@ -219,6 +210,28 @@ async function handleFetch(options: CLIOptions): Promise<never> {
     console.error("Error in fetch mode:", error);
     process.exit(1);
   }
+}
+
+async function handleServerFetch(options: CLIOptions): Promise<Response> {
+  const loaded = await loadServerEntry({
+    url: options._entry,
+    base: options._dir,
+  });
+
+  if (loaded.notFound) {
+    console.error(`Server entry file not found at ${options._entry || "server.ts"}`);
+    process.exit(1);
+  }
+
+  if (!loaded.fetch) {
+    console.error(`No fetch handler exported from ${loaded.url}`);
+    process.exit(1);
+  }
+
+  return handleFetch({
+    ...options,
+    _fetch: loaded.fetch,
+  })
 }
 
 async function serve() {
@@ -311,6 +324,7 @@ type CLIOptions = Partial<ServerOptions> & {
   _url?: string;
   _verbose?: boolean;
   _data?: string;
+  _fetch?: ServerHandler;
 };
 
 function renderError(error: unknown, status = 500, title = "Server Error"): Response {
