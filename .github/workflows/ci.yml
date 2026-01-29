@@ -15,7 +15,7 @@ jobs:
       - run: pnpm install
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm test:types
+      - run: pnpm typecheck
   tests_node:
     runs-on: ubuntu-latest
     strategy:
