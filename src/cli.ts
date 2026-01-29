@@ -544,8 +544,11 @@ ${c.bold("OPTIONS")}
 
 ${c.bold("FETCH OPTIONS")}
 
+  ${c.green("--entry")} ${c.yellow("<file>")}           Server entry file to use
+  ${c.green("--dir")} ${c.yellow("<dir>")}              Working directory for resolving entry file
   ${c.green("-X, --request")} ${c.yellow("<method>")}   HTTP method (default: ${c.yellow("GET")}, or ${c.yellow("POST")} if body is provided)
   ${c.green("-H, --header")} ${c.yellow("<header>")}    Add header (format: "Name: Value", can be used multiple times)
+  ${c.green("--host")} ${c.yellow("<host>")}            Hostname for request URL (default: ${c.yellow("cli")})
   ${c.green("-d, --data")} ${c.yellow("<data>")}        Request body (use ${c.yellow("@-")} for stdin, ${c.yellow("@file")} for file)
   ${c.green("-v, --verbose")}            Show request and response headers
 
