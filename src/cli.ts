@@ -39,17 +39,22 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
   // Fetch mode
   if (options._mode === "fetch") {
-    await cliFetch({
-      url: options._url,
-      entry: options._entry,
-      dir: options._dir,
-      method: options._method,
-      headers: options._headers,
-      data: options._data,
-      verbose: options._verbose,
-      hostname: options.hostname,
-    });
-    return;
+    try {
+      await cliFetch({
+        url: options._url,
+        entry: options._entry,
+        dir: options._dir,
+        method: options._method,
+        headers: options._headers,
+        data: options._data,
+        verbose: options._verbose,
+        hostname: options.hostname,
+      });
+      process.exit(0);
+    } catch (error) {
+      console.error(error);
+      process.exit(1);
+    }
   }
 
   // Fork a child process with additional args
@@ -118,126 +123,131 @@ export async function cliFetch(
     verbose?: boolean;
     hostname?: string;
   },
-): Promise<never> {
-  try {
-    const loaded = await loadServerEntry(options);
+): Promise<Response> {
+  const loaded = await loadServerEntry(options);
 
-    if (loaded.notFound) {
-      console.error(
-        "Server entry file not found.",
-        loaded.url || {
-          dir: options.dir || process.cwd(),
-          entry: options.entry || undefined,
-        },
-      );
-      process.exit(1);
-    }
-
-    if (!loaded.fetch) {
-      console.error(`No fetch handler exported from ${loaded.url || "?"}`);
-      process.exit(1);
-    }
-
-    // Build request URL
-    const url = new URL(options.url || "/", `http://${options.hostname || "cli"}`).toString();
-
-    // Build Headers
-    const headers = new Headers();
-    if (options.headers) {
-      for (const header of options.headers) {
-        const colonIndex = header.indexOf(":");
-        if (colonIndex > 0) {
-          const name = header.slice(0, colonIndex).trim();
-          const value = header.slice(colonIndex + 1).trim();
-          headers.append(name, value);
-        }
-      }
-    }
-
-    // Build body
-    let body: BodyInit | undefined;
-    if (options.data !== undefined) {
-      if (options.data === "@-") {
-        // Read from stdin
-        body = new ReadableStream({
-          async start(controller) {
-            for await (const chunk of process.stdin) {
-              controller.enqueue(chunk);
-            }
-            controller.close();
-          },
-        });
-      } else if (options.data.startsWith("@")) {
-        // Read from file as stream
-        body = Readable.toWeb(createReadStream(options.data.slice(1))) as unknown as ReadableStream;
-      } else {
-        body = options.data;
-      }
-    }
-
-    const method = options.method || (body === undefined ? "GET" : "POST");
-
-    // Build request
-    const req = new Request(url, {
-      method,
-      headers,
-      body,
+  if (loaded.notFound) {
+    throw new Error("Server entry file not found.", {
+      cause: {
+        dir: options.dir || process.cwd(),
+        entry: options.entry || undefined,
+      },
     });
-
-    // Verbose: print request info
-    if (options.verbose) {
-      const parsedUrl = new URL(url);
-      console.error(`> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`);
-      console.error(`> Host: ${parsedUrl.host}`);
-      for (const [name, value] of headers) {
-        console.error(`> ${name}: ${value}`);
-      }
-      console.error(">");
-    }
-
-    const res = await loaded.fetch(req);
-
-    // Verbose: print response info
-    if (options.verbose) {
-      console.error(`< HTTP/1.1 ${res.status} ${res.statusText}`);
-      for (const [name, value] of res.headers) {
-        console.error(`< ${name}: ${value}`);
-      }
-      console.error("<");
-    }
-
-    // Stream response to stdout
-    if (res.body) {
-      const { isBinary, encoding } = getResponseFormat(res);
-
-      if (isBinary) {
-        // Stream binary directly to stdout
-        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
-          process.stdout.write(chunk);
-        }
-      } else {
-        // Stream text with proper encoding
-        const decoder = new TextDecoder(encoding);
-        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
-          process.stdout.write(decoder.decode(chunk, { stream: true }));
-        }
-        // Flush any remaining bytes
-        const remaining = decoder.decode();
-        if (remaining) {
-          process.stdout.write(remaining);
-        }
-        // Add trailing newline for text content when interactive
-        // (avoid changing byte-for-byte output in scripts/pipes)
-        if (process.stdout.isTTY) {
-          process.stdout.write("\n");
-        }
-      }
-    }
-    process.exit(res.ok ? 0 : 1);
-  } catch (error) {
-    console.error("Error in fetch mode:", error);
-    process.exit(1);
   }
+
+  if (!loaded.fetch) {
+    throw new Error("No fetch handler exported", {
+      cause: {
+        dir: options.dir || process.cwd(),
+        entry: options.entry || undefined,
+        loaded,
+      },
+    });
+  }
+
+  // Build request URL
+  const url = new URL(options.url || "/", `http://${options.hostname || "cli"}`).toString();
+
+  // Build Headers
+  const headers = new Headers();
+  if (options.headers) {
+    for (const header of options.headers) {
+      const colonIndex = header.indexOf(":");
+      if (colonIndex > 0) {
+        const name = header.slice(0, colonIndex).trim();
+        const value = header.slice(colonIndex + 1).trim();
+        headers.append(name, value);
+      }
+    }
+  }
+
+  // Build body
+  let body: BodyInit | undefined;
+  if (options.data !== undefined) {
+    if (options.data === "@-") {
+      // Read from stdin
+      body = new ReadableStream({
+        async start(controller) {
+          for await (const chunk of process.stdin) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+    } else if (options.data.startsWith("@")) {
+      // Read from file as stream
+      body = Readable.toWeb(createReadStream(options.data.slice(1))) as unknown as ReadableStream;
+    } else {
+      body = options.data;
+    }
+  }
+
+  const method = options.method || (body === undefined ? "GET" : "POST");
+
+  // Build request
+  const req = new Request(url, {
+    method,
+    headers,
+    body,
+  });
+
+  // Verbose: print request info
+  if (options.verbose) {
+    const parsedUrl = new URL(url);
+    console.error(`> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`);
+    console.error(`> Host: ${parsedUrl.host}`);
+    for (const [name, value] of headers) {
+      console.error(`> ${name}: ${value}`);
+    }
+    console.error(">");
+  }
+
+  const res = await loaded.fetch(req);
+
+  // Verbose: print response info
+  if (options.verbose) {
+    console.error(`< HTTP/1.1 ${res.status} ${res.statusText}`);
+    for (const [name, value] of res.headers) {
+      console.error(`< ${name}: ${value}`);
+    }
+    console.error("<");
+  }
+
+  // Stream response to stdout
+  if (res.body) {
+    const { isBinary, encoding } = getResponseFormat(res);
+
+    if (isBinary) {
+      // Stream binary directly to stdout
+      for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+        process.stdout.write(chunk);
+      }
+    } else {
+      // Stream text with proper encoding
+      const decoder = new TextDecoder(encoding);
+      for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+        process.stdout.write(decoder.decode(chunk, { stream: true }));
+      }
+      // Flush any remaining bytes
+      const remaining = decoder.decode();
+      if (remaining) {
+        process.stdout.write(remaining);
+      }
+      // Add trailing newline for text content when interactive
+      // (avoid changing byte-for-byte output in scripts/pipes)
+      if (process.stdout.isTTY) {
+        process.stdout.write("\n");
+      }
+    }
+  }
+
+  if (!res.ok) {
+    const err = new Error(`Request failed with status ${res.status} ${res.statusText}`);
+    Error.captureStackTrace?.(err, cliFetch);
+    throw err;
+  }
+
+  return res;
 }
 
 async function serve() {
