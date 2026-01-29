@@ -28,6 +28,25 @@ export type LoadOptions = {
    * @default "."
    */
   base?: string;
+
+  /**
+   * Set to `false` to disable interception of `http.Server.listen` to detect legacy handlers.
+   *
+   * @default true
+   */
+  interceptHttpListen?: boolean;
+
+  /**
+   * Set to `false` to disable Node.js handler (req, res) compatibility.
+   */
+  nodeCompat?: boolean;
+
+  /**
+   * Hook called after the module is loaded to allow for custom processing.
+   *
+   * You can return a modified version of the module if needed.
+   */
+  onLoad?: (module: unknown) => any;
 };
 
 /**
@@ -99,9 +118,13 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   let mod: any;
   let listenHandler: NodeHttpHandler | undefined;
   try {
-    const _loaded = await interceptListen(() => import(url));
-    mod = _loaded.res;
-    listenHandler = _loaded.listenHandler;
+    if (opts.interceptHttpListen !== false) {
+      const loaded = await interceptListen(() => import(url));
+      mod = loaded.res;
+      listenHandler = loaded.listenHandler;
+    } else {
+      mod = await import(url);
+    }
   } catch (error) {
     if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
       const message = String(error);
@@ -120,11 +143,13 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
     throw error;
   }
 
+  mod = (await opts?.onLoad?.(mod)) || mod;
+
   let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
-  if (!fetchHandler) {
+  if (!fetchHandler && opts.nodeCompat !== false) {
     const nodeHandler =
       listenHandler || (typeof mod?.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
