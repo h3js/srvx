@@ -411,12 +411,19 @@ function parseArgs(args: string[]): CLIOptions {
     });
 
     // Positionals: [entry] [path]
-    // If first positional starts with "/" (or is empty), treat it as path.
-    // Otherwise treat first positional as entry and second as path.
+    // - If two positionals are provided, always interpret them as [entry] [path]
+    //   (supports absolute entry paths like /abs/server.ts).
+    // - If one positional is provided, interpret it as [path] if it starts with "/",
+    //   otherwise as [entry].
     const p0 = positionals[0];
     const p1 = positionals[1];
-    const positionalEntry = p0 && !p0.startsWith("/") ? p0 : "";
-    const positionalPath = p0 && p0.startsWith("/") ? p0 : p1;
+    const hasEntryAndPath = !!(p0 && p1);
+    const positionalEntry = hasEntryAndPath
+      ? p0
+      : p0 && !p0.startsWith("/")
+        ? p0
+        : "";
+    const positionalPath = hasEntryAndPath ? p1 : p0 && p0.startsWith("/") ? p0 : undefined;
 
     return {
       _mode: "fetch",
