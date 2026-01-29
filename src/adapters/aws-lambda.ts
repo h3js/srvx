@@ -1,11 +1,7 @@
 import type { AWSLambdaFetchHandler, Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
-import {
-  awsRequest,
-  awsResponseBody,
-  awsResponseHeaders,
-} from "./_aws/_utils.ts";
+import { awsRequest, awsResponseBody, awsResponseHeaders } from "./_aws/_utils.ts";
 
 export function toLambdaHandler(options: ServerOptions): AWSLambdaFetchHandler {
   const server = new AWSLambdaServer(options);

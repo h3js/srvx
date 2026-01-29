@@ -7,8 +7,8 @@
     "dev": "srvx"
   },
   "devDependencies": {
-    "srvx": "latest",
     "serverless": "^3",
-    "serverless-offline": "^14.4.0"
+    "serverless-offline": "^14.4.0",
+    "srvx": "latest"
   }
 }

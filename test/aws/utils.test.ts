@@ -1,9 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import {
-  awsRequest,
-  awsResponseBody,
-  awsResponseHeaders,
-} from "../../src/adapters/_aws/_utils.ts";
+import { awsRequest, awsResponseBody, awsResponseHeaders } from "../../src/adapters/_aws/_utils.ts";
 import type { APIGatewayProxyEvent, APIGatewayProxyEventV2 } from "aws-lambda";
 
 // Mock Headers.getAll method for testing
@@ -352,10 +348,7 @@ describe("[AWS Lambda] Request Utils", () => {
         "theme=dark; Path=/",
       ]);
       expect(awsResponse.multiValueHeaders).toEqual({
-        "set-cookie": [
-          "sessionId=abc123; HttpOnly; Secure",
-          "theme=dark; Path=/",
-        ],
+        "set-cookie": ["sessionId=abc123; HttpOnly; Secure", "theme=dark; Path=/"],
       });
     });
 
@@ -372,9 +365,7 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.headers.accept).toBe(
-        "application/json, text/html, text/plain",
-      );
+      expect(awsResponse.headers.accept).toBe("application/json, text/html, text/plain");
     });
 
     test("should handle null/undefined header values", () => {

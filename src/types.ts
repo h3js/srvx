@@ -183,7 +183,14 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Current runtime name
    */
-  readonly runtime: "node" | "deno" | "bun" | "cloudflare" | "service-worker" | "aws-lambda" | "generic";
+  readonly runtime:
+    | "node"
+    | "deno"
+    | "bun"
+    | "cloudflare"
+    | "service-worker"
+    | "aws-lambda"
+    | "generic";
 
   /**
    * Server options
