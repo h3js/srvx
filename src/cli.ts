@@ -410,30 +410,15 @@ function parseArgs(args: string[]): CLIOptions {
       },
     });
 
-    // Positionals: [entry] [path]
-    // - If two positionals are provided, always interpret them as [entry] [path]
-    //   (supports absolute entry paths like /abs/server.ts).
-    // - If one positional is provided, interpret it as [path] if it starts with "/",
-    //   otherwise as [entry].
-    const p0 = positionals[0];
-    const p1 = positionals[1];
-    const hasEntryAndPath = !!(p0 && p1);
-    const positionalEntry = hasEntryAndPath
-      ? p0
-      : p0 && !p0.startsWith("/")
-        ? p0
-        : "";
-    const positionalPath = hasEntryAndPath ? p1 : p0 && p0.startsWith("/") ? p0 : undefined;
-
     return {
       _mode: "fetch",
       _help: values.help,
       _version: values.version,
       _method: values.request,
       _headers: values.header,
-      _url: positionalPath || "/",
+      _url: positionals[0] || "/",
       _verbose: values.verbose,
-      _entry: values.entry || positionalEntry,
+      _entry: values.entry || "",
       _static: "public",
       _dir: values.cwd ? resolve(values.cwd) : process.cwd(),
       _prod: process.env.NODE_ENV === "production",
@@ -515,9 +500,10 @@ ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray(
 
 ${c.bold("FETCH MODE")}
 
-${c.gray("# srvx fetch [options] [entry] [path]")}
+${c.gray("# srvx fetch [options] [url]")}
 ${c.gray("$")} ${c.cyan(command)} fetch                  ${c.gray("# Fetch from default entry")}
-${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific path")}
+${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific URL/path")}
+${c.gray("$")} ${c.cyan(command)} fetch --entry ./server.ts /api/users ${c.gray("# Fetch using a specific entry")}
 ${c.gray("$")} ${c.cyan(command)} fetch -X POST /api/users ${c.gray("# POST request")}
 ${c.gray("$")} ${c.cyan(command)} fetch -H "Content-Type: application/json" /api ${c.gray("# With headers")}
 ${c.gray("$")} ${c.cyan(command)} fetch -d '{"name":"foo"}' /api ${c.gray("# With request body")}
