@@ -8,6 +8,7 @@ import {
   createWaitUntil,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
+import { gracefulShutdownPlugin } from "../_plugins.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -22,7 +23,7 @@ class BunServer implements Server<BunFetchHandler> {
   readonly runtime = "bun";
   readonly options: Server["options"];
   readonly bun: Server["bun"] = {};
-  readonly serveOptions: bun.ServeOptions | bun.TLSServeOptions;
+  readonly serveOptions: bun.Serve.Options<any>;
   readonly fetch: BunFetchHandler;
 
   #wait: ReturnType<typeof createWaitUntil>;
@@ -31,6 +32,8 @@ class BunServer implements Server<BunFetchHandler> {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
+
+    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -58,12 +61,12 @@ class BunServer implements Server<BunFetchHandler> {
       ...resolvePortAndHost(this.options),
       reusePort: this.options.reusePort,
       error: this.options.error,
-      ...this.options.bun,
+      ...(this.options.bun as any),
       tls: {
         cert: tls?.cert,
         key: tls?.key,
         passphrase: tls?.passphrase,
-        ...(this.options.bun as bun.TLSServeOptions)?.tls,
+        ...(this.options.bun as bun.Serve.Options<any>)?.tls,
       },
       fetch: this.fetch,
     };
@@ -87,15 +90,10 @@ class BunServer implements Server<BunFetchHandler> {
       return;
     }
     // Prefer address since server.url hostname is not reliable
-    const address = (
-      server as { address?: { address: string; family: string; port: number } }
-    ).address;
+    const address = (server as { address?: { address: string; family: string; port: number } })
+      .address;
     if (address) {
-      return fmtURL(
-        address.address,
-        address.port,
-        (server as any).protocol === "https",
-      );
+      return fmtURL(address.address, address.port, (server as any).protocol === "https");
     }
     return server.url.href;
   }
@@ -105,9 +103,6 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   async close(closeAll?: boolean): Promise<void> {
-    await Promise.all([
-      this.#wait.wait(),
-      Promise.resolve(this.bun?.server?.stop(closeAll)),
-    ]);
+    await Promise.all([this.#wait.wait(), Promise.resolve(this.bun?.server?.stop(closeAll))]);
   }
 }

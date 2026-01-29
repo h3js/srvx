@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { execSync } from "node:child_process";
+import assert from "node:assert";
 
 let ohaVersion;
 try {
@@ -18,10 +19,14 @@ const results = [];
 
 const all = process.argv.includes("--all");
 
+const release = process.argv.includes("--release");
+
 const names = [
   "node",
   "srvx",
   "srvx-fast",
+  release && "srvx-release",
+  release && "srvx-fast-release",
   all && "whatwg-node",
   all && "whatwg-node-fast",
   all && "hono",
@@ -38,9 +43,25 @@ for (const name of names) {
   const entry = new URL(`${name}.mjs`, import.meta.url);
   const worker = new Worker(entry, { type: "module" });
   await new Promise((resolve) => setTimeout(resolve, 200));
-  const stdout = execSync("oha http://localhost:3000 --no-tui -j -z 3sec", {
-    encoding: "utf8",
+
+  const res = await fetch("http://localhost:3000", {
+    method: "POST",
+    body: JSON.stringify({ message: "Hello!" }),
+    headers: { "x-test": "123", "Content-Type": "application/json" },
   });
+
+  assert.equal(res.status, 200, `${name} - invalid status code`);
+  assert.equal((await res.json()).message, "Hello!");
+  assert.equal(res.headers.get("content-type"), "application/json;charset=UTF-8");
+  assert.equal(res.headers.get("x-test"), "123", `${name} - missing custom header`);
+
+  // https://github.com/hatoo/oha
+  const stdout = execSync(
+    `oha http://localhost:3000 --no-tui --output-format json -z 3sec -H "x-test: 123" -m POST -T "application/json" -d '{"message":"Hello!"}'`,
+    {
+      encoding: "utf8",
+    },
+  );
   worker.terminate();
   const result = JSON.parse(stdout);
   const statusCodes = Object.keys(result.statusCodeDistribution);

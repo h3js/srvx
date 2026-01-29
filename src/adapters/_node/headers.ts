@@ -1,286 +1,93 @@
-import { splitSetCookieString } from "cookie-es";
-import { kNodeInspect } from "./_common.ts";
+import type { NodeServerRequest } from "../../types.ts";
+import { lazyInherit } from "../../_inherit.ts";
 
-import type { NodeServerRequest, NodeServerResponse } from "../../types.ts";
+// https://github.com/nodejs/node/blob/main/lib/_http_incoming.js
+
+export type NodeRequestHeaders = InstanceType<typeof NodeRequestHeaders>;
 
 export const NodeRequestHeaders: {
-  new (nodeCtx: {
-    req: NodeServerRequest;
-    res?: NodeServerResponse;
-  }): globalThis.Headers;
+  new (req: NodeServerRequest): globalThis.Headers;
 } = /* @__PURE__ */ (() => {
-  const _Headers = class Headers implements globalThis.Headers {
-    _node: {
-      req: NodeServerRequest;
-      res?: NodeServerResponse;
-    };
+  const NativeHeaders = globalThis.Headers;
 
-    constructor(nodeCtx: { req: NodeServerRequest; res?: NodeServerResponse }) {
-      this._node = nodeCtx;
+  class Headers implements Partial<globalThis.Headers> {
+    #req: NodeServerRequest;
+    #headers: globalThis.Headers | undefined;
+
+    constructor(req: NodeServerRequest) {
+      this.#req = req;
     }
 
-    append(name: string, value: string): void {
-      name = validateHeader(name);
-      const _headers = this._node.req.headers;
-      const _current = _headers[name];
-      if (_current) {
-        if (Array.isArray(_current)) {
-          _current.push(value);
-        } else {
-          _headers[name] = [_current as string, value];
+    static [Symbol.hasInstance](val: unknown) {
+      return val instanceof NativeHeaders;
+    }
+
+    get _headers() {
+      if (!this.#headers) {
+        const headers = new NativeHeaders();
+        const rawHeaders = this.#req.rawHeaders;
+        const len = rawHeaders.length;
+        for (let i = 0; i < len; i += 2) {
+          const key = rawHeaders[i];
+          if (key.charCodeAt(0) === 58 /* : */) {
+            continue;
+          }
+          const value = rawHeaders[i + 1];
+          headers.append(key, value);
         }
-      } else {
-        _headers[name] = value;
+        this.#headers = headers;
       }
-    }
-
-    delete(name: string): void {
-      name = validateHeader(name);
-      this._node.req.headers[name] = undefined;
+      return this.#headers;
     }
 
     get(name: string): string | null {
-      name = validateHeader(name);
-      const rawValue = this._node.req.headers[name];
-      if (rawValue === undefined) {
-        return null;
+      if (this.#headers) {
+        return this.#headers.get(name);
       }
-      return _normalizeValue(this._node.req.headers[name]);
-    }
-
-    getSetCookie(): string[] {
-      const setCookie = this._node.req.headers["set-cookie"];
-      if (!setCookie || setCookie.length === 0) {
-        return [];
-      }
-      return splitSetCookieString(setCookie);
+      const value = this.#req.headers[name.toLowerCase()];
+      return Array.isArray(value) ? value.join(", ") : value || null;
     }
 
     has(name: string): boolean {
-      name = validateHeader(name);
-      return !!this._node.req.headers[name];
-    }
-
-    set(name: string, value: string): void {
-      name = validateHeader(name);
-      this._node.req.headers[name] = value;
-    }
-
-    get count(): number {
-      // Bun-specific addon
-      throw new Error("Method not implemented.");
-    }
-
-    getAll(_name: "set-cookie" | "Set-Cookie"): string[] {
-      // Bun-specific addon
-      throw new Error("Method not implemented.");
-    }
-
-    toJSON(): Record<string, string> {
-      const _headers = this._node.req.headers;
-      const result: Record<string, string> = {};
-      for (const key in _headers) {
-        if (_headers[key]) {
-          result[key] = _normalizeValue(_headers[key]);
-        }
+      if (this.#headers) {
+        return this.#headers.has(name);
       }
-      return result;
-    }
-
-    forEach(
-      cb: (value: string, key: string, parent: Headers) => void,
-      thisArg?: any,
-    ): void {
-      const _headers = this._node.req.headers;
-      for (const key in _headers) {
-        if (_headers[key]) {
-          cb.call(
-            thisArg,
-            _normalizeValue(_headers[key]),
-            key,
-            this as unknown as Headers,
-          );
-        }
-      }
-    }
-
-    *entries(): HeadersIterator<[string, string]> {
-      const headers = this._node.req.headers;
-      const isHttp2 = this._node.req.httpVersion === "2.0";
-
-      for (const key in headers) {
-        if (!isHttp2 || key[0] !== ":") {
-          yield [key, _normalizeValue(headers[key])];
-        }
-      }
-    }
-
-    *keys(): HeadersIterator<string> {
-      const keys = Object.keys(this._node.req.headers);
-      for (const key of keys) {
-        yield key;
-      }
-    }
-
-    *values(): HeadersIterator<string> {
-      const values = Object.values(this._node.req.headers);
-      for (const value of values) {
-        yield _normalizeValue(value);
-      }
-    }
-
-    [Symbol.iterator](): HeadersIterator<[string, string]> {
-      return this.entries()[Symbol.iterator]();
-    }
-
-    get [Symbol.toStringTag]() {
-      return "Headers";
-    }
-
-    [kNodeInspect]() {
-      return Object.fromEntries(this.entries());
-    }
-  };
-
-  Object.setPrototypeOf(_Headers.prototype, globalThis.Headers.prototype);
-
-  return _Headers;
-})();
-
-export const NodeResponseHeaders: {
-  new (nodeCtx: {
-    req?: NodeServerRequest;
-    res: NodeServerResponse;
-  }): globalThis.Headers;
-} = /* @__PURE__ */ (() => {
-  const _Headers = class Headers implements globalThis.Headers {
-    _node: { req?: NodeServerRequest; res: NodeServerResponse };
-
-    constructor(nodeCtx: { req?: NodeServerRequest; res: NodeServerResponse }) {
-      this._node = nodeCtx;
-    }
-
-    append(name: string, value: string): void {
-      this._node.res.appendHeader(name, value);
-    }
-
-    delete(name: string): void {
-      this._node.res.removeHeader(name);
-    }
-
-    get(name: string): string | null {
-      const rawValue = this._node.res.getHeader(name);
-      if (rawValue === undefined) {
-        return null;
-      }
-      return _normalizeValue(rawValue);
+      return name.toLowerCase() in this.#req.headers;
     }
 
     getSetCookie(): string[] {
-      const setCookie = _normalizeValue(this._node.res.getHeader("set-cookie"));
-      if (!setCookie) {
-        return [];
+      if (this.#headers) {
+        return this.#headers.getSetCookie();
       }
-      return splitSetCookieString(setCookie);
+      const value = this.#req.headers["set-cookie"];
+      return Array.isArray(value) ? value : value ? [value] : [];
     }
 
-    has(name: string): boolean {
-      return this._node.res.hasHeader(name);
-    }
-
-    set(name: string, value: string): void {
-      this._node.res.setHeader(name, value);
-    }
-
-    get count(): number {
-      // Bun-specific addon
-      throw new Error("Method not implemented.");
-    }
-
-    getAll(_name: "set-cookie" | "Set-Cookie"): string[] {
-      // Bun-specific addon
-      throw new Error("Method not implemented.");
-    }
-
-    toJSON(): Record<string, string> {
-      const _headers = this._node.res.getHeaders();
-      const result: Record<string, string> = {};
-      for (const key in _headers) {
-        if (_headers[key]) {
-          result[key] = _normalizeValue(_headers[key]);
+    *_entries(): HeadersIterator<[string, string]> {
+      const rawHeaders = this.#req.rawHeaders;
+      const len = rawHeaders.length;
+      for (let i = 0; i < len; i += 2) {
+        const key = rawHeaders[i];
+        if (key.charCodeAt(0) === 58 /* : */) {
+          continue;
         }
-      }
-      return result;
-    }
-
-    forEach(
-      cb: (value: string, key: string, parent: Headers) => void,
-      thisArg?: any,
-    ): void {
-      const _headers = this._node.res.getHeaders();
-      for (const key in _headers) {
-        if (_headers[key]) {
-          cb.call(
-            thisArg,
-            _normalizeValue(_headers[key]),
-            key,
-            this as unknown as Headers,
-          );
-        }
+        yield [key.toLowerCase(), rawHeaders[i + 1]];
       }
     }
 
-    *entries(): HeadersIterator<[string, string]> {
-      const _headers = this._node.res.getHeaders();
-      for (const key in _headers) {
-        yield [key, _normalizeValue(_headers[key])];
-      }
-    }
-
-    *keys(): HeadersIterator<string> {
-      const keys = this._node.res.getHeaderNames();
-      for (const key of keys) {
-        yield key;
-      }
-    }
-
-    *values(): HeadersIterator<string> {
-      const values = Object.values(this._node.res.getHeaders());
-      for (const value of values) {
-        yield _normalizeValue(value);
-      }
+    entries(): HeadersIterator<[string, string]> {
+      return this.#headers ? this.#headers.entries() : this._entries();
     }
 
     [Symbol.iterator](): HeadersIterator<[string, string]> {
-      return this.entries()[Symbol.iterator]();
+      return this.entries();
     }
+  }
 
-    get [Symbol.toStringTag]() {
-      return "Headers";
-    }
+  lazyInherit(Headers.prototype, NativeHeaders.prototype, "_headers");
 
-    [kNodeInspect]() {
-      return Object.fromEntries(this.entries());
-    }
-  };
+  Object.setPrototypeOf(Headers, NativeHeaders);
+  Object.setPrototypeOf(Headers.prototype, NativeHeaders.prototype);
 
-  Object.setPrototypeOf(_Headers.prototype, globalThis.Headers.prototype);
-
-  return _Headers;
+  return Headers as any;
 })();
-
-function _normalizeValue(
-  value: string | string[] | number | undefined,
-): string {
-  if (Array.isArray(value)) {
-    return value.join(", ");
-  }
-  return typeof value === "string" ? value : String(value ?? "");
-}
-
-function validateHeader(name: string): string {
-  if (name[0] === ":") {
-    throw new TypeError(`${JSON.stringify(name)} is an invalid header name.`);
-  }
-  return name.toLowerCase();
-}

@@ -11,21 +11,22 @@ You can locally benchmark by running `pnpm run bench:node --all` in srvx reposit
 > Variants with `-fast` suffix, use an extended version of built-in `Response` constructor.
 
 > [!TIP]
-> Currently `srvx` (with `FastResponse`) can get close to **96.98%** of native `node:http` performance.
+> Currently `srvx` (with `FastResponse`) can get close to native `node:http` performances.
 
 ```sh
-Node.js:         v22.13.0
-OS:              darwin arm64
-OHA:             1.6.0
+CPU:             AMD Ryzen 9 9950X3D
+Node.js:         v24.12.0
+OS:              linux x64
+OHA:             1.12.0
 
-┌──────────────────┬──────────────────┐
-│ node             │ '100796 req/sec' │
-│ srvx-fast        │ '97757 req/sec'  │
-│ hono-fast        │ '93141 req/sec'  │
-│ whatwg-node-fast │ '84808 req/sec'  │
-│ srvx             │ '67125 req/sec'  │
-│ whatwg-node      │ '62386 req/sec'  │
-│ hono             │ '60502 req/sec'  │
-│ remix            │ '30376 req/sec'  │
+┌──────────────────┬─────────────────┐
+│ node             │ '136396 req/sec' │
+│ srvx-fast        │ '123955 req/sec' │
+│ whatwg-node-fast │ '113530 req/sec' │
+│ srvx             │ '92271 req/sec'  │
+│ whatwg-node      │ '83564 req/sec'  │
+│ hono-fast        │ '55647 req/sec'  │
+│ hono             │ '44563 req/sec'  │
+│ remix            │ '41326 req/sec'  │
 └──────────────────┴──────────────────┘
 ```

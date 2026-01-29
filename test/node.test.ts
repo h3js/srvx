@@ -7,6 +7,10 @@ import { fixture } from "./_fixture.ts";
 
 const tls = await getTLSCert();
 
+const isDeno = !!globalThis.Deno;
+const isBun = !!globalThis.Bun;
+const runtime = isDeno ? `deno-node-compat` : isBun ? `bun-node-compat` : "node";
+
 const testConfigs = [
   {
     name: "http1",
@@ -31,7 +35,10 @@ const testConfigs = [
 ];
 
 for (const config of testConfigs) {
-  describe.sequential(`node (${config.name})`, () => {
+  if ((isDeno || isBun) && config.http2) {
+    continue; // Not implemented yet in Deno, Bun fails somehow too!
+  }
+  describe.sequential(`${runtime} (${config.name})`, () => {
     const client = getHttpClient(config.http2);
     let server: ReturnType<typeof serve> | undefined;
 
@@ -49,13 +56,15 @@ for (const config of testConfigs) {
     });
 
     afterAll(async () => {
-      await client.agent?.close();
-      await server!.close();
+      await client.agent?.close?.();
+      await server!.close(true);
+      await server!.close(true); // test idempotency
     });
 
     addTests({
       url: (path) => server!.url! + path.slice(1),
-      runtime: "node",
+      runtime,
+      http2: config.http2,
       fetch: client.fetch,
     });
   });

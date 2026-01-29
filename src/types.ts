@@ -10,9 +10,7 @@ import type * as AWS from "aws-lambda";
 type MaybePromise<T> = T | Promise<T>;
 type IsAny<T> = Equal<T, any> extends true ? true : false;
 type Equal<X, Y> =
-  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
-    ? true
-    : false;
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
@@ -116,6 +114,15 @@ export interface ServerOptions {
   silent?: boolean;
 
   /**
+   * Graceful shutdown on SIGINT and SIGTERM signals.
+   *
+   * Supported for Node.js, Deno and Bun runtimes.
+   *
+   * @default true (disabled in test and ci environments)
+   */
+  gracefulShutdown?: boolean | { gracefulTimeout?: number; forceTimeout?: number };
+
+  /**
    * TLS server options.
    */
   tls?: {
@@ -138,11 +145,7 @@ export interface ServerOptions {
   /**
    * Node.js server options.
    */
-  node?: (
-    | NodeHttp.ServerOptions
-    | NodeHttps.ServerOptions
-    | NodeHttp2.ServerOptions
-  ) &
+  node?: (NodeHttp.ServerOptions | NodeHttps.ServerOptions | NodeHttp2.ServerOptions) &
     NodeNet.ListenOptions & { http2?: boolean };
 
   /**
@@ -150,7 +153,7 @@ export interface ServerOptions {
    *
    * @docs https://bun.sh/docs/api/http
    */
-  bun?: Omit<Bun.ServeOptions | Bun.TLSServeOptions, "fetch">;
+  bun?: Omit<Bun.Serve.Options<any>, "fetch">;
 
   /**
    * Deno server options
@@ -180,14 +183,7 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Current runtime name
    */
-  readonly runtime:
-    | "node"
-    | "deno"
-    | "bun"
-    | "cloudflare"
-    | "service-worker"
-    | "aws-lambda"
-    | "generic";
+  readonly runtime: "node" | "deno" | "bun" | "cloudflare" | "service-worker" | "aws-lambda" | "generic";
 
   /**
    * Server options
@@ -204,16 +200,13 @@ export interface Server<Handler = ServerHandler> {
    */
   readonly node?: {
     server?: NodeHttp.Server | NodeHttp2.Http2Server;
-    handler: (
-      req: NodeServerRequest,
-      res: NodeServerResponse,
-    ) => void | Promise<void>;
+    handler: (req: NodeServerRequest, res: NodeServerResponse) => void | Promise<void>;
   };
 
   /**
    * Bun context.
    */
-  readonly bun?: { server?: Bun.Server };
+  readonly bun?: { server?: Bun.Server<any> };
 
   /**
    * Deno context.
@@ -273,7 +266,7 @@ export interface ServerRuntimeContext {
    * Underlying Bun server request context.
    */
   bun?: {
-    server: Bun.Server;
+    server: Bun.Server<any>;
   };
 
   /**
@@ -292,6 +285,18 @@ export interface ServerRequestContext {
 }
 
 export interface ServerRequest extends Request {
+  /**
+   * Access to Node.js native instance of request.
+   *
+   * See https://srvx.h3.dev/guide/node#noderequest
+   */
+  _request?: Request;
+
+  /**
+   * Access to the parsed URL
+   */
+  _url?: URL;
+
   /**
    * Runtime specific request context.
    */
@@ -323,7 +328,7 @@ export type ErrorHandler = (error: unknown) => Response | Promise<Response>;
 
 export type BunFetchHandler = (
   request: Request,
-  server?: Bun.Server,
+  server?: Bun.Server<any>,
 ) => Response | Promise<Response>;
 
 export type DenoFetchHandler = (
@@ -331,24 +336,35 @@ export type DenoFetchHandler = (
   info?: Deno.ServeHandlerInfo<Deno.NetAddr>,
 ) => Response | Promise<Response>;
 
-export type NodeServerRequest =
-  | NodeHttp.IncomingMessage
-  | NodeHttp2.Http2ServerRequest;
+export type NodeServerRequest = NodeHttp.IncomingMessage | NodeHttp2.Http2ServerRequest;
 
-export type NodeServerResponse =
-  | NodeHttp.ServerResponse
-  | NodeHttp2.Http2ServerResponse;
+export type NodeServerResponse = NodeHttp.ServerResponse | NodeHttp2.Http2ServerResponse;
 
-export type NodeHttpHandler = (
-  req: NodeServerRequest,
-  res: NodeServerResponse,
+export type NodeHttp1Handler = (
+  req: NodeHttp.IncomingMessage,
+  res: NodeHttp.ServerResponse,
 ) => void | Promise<void>;
 
-export type NodeHTTPMiddleware = (
-  req: NodeServerRequest,
-  res: NodeServerResponse,
+export type NodeHttp2Handler = (
+  req: NodeHttp2.Http2ServerRequest,
+  res: NodeHttp2.Http2ServerResponse,
+) => void | Promise<void>;
+
+export type NodeHttpHandler = NodeHttp1Handler | NodeHttp2Handler;
+
+export type NodeHTTP1Middleware = (
+  req: NodeHttp.IncomingMessage,
+  res: NodeHttp.ServerResponse,
   next: (error?: Error) => void,
 ) => unknown | Promise<unknown>;
+
+export type NodeHTTP2Middleware = (
+  req: NodeHttp2.Http2ServerRequest,
+  res: NodeHttp2.Http2ServerResponse,
+  next: (error?: Error) => void,
+) => unknown | Promise<unknown>;
+
+export type NodeHTTPMiddleware = NodeHTTP1Middleware | NodeHTTP2Middleware;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
 

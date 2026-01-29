@@ -1,5 +1,3 @@
-import { splitSetCookieString } from "cookie-es";
-
 import type { Readable as NodeReadable } from "node:stream";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
@@ -15,9 +13,9 @@ export async function sendNodeResponse(
   }
 
   // Fast path for NodeResponse
-  if ((webRes as NodeResponse).nodeResponse) {
-    const res = (webRes as NodeResponse).nodeResponse();
-    writeHead(nodeRes, res.status, res.statusText, res.headers.flat());
+  if ((webRes as NodeResponse)._toNodeResponse) {
+    const res = (webRes as NodeResponse)._toNodeResponse();
+    writeHead(nodeRes, res.status, res.statusText, res.headers);
     if (res.body) {
       if (res.body instanceof ReadableStream) {
         return streamBody(res.body, nodeRes);
@@ -32,35 +30,32 @@ export async function sendNodeResponse(
     return endNodeResponse(nodeRes);
   }
 
-  const headerEntries: NodeHttp.OutgoingHttpHeader[] = [];
-  for (const [key, value] of webRes.headers) {
-    if (key === "set-cookie") {
-      for (const setCookie of splitSetCookieString(value)) {
-        headerEntries.push(["set-cookie", setCookie]);
-      }
-    } else {
-      headerEntries.push([key, value]);
-    }
-  }
+  const rawHeaders = [...webRes.headers];
+  writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
-  writeHead(nodeRes, webRes.status, webRes.statusText, headerEntries.flat());
-
-  return webRes.body
-    ? streamBody(webRes.body, nodeRes)
-    : endNodeResponse(nodeRes);
+  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
 }
 
 function writeHead(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  headers: NodeHttp.OutgoingHttpHeader[],
+  rawHeaders: [string, string][],
 ): void {
+  // Node.js writeHead accepts a raw array of [key, value, key, value] or [[key, value], [key, value]]
+  // https://github.com/nodejs/node/blob/v22.14.0/lib/_http_server.js#L376
+  // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
+  // But it has an inconsistency in slow-path that does not unflattens!!
+  // https://github.com/h3js/srvx/pull/40
+  // Deno does not support flatten in both cases.
+  const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
-      nodeRes.writeHead(status, headers.flat() as any);
+      // @ts-expect-error
+      nodeRes.writeHead(status, writeHeaders);
     } else {
-      nodeRes.writeHead(status, statusText, headers.flat() as any);
+      // @ts-expect-error
+      nodeRes.writeHead(status, statusText, writeHeaders);
     }
   }
 }
@@ -102,9 +97,7 @@ export function streamBody(
         reader.read().then(streamHandle, streamCancel);
       } else {
         // Wait for the drain event to continue reading
-        nodeRes.once("drain", () =>
-          reader.read().then(streamHandle, streamCancel),
-        );
+        nodeRes.once("drain", () => reader.read().then(streamHandle, streamCancel));
       }
     } catch (error) {
       streamCancel(error instanceof Error ? error : undefined);
@@ -117,7 +110,7 @@ export function streamBody(
   reader.read().then(streamHandle, streamCancel);
 
   // Return a promise that resolves when the stream is closed
-  return reader.closed.finally(() => {
+  return reader.closed.catch(streamCancel).finally(() => {
     // cleanup listeners
     nodeRes.off("close", streamCancel);
     nodeRes.off("error", streamCancel);

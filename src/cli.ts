@@ -1,16 +1,13 @@
-import type {
-  NodeHttpHandler,
-  Server,
-  ServerMiddleware,
-  ServerOptions,
-  ServerRequest,
-} from "srvx";
+import type { Server, ServerMiddleware, ServerOptions } from "srvx";
 import { parseArgs as parseNodeArgs } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { dirname, extname, relative, resolve } from "node:path";
 import { fork } from "node:child_process";
-import { existsSync } from "node:fs";
-import { Colors as c } from "./_utils.cli.ts";
+import { createReadStream, existsSync } from "node:fs";
+import { Readable } from "node:stream";
+import * as c from "./_color.ts";
+import { loadServerEntry } from "./loader.ts";
+import pkg from "../package.json" with { type: "json" };
 
 // prettier-ignore
 const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
@@ -31,7 +28,7 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
   // Handle version flag
   if (options._version) {
-    console.log(await version());
+    console.log(version());
     process.exit(0);
   }
   // Handle help flag
@@ -39,6 +36,13 @@ export async function main(mainOpts: MainOpts): Promise<void> {
     console.log(usage(mainOpts));
     process.exit(options._help ? 0 : 1);
   }
+
+  // Fetch mode
+  if (options._mode === "fetch") {
+    await handleFetch(options);
+    return;
+  }
+
   // Fork a child process with additional args
   const isBun = !!process.versions.bun;
   const isDeno = !!process.versions.deno;
@@ -76,6 +80,145 @@ export async function main(mainOpts: MainOpts): Promise<void> {
       process.exit(code);
     }
   });
+
+  // Ensure child process is killed on exit
+  let cleanupCalled = false;
+  const cleanup = (signal: any, exitCode?: number) => {
+    if (cleanupCalled) return;
+    cleanupCalled = true;
+    try {
+      child.kill(signal || "SIGTERM");
+    } catch (error) {
+      console.error("Error killing child process:", error);
+    }
+    if (exitCode !== undefined) {
+      process.exit(exitCode);
+    }
+  };
+  process.on("exit", () => cleanup("SIGTERM"));
+  process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
+  process.on("SIGTERM", () => cleanup("SIGTERM", 143));
+}
+
+async function handleFetch(options: CLIOptions): Promise<never> {
+  try {
+    const loaded = await loadServerEntry({
+      url: options._entry,
+      base: options._dir,
+    });
+
+    if (loaded.notFound) {
+      console.error(`Server entry file not found at ${options._entry || "server.ts"}`);
+      process.exit(1);
+    }
+
+    if (!loaded.fetch) {
+      console.error(`No fetch handler exported from ${loaded.url}`);
+      process.exit(1);
+    }
+
+    // Build request URL
+    const url = new URL(options._url || "/", `http://${options.hostname || "cli"}`).toString();
+
+    // Build headers
+    const headers = new Headers();
+    if (options._headers) {
+      for (const header of options._headers) {
+        const colonIndex = header.indexOf(":");
+        if (colonIndex > 0) {
+          const name = header.slice(0, colonIndex).trim();
+          const value = header.slice(colonIndex + 1).trim();
+          headers.append(name, value);
+        }
+      }
+    }
+
+    // Build body
+    let body: BodyInit | undefined;
+    if (options._data !== undefined) {
+      if (options._data === "@-") {
+        // Read from stdin
+        body = new ReadableStream({
+          async start(controller) {
+            for await (const chunk of process.stdin) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        });
+      } else if (options._data.startsWith("@")) {
+        // Read from file as stream
+        body = Readable.toWeb(
+          createReadStream(options._data.slice(1)),
+        ) as unknown as ReadableStream;
+      } else {
+        body = options._data;
+      }
+    }
+
+    const method = options._method || (body === undefined ? "GET" : "POST");
+
+    // Build request
+    const req = new Request(url, {
+      method,
+      headers,
+      body,
+    });
+
+    // Verbose: print request info
+    if (options._verbose) {
+      const parsedUrl = new URL(url);
+      console.error(`> ${method} ${parsedUrl.pathname}${parsedUrl.search} HTTP/1.1`);
+      console.error(`> Host: ${parsedUrl.host}`);
+      for (const [name, value] of headers) {
+        console.error(`> ${name}: ${value}`);
+      }
+      console.error(">");
+    }
+
+    const res = await loaded.fetch(req);
+
+    // Verbose: print response info
+    if (options._verbose) {
+      console.error(`< HTTP/1.1 ${res.status} ${res.statusText}`);
+      for (const [name, value] of res.headers) {
+        console.error(`< ${name}: ${value}`);
+      }
+      console.error("<");
+    }
+
+    // Stream response to stdout
+    if (res.body) {
+      const { isBinary, encoding } = getResponseFormat(res);
+
+      if (isBinary) {
+        // Stream binary directly to stdout
+        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+          process.stdout.write(chunk);
+        }
+      } else {
+        // Stream text with proper encoding
+        const decoder = new TextDecoder(encoding);
+        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
+          process.stdout.write(decoder.decode(chunk, { stream: true }));
+        }
+        // Flush any remaining bytes
+        const remaining = decoder.decode();
+        if (remaining) {
+          process.stdout.write(remaining);
+        }
+        // Add trailing newline for text content when interactive
+        // (avoid changing byte-for-byte output in scripts/pipes)
+        if (process.stdout.isTTY) {
+          process.stdout.write("\n");
+        }
+      }
+    }
+    process.exit(0);
+  } catch (error) {
+    console.error("Error in fetch mode:", error);
+    process.exit(1);
+  }
 }
 
 async function serve() {
@@ -86,10 +229,12 @@ async function serve() {
     }
 
     // Load server entry file and create a new server instance
-    const entry = await loadEntry(options);
+    const loaded = await loadServerEntry({
+      url: options._entry,
+      base: options._dir,
+    });
 
-    const forceUseNode = entry._legacyNode;
-    const { serve: srvxServe } = forceUseNode
+    const { serve: srvxServe } = loaded.nodeCompat
       ? await import("srvx/node")
       : await import("srvx");
     const { serveStatic } = await import("srvx/static");
@@ -98,11 +243,27 @@ async function serve() {
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
 
+    const serverOptions = {
+      ...loaded.module?.default,
+      default: undefined,
+      ...loaded.module,
+    } as Partial<ServerOptions>;
+
     const server = srvxServe({
+      gracefulShutdown: options._prod,
+      ...serverOptions,
+      ...options,
       error: (error) => {
         console.error(error);
         return renderError(error);
       },
+      fetch:
+        loaded.fetch ||
+        (() =>
+          renderError(
+            loaded.notFound ? "Server Entry Not Found" : "No Fetch Handler Exported",
+            501,
+          )),
       middleware: [
         log(),
         options._static
@@ -110,30 +271,15 @@ async function serve() {
               dir: options._static,
             })
           : undefined,
-        ...(entry.middleware || []),
+        ...(serverOptions.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
-      ...entry,
     });
 
     globalThis.__srvx__ = server;
     await server.ready();
     await globalThis.__srvx_listen_cb__?.();
 
-    printInfo(entry);
-
-    // Keep the process alive with proper cleanup
-    const cleanup = () => {
-      // TODO: force close seems not working properly (when fixed, we should await for it)
-      server.close(true).catch(() => {});
-      process.exit(0);
-    };
-    // Handle Ctrl+C
-    process.on("SIGINT", () => {
-      console.log(c.gray("\rStopping server..."));
-      cleanup();
-    });
-    // Handle termination signal (watcher)
-    process.on("SIGTERM", cleanup);
+    printInfo(options, loaded);
   } catch (error) {
     console.error(error);
     process.exit(1);
@@ -141,7 +287,6 @@ async function serve() {
 }
 
 declare global {
-  var __srvx_version__: string | undefined;
   var __srvx__: Server;
   var __srvx_listen_cb__: () => void;
 }
@@ -153,6 +298,7 @@ type MainOpts = {
 };
 
 type CLIOptions = Partial<ServerOptions> & {
+  _mode: "serve" | "fetch";
   _entry: string;
   _dir: string;
   _prod: boolean;
@@ -160,104 +306,14 @@ type CLIOptions = Partial<ServerOptions> & {
   _help?: boolean;
   _version?: boolean;
   _import?: string;
+  _method?: string;
+  _headers?: string[];
+  _url?: string;
+  _verbose?: boolean;
+  _data?: string;
 };
 
-async function loadEntry(
-  opts: CLIOptions,
-): Promise<ServerOptions & { _legacyNode?: boolean; _error?: string }> {
-  try {
-    // Guess entry if not provided
-    if (!opts._entry) {
-      for (const entry of defaultEntries) {
-        for (const ext of defaultExts) {
-          const entryPath = resolve(opts._dir, `${entry}${ext}`);
-          if (existsSync(entryPath)) {
-            opts._entry = entryPath;
-            break;
-          }
-        }
-        if (opts._entry) break;
-      }
-    }
-    if (!opts._entry) {
-      const _error = `No server entry file found.\nPlease specify an entry file or ensure one of the default entries exists (${defaultEntries.join(", ")}).`;
-      return {
-        _error,
-        fetch: () => renderError(_error, 404, "No Server Entry"),
-        ...opts,
-      };
-    }
-
-    // Convert to file:// URL for consistent imports
-    const entryURL = opts._entry.startsWith("file://")
-      ? opts._entry
-      : pathToFileURL(resolve(opts._entry)).href;
-
-    // Import the user file
-    const { res: mod, listenHandler } = await interceptListen(
-      () => import(entryURL),
-    );
-    let fetchHandler =
-      mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
-
-    // Upgrade legacy Node.js handler
-    let _legacyNode = false;
-    if (!fetchHandler) {
-      const nodeHandler =
-        listenHandler ||
-        (typeof mod.default === "function" ? mod.default : undefined);
-      if (nodeHandler) {
-        _legacyNode = true;
-        const { callNodeHandler } = await import("./adapters/_node/call.ts");
-        fetchHandler = (webReq: ServerRequest) =>
-          callNodeHandler(nodeHandler, webReq);
-      }
-    }
-
-    // Runtime warning if no fetch handler is found
-    let _error: string | undefined;
-    if (!fetchHandler) {
-      _error = `The entry file "${relative(".", opts._entry)}" does not export a valid fetch handler.`;
-      fetchHandler = () => renderError(_error, 500, "Invalid Entry");
-    }
-
-    return {
-      ...mod,
-      ...mod.default,
-      ...opts,
-      _error,
-      _legacyNode,
-      fetch: fetchHandler,
-    };
-  } catch (error) {
-    if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
-      const message = String(error);
-      if (/"\.(m|c)?ts"/g.test(message)) {
-        console.error(
-          c.red(
-            `\nMake sure you're using Node.js v22.18+ or v24+ for TypeScript support (current version: ${process.versions.node})\n\n`,
-          ),
-        );
-      } else if (/"\.(m|c)?tsx"/g.test(message)) {
-        console.error(
-          c.red(
-            `\nYou need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)\n\n`,
-          ),
-        );
-      }
-    }
-    if (error instanceof Error) {
-      Error.captureStackTrace?.(error, serve);
-    }
-    throw error;
-  }
-}
-
-function renderError(
-  error: unknown,
-  status = 500,
-  title = "Server Error",
-): Response {
+function renderError(error: unknown, status = 500, title = "Server Error"): Response {
   let html = `<!DOCTYPE html><html><head><title>${title}</title></head><body>`;
   if (options._prod) {
     html += `<h1>${title}</h1><p>Something went wrong while processing your request.</p>`;
@@ -280,17 +336,16 @@ function renderError(
   });
 }
 
-function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
+function printInfo(options: CLIOptions, loaded: Awaited<ReturnType<typeof loadServerEntry>>) {
   let entryInfo: string;
-  if (options._entry) {
-    entryInfo = c.cyan("./" + relative(".", options._entry));
-  } else {
+  if (loaded.notFound) {
     entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
+  } else {
+    entryInfo = loaded.fetch
+      ? c.cyan("./" + relative(".", fileURLToPath(loaded.url!)))
+      : c.red(`No fetch handler exported from ${loaded.url || resolve(options._entry)}`);
   }
   console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
-  if (options._entry && entry._error) {
-    console.error(c.red(`  ${entry._error}`));
-  }
   let staticInfo: string;
   if (options._static) {
     staticInfo = c.cyan("./" + relative(".", options._static) + "/");
@@ -300,57 +355,8 @@ function printInfo(entry: Awaited<ReturnType<typeof loadEntry>>) {
   console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
 }
 
-async function interceptListen<T = unknown>(
-  cb: () => T | Promise<T>,
-): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
-  const http = process.getBuiltinModule("node:http");
-  if (!http || !http.Server) {
-    const res = await cb();
-    return { res };
-  }
-  const originalListen = http.Server.prototype.listen;
-  let res: T;
-  let listenHandler: NodeHttpHandler | undefined;
-  try {
-    // @ts-expect-error
-    http.Server.prototype.listen = function (this: Server, arg1, arg2) {
-      // https://github.com/nodejs/node/blob/af77e4bf2f8bee0bc23f6ee129d6ca97511d34b9/lib/_http_server.js#L557
-      // @ts-expect-error
-      listenHandler = this._events.request;
-      if (Array.isArray(listenHandler)) {
-        listenHandler = listenHandler[0]; // Bun compatibility
-      }
-
-      // Restore original listen method
-      http.Server.prototype.listen = originalListen;
-
-      // Defer callback execution
-      globalThis.__srvx_listen_cb__ = [arg1, arg2].find(
-        (arg) => typeof arg === "function",
-      );
-
-      // Return a deferred proxy for the server instance
-      return new Proxy(
-        {},
-        {
-          get(_, prop) {
-            const server = globalThis.__srvx__;
-            // @ts-expect-error
-            return server?.node?.server?.[prop];
-          },
-        },
-      );
-    };
-    res = await cb();
-  } finally {
-    http.Server.prototype.listen = originalListen;
-  }
-  return { res, listenHandler };
-}
-
-async function version() {
-  const version = globalThis.__srvx_version__ || "unknown";
-  return `srvx ${version}\n${runtime()}`;
+function version() {
+  return `srvx ${pkg.version}\n${runtime()}`;
 }
 
 function runtime() {
@@ -364,6 +370,44 @@ function runtime() {
 }
 
 function parseArgs(args: string[]): CLIOptions {
+  const pArg0 = args.find((a) => !a.startsWith("-"));
+  const mode = pArg0 === "fetch" ? "fetch" : "serve";
+
+  if (mode === "fetch") {
+    const { values, positionals } = parseNodeArgs({
+      args: args.slice(1),
+      allowPositionals: true,
+      options: {
+        help: { type: "boolean" },
+        version: { type: "boolean" },
+        prod: { type: "boolean" },
+        cwd: { type: "string" },
+        host: { type: "string", short: "H" },
+        entry: { type: "string" },
+        request: { type: "string", short: "X" },
+        header: { type: "string", multiple: true, short: "H" },
+        verbose: { type: "boolean", short: "v" },
+        data: { type: "string", short: "d" },
+      },
+    });
+
+    return {
+      _mode: "fetch",
+      _help: values.help,
+      _version: values.version,
+      _method: values.request,
+      _headers: values.header,
+      _url: positionals[0] || "/",
+      _verbose: values.verbose,
+      _entry: values.entry || "",
+      _static: "public",
+      _dir: values.cwd ? resolve(values.cwd) : process.cwd(),
+      _prod: process.env.NODE_ENV === "production",
+      hostname: values.host || "cli",
+      _data: values.data,
+    };
+  }
+
   const { values, positionals } = parseNodeArgs({
     args,
     allowPositionals: true,
@@ -396,6 +440,7 @@ function parseArgs(args: string[]): CLIOptions {
   }
 
   return {
+    _mode: "serve",
     _dir: dir,
     _entry: entry,
     _prod: values.prod ?? process.env.NODE_ENV === "production",
@@ -434,6 +479,17 @@ ${c.gray("$")} ${c.cyan(command)} --host=localhost       ${c.gray("# Bind to loc
 ${c.gray("$")} ${c.cyan(command)} --import=jiti/register ${c.gray(`# Enable ${c.url("jiti", "https://github.com/unjs/jiti")} loader`)}
 ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
+${c.bold("FETCH MODE")}
+
+${c.gray("# srvx fetch [options] [url]")}
+${c.gray("$")} ${c.cyan(command)} fetch                  ${c.gray("# Fetch from default entry")}
+${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific URL/path")}
+${c.gray("$")} ${c.cyan(command)} fetch --entry ./server.ts /api/users ${c.gray("# Fetch using a specific entry")}
+${c.gray("$")} ${c.cyan(command)} fetch -X POST /api/users ${c.gray("# POST request")}
+${c.gray("$")} ${c.cyan(command)} fetch -H "Content-Type: application/json" /api ${c.gray("# With headers")}
+${c.gray("$")} ${c.cyan(command)} fetch -d '{"name":"foo"}' /api ${c.gray("# With request body")}
+${c.gray("$")} echo '{"name":"foo"}' | ${c.cyan(command)} fetch -d @- /api ${c.gray("# Body from stdin")}
+${c.gray("$")} ${c.cyan(command)} fetch -v /api/users    ${c.gray("# Verbose output (show headers)")}
 
 ${c.bold("ARGUMENTS")}
 
@@ -451,7 +507,14 @@ ${c.bold("OPTIONS")}
   ${c.green("--cert")} ${c.yellow("<file>")}            TLS certificate file
   ${c.green("--key")}  ${c.yellow("<file>")}            TLS private key file
   ${c.green("-h, --help")}               Show this help message
-  ${c.green("-v, --version")}            Show server and runtime versions
+  ${c.green("--version")}                Show server and runtime versions
+
+${c.bold("FETCH OPTIONS")}
+
+  ${c.green("-X, --request")} ${c.yellow("<method>")}   HTTP method (default: ${c.yellow("GET")}, or ${c.yellow("POST")} if body is provided)
+  ${c.green("-H, --header")} ${c.yellow("<header>")}    Add header (format: "Name: Value", can be used multiple times)
+  ${c.green("-d, --data")} ${c.yellow("<data>")}        Request body (use ${c.yellow("@-")} for stdin, ${c.yellow("@file")} for file)
+  ${c.green("-v, --verbose")}            Show request and response headers
 
 ${c.bold("ENVIRONMENT")}
 
@@ -462,6 +525,25 @@ ${c.bold("ENVIRONMENT")}
 ➤ ${c.url("Documentation", mainOpts.docs || "https://srvx.h3.dev")}
 ➤ ${c.url("Report issues", mainOpts.issues || "https://github.com/h3js/srvx/issues")}
 `.trim();
+}
+
+function getResponseFormat(res: Response): {
+  isBinary: boolean;
+  encoding: string;
+} {
+  const contentType = res.headers.get("content-type") || "";
+  const isBinary =
+    contentType.startsWith("application/octet-stream") ||
+    contentType.startsWith("image/") ||
+    contentType.startsWith("audio/") ||
+    contentType.startsWith("video/") ||
+    contentType.startsWith("application/pdf") ||
+    contentType.startsWith("application/zip") ||
+    contentType.startsWith("application/gzip");
+  const encoding = contentType.includes("charset=")
+    ? contentType.split("charset=")[1].split(";")[0].trim()
+    : "utf8";
+  return { isBinary, encoding };
 }
 
 function setupProcessErrorHandlers() {

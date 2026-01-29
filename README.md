@@ -13,7 +13,7 @@ Universal Server based on web standards. Works with [Deno](https://deno.com/), [
 - ✅ Zero dependency
 - ✅ Full featured CLI with watcher, error handler, serve static and logger
 - ✅ Seamless runtime integration with same API ([handler](https://srvx.h3.dev/guide/handler) and [instance](https://srvx.h3.dev/guide/server)).
-- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with up to [~96.98%](https://github.com/h3js/srvx/tree/main/test/bench-node) native performance.
+- ✅ [Node.js compatibility](https://srvx.h3.dev/guide/node) with a [**close to native performance**](https://github.com/h3js/srvx/tree/main/test/bench-node).
 - ✅ Zero overhead [Deno](https://deno.com/) and [Bun](https://bun.sh/) support.
 
 ## Quick start
@@ -41,28 +41,15 @@ $ deno -A npm:srvx
 $ bunx --bun srvx
 ```
 
+You can also use `srvx fetch` to directly call your server handler without starting a server:
+
+```bash
+$ npx srvx fetch /api/users
+```
+
+See [CLI documentation](https://srvx.h3.dev/guide/cli) for more options.
+
 👉 **Visit the 📖 [Documentation](https://srvx.h3.dev/) to learn more.**
-
-## Starter Examples
-
-[➤ Online Playground](https://stackblitz.com/fork/github/h3js/srvx/tree/main/examples/stackblitz?startScript=dev&file=server.mjs)
-
-<!-- automd:examples -->
-
-| Example          | Source                                                                                     | Try                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `aws-lambda`     | [examples/aws-lambda](https://github.com/h3js/srvx/tree/main/examples/aws-lambda/)         | `npx giget gh:h3js/srvx/examples/aws-lambda srvx-aws-lambda`         |
-| `elysia`         | [examples/elysia](https://github.com/h3js/srvx/tree/main/examples/elysia/)                 | `npx giget gh:h3js/srvx/examples/elysia srvx-elysia`                 |
-| `express`        | [examples/express](https://github.com/h3js/srvx/tree/main/examples/express/)               | `npx giget gh:h3js/srvx/examples/express srvx-express`               |
-| `h3`             | [examples/h3](https://github.com/h3js/srvx/tree/main/examples/h3/)                         | `npx giget gh:h3js/srvx/examples/h3 srvx-h3`                         |
-| `hello-world`    | [examples/hello-world](https://github.com/h3js/srvx/tree/main/examples/hello-world/)       | `npx giget gh:h3js/srvx/examples/hello-world srvx-hello-world`       |
-| `hono`           | [examples/hono](https://github.com/h3js/srvx/tree/main/examples/hono/)                     | `npx giget gh:h3js/srvx/examples/hono srvx-hono`                     |
-| `jsx`            | [examples/jsx](https://github.com/h3js/srvx/tree/main/examples/jsx/)                       | `npx giget gh:h3js/srvx/examples/jsx srvx-jsx`                       |
-| `node-handler`   | [examples/node-handler](https://github.com/h3js/srvx/tree/main/examples/node-handler/)     | `npx giget gh:h3js/srvx/examples/node-handler srvx-node-handler`     |
-| `service-worker` | [examples/service-worker](https://github.com/h3js/srvx/tree/main/examples/service-worker/) | `npx giget gh:h3js/srvx/examples/service-worker srvx-service-worker` |
-| `websocket`      | [examples/websocket](https://github.com/h3js/srvx/tree/main/examples/websocket/)           | `npx giget gh:h3js/srvx/examples/websocket srvx-websocket`           |
-
-<!-- /automd -->
 
 ## Contribution
 

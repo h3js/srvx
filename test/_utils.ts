@@ -9,10 +9,7 @@ import { addTests } from "./_tests.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
 
-export function testsExec(
-  cmd: string,
-  opts: { runtime: string; silent?: boolean },
-): void {
+export function testsExec(cmd: string, opts: { runtime: string; silent?: boolean }): void {
   let childProc: ExecaRes;
   let baseURL: string;
 
@@ -96,9 +93,7 @@ export async function getTLSCert(): Promise<{
   serverCert.publicKey = serverKeys.publicKey;
   serverCert.serialNumber = "02";
   serverCert.validity.notBefore = new Date();
-  serverCert.validity.notAfter = new Date(
-    Date.now() + 365 * 24 * 60 * 60 * 1000,
-  );
+  serverCert.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   serverCert.setSubject([{ name: "commonName", value: "localhost" }]);
   serverCert.setIssuer(caCert.subject.attributes);
   serverCert.setExtensions([

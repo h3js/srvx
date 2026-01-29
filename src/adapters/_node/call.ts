@@ -6,7 +6,6 @@ import type {
   ServerRequest,
 } from "../../types.ts";
 
-import { NodeResponseHeaders } from "./headers.ts";
 import { NodeResponse } from "./response.ts";
 
 export function callNodeHandler(
@@ -34,9 +33,18 @@ export function callNodeHandler(
     },
     get headers() {
       if (!_headers) {
-        _headers = new (NodeResponseHeaders as typeof NodeResponseHeaders)(
-          nodeCtx,
-        );
+        const headerEntries: [string, string][] = [];
+        const rawHeaders = nodeRes.getHeaders();
+        for (const [name, value] of Object.entries(rawHeaders)) {
+          if (Array.isArray(value)) {
+            for (const v of value) {
+              headerEntries.push([name, v]);
+            }
+          } else if (value) {
+            headerEntries.push([name, String(value)]);
+          }
+        }
+        _headers = new Headers(headerEntries);
       }
       return _headers;
     },
@@ -51,19 +59,19 @@ export function callNodeHandler(
     nodeRes.once("pipe", (stream) => {
       streamPromise = new Promise((resolve) => {
         stream.once("end", () => resolve(webRes));
-        stream.once("error", (error) => reject(error));
+        stream.once("error", (error: Error) => reject(error));
       });
     });
 
     try {
       if (isMiddleware) {
         Promise.resolve(
-          handler(nodeReq, nodeRes, (error) =>
+          handler(nodeReq as any, nodeRes as any, (error) =>
             error ? reject(error) : streamPromise || resolve(webRes),
           ),
         ).catch((error) => reject(error));
       } else {
-        Promise.resolve((handler as NodeHttpHandler)(nodeReq, nodeRes)).then(
+        Promise.resolve((handler as NodeHttpHandler)(nodeReq as any, nodeRes as any)).then(
           () => streamPromise || webRes,
         );
       }

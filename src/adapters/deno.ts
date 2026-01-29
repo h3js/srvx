@@ -7,6 +7,7 @@ import {
   resolveTLSOptions,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
+import { gracefulShutdownPlugin } from "../_plugins.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -21,9 +22,7 @@ class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
   readonly options: Server["options"];
   readonly deno: Server["deno"] = {};
-  readonly serveOptions:
-    | Deno.ServeTcpOptions
-    | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem);
+  readonly serveOptions: Deno.ServeTcpOptions | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem);
   readonly fetch: DenoFetchHandler;
 
   #listeningPromise?: Promise<void>;
@@ -35,6 +34,8 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
     for (const plugin of options.plugins || []) plugin(this);
+
+    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -62,9 +63,7 @@ class DenoServer implements Server<DenoFetchHandler> {
       ...resolvePortAndHost(this.options),
       reusePort: this.options.reusePort,
       onError: this.options.error,
-      ...(tls
-        ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase }
-        : {}),
+      ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
       ...this.options.deno,
     };
 
@@ -111,9 +110,6 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   async close(): Promise<void> {
-    await Promise.all([
-      this.#wait.wait(),
-      Promise.resolve(this.deno?.server?.shutdown()),
-    ]);
+    await Promise.all([this.#wait.wait(), Promise.resolve(this.deno?.server?.shutdown())]);
   }
 }

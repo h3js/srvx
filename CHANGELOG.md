@@ -1,5 +1,433 @@
 # Changelog
 
+## v0.10.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.10.0...v0.10.1)
+
+### 🚀 Enhancements
+
+- Support force close with double Control+C ([#163](https://github.com/h3js/srvx/pull/163))
+
+### 🩹 Fixes
+
+- **node:** Call request abort controller only on close ([#161](https://github.com/h3js/srvx/pull/161))
+- **node:** Handle multiple close calls ([#164](https://github.com/h3js/srvx/pull/164))
+- Handle non-parsable URLs in printListening ([#165](https://github.com/h3js/srvx/pull/165))
+
+### 🏡 Chore
+
+- Swtich to tsgo ([#159](https://github.com/h3js/srvx/pull/159))
+- Update undocs ([2b57ffe](https://github.com/h3js/srvx/commit/2b57ffe))
+- Update deps ([64a1485](https://github.com/h3js/srvx/commit/64a1485))
+- Update deps ([b553658](https://github.com/h3js/srvx/commit/b553658))
+
+### ✅ Tests
+
+- Use vitest for bun ([#162](https://github.com/h3js/srvx/pull/162))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Oskar Lebuda <oskar.lebuda@enp.pl>
+
+## v0.10.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.8...v0.10.0)
+
+### 🩹 Fixes
+
+- **types:** Split http1 and http2 handler types ([#154](https://github.com/h3js/srvx/pull/154))
+
+### 💅 Refactors
+
+- **node:** ⚠️ Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+
+### 📖 Documentation
+
+- Add notes about `NodeRequest` ([f483611](https://github.com/h3js/srvx/commit/f483611))
+- **node:** Also mention `req.clone()` ([7a88abf](https://github.com/h3js/srvx/commit/7a88abf))
+
+### 🌊 Types
+
+- Add `_request` type ([ddc4ac3](https://github.com/h3js/srvx/commit/ddc4ac3))
+
+#### ⚠️ Breaking Changes
+
+- **node:** ⚠️ Avoid patching global request by default ([#155](https://github.com/h3js/srvx/pull/155))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+
+## v0.9.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.7...v0.9.8)
+
+### 🚀 Enhancements
+
+- Export `AdapterMeta` ([#151](https://github.com/h3js/srvx/pull/151))
+- Experimental tracing channel support ([#141](https://github.com/h3js/srvx/pull/141))
+
+### 🩹 Fixes
+
+- **node:** Don't fire abort signal on normal request completion ([#153](https://github.com/h3js/srvx/pull/153))
+
+### 🏡 Chore
+
+- Update deps ([b79112e](https://github.com/h3js/srvx/commit/b79112e))
+- Fix types ([206a708](https://github.com/h3js/srvx/commit/206a708))
+- Update bench ([4b58e3f](https://github.com/h3js/srvx/commit/4b58e3f))
+- Small refactors on #153 ([#153](https://github.com/h3js/srvx/issues/153))
+- Add experimental jsdocs for tracing ([f4a7996](https://github.com/h3js/srvx/commit/f4a7996))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abdelrahman Awad ([@logaretm](https://github.com/logaretm))
+- Alpheus ([@alpheusmtx](https://github.com/alpheusmtx))
+- David Citron ([@dcitron](https://github.com/dcitron))
+
+## v0.9.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.6...v0.9.7)
+
+### 🩹 Fixes
+
+- **request:** Fix instanceof checks for extended Request class ([#147](https://github.com/h3js/srvx/pull/147))
+
+### 🏡 Chore
+
+- Update deps ([7107753](https://github.com/h3js/srvx/commit/7107753))
+- Update obuild ([aebb3fd](https://github.com/h3js/srvx/commit/aebb3fd))
+- Rollback vitest upgrade ([56ab0d7](https://github.com/h3js/srvx/commit/56ab0d7))
+- Update deps ([cc8f86a](https://github.com/h3js/srvx/commit/cc8f86a))
+
+### 🤖 CI
+
+- Add pkg.pr.new ([4d590fe](https://github.com/h3js/srvx/commit/4d590fe))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+
+## v0.9.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.5...v0.9.6)
+
+### 🩹 Fixes
+
+- **request:** Use unique global cache key ([ab38ea4](https://github.com/h3js/srvx/commit/ab38ea4))
+- Handle no env vars for colors ([#146](https://github.com/h3js/srvx/pull/146))
+
+### 🏡 Chore
+
+- Upgrade vitest to v4 ([#138](https://github.com/h3js/srvx/pull/138))
+- Update deps ([28dcbed](https://github.com/h3js/srvx/commit/28dcbed))
+
+### ❤️ Contributors
+
+- Ian Bobinac <ian.units@gmail.com>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.9.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.3...v0.9.5)
+
+### 🚀 Enhancements
+
+- **node, deno, bun:** Validate server port range ([#137](https://github.com/h3js/srvx/pull/137))
+
+### 🩹 Fixes
+
+- Handle non promise and promise-like values for `waitUntil` ([ef71acd](https://github.com/h3js/srvx/commit/ef71acd))
+
+### 💅 Refactors
+
+- Improve gracefulShutdown dx ([3170f23](https://github.com/h3js/srvx/commit/3170f23))
+
+### 📦 Build
+
+- Better tree-shaking cli colors ([0973a59](https://github.com/h3js/srvx/commit/0973a59))
+
+### 🏡 Chore
+
+- **release:** V0.9.4 ([70917bf](https://github.com/h3js/srvx/commit/70917bf))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abeer0 ([@iiio2](https://github.com/iiio2))
+
+## v0.9.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.3...v0.9.4)
+
+### 🩹 Fixes
+
+- Handle non promise and promise-like values for `waitUntil` ([ef71acd](https://github.com/h3js/srvx/commit/ef71acd))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.9.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.2...v0.9.3)
+
+### 🚀 Enhancements
+
+- **node, deno, bun:** Graceful shutdown ([#136](https://github.com/h3js/srvx/pull/136))
+- Support `SERVER_SHUTDOWN_TIMEOUT` and `SERVER_FORCE_SHUTDOWN_TIMEOUT` env variables ([00454db](https://github.com/h3js/srvx/commit/00454db))
+
+### 🩹 Fixes
+
+- **cli:** Avoid double close ([51dbad2](https://github.com/h3js/srvx/commit/51dbad2))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.9.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.1...v0.9.2)
+
+### 🩹 Fixes
+
+- Lazy inherit property symbols too ([e63a34d](https://github.com/h3js/srvx/commit/e63a34d))
+
+### 🏡 Chore
+
+- Add explicit build script to publish ([6f93cc7](https://github.com/h3js/srvx/commit/6f93cc7))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.9.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.9.0...v0.9.1)
+
+### 📖 Documentation
+
+- Update fetching node handlers ([d3a5cbe](https://github.com/h3js/srvx/commit/d3a5cbe))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.9.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.16...v0.9.0)
+
+### 🚀 Enhancements
+
+- `fetchNodeHandler` and `nodeToFetchHandler` ([#125](https://github.com/h3js/srvx/pull/125))
+- **toWebHandler:** Accept fetch or node handler as input ([2b0e232](https://github.com/h3js/srvx/commit/2b0e232))
+- Better `toNodeHandler` / `toFetchHandler` utils ([#130](https://github.com/h3js/srvx/pull/130))
+- Implement `Symbol.hasInstance` for all super classes ([529b11b](https://github.com/h3js/srvx/commit/529b11b))
+
+### 🔥 Performance
+
+- Use and cache parsed/fast url when possible ([da1caba](https://github.com/h3js/srvx/commit/da1caba))
+- **node:** Fast req body methods ([#134](https://github.com/h3js/srvx/pull/134))
+
+### 🩹 Fixes
+
+- **node:** Trigger abort signal when body read is done ([#122](https://github.com/h3js/srvx/pull/122))
+- **node, deno:** Use flatten headers only for node ([#129](https://github.com/h3js/srvx/pull/129))
+- **node:** Catch uncaught response stream error ([#135](https://github.com/h3js/srvx/pull/135))
+- **node:** Lowercase req header keys when iterating ([6adeb8e](https://github.com/h3js/srvx/commit/6adeb8e))
+
+### 💅 Refactors
+
+- ⚠️ Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️ Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- Rename to `toWebHandler` ([3124480](https://github.com/h3js/srvx/commit/3124480))
+- **node:** ⚠️ Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- Fix type issues ([83cc771](https://github.com/h3js/srvx/commit/83cc771))
+- **node:** ⚠️ Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+
+### 🏡 Chore
+
+- Fix typo in fastify example package.json ([#124](https://github.com/h3js/srvx/pull/124))
+- Update ci ([#131](https://github.com/h3js/srvx/pull/131))
+- Remove unused file ([bcc085d](https://github.com/h3js/srvx/commit/bcc085d))
+- Add note about `toFetchHandler` ([84fa36e](https://github.com/h3js/srvx/commit/84fa36e))
+- Refactor bench implementation handlers ([db78e5f](https://github.com/h3js/srvx/commit/db78e5f))
+- Update deps ([0d1ba69](https://github.com/h3js/srvx/commit/0d1ba69))
+- Update benchs ([9eda551](https://github.com/h3js/srvx/commit/9eda551))
+
+### ✅ Tests
+
+- Better abort tests ([#123](https://github.com/h3js/srvx/pull/123))
+- Run node-compat tests against other runtimes ([#128](https://github.com/h3js/srvx/pull/128))
+
+#### ⚠️ Breaking Changes
+
+- ⚠️ Use esm imports for node entry ([#126](https://github.com/h3js/srvx/pull/126))
+- ⚠️ Avoid splitting `Set-Cookie` value ([#127](https://github.com/h3js/srvx/pull/127))
+- **node:** ⚠️ Reimplement fast headers based on raw headers ([#133](https://github.com/h3js/srvx/pull/133))
+- **node:** ⚠️ Hide some internals ([e93b29c](https://github.com/h3js/srvx/commit/e93b29c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Hiroshi Ogawa <hi.ogawa.zz@gmail.com>
+- Wei Wang <wei@fastmail.com>
+- Manuel Schiller <meisterpink@gmail.com>
+
+## v0.8.16
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.15...v0.8.16)
+
+### 🩹 Fixes
+
+- **cli:** Correct middleware entry spread in serve function ([#119](https://github.com/h3js/srvx/pull/119))
+
+### 📦 Build
+
+- Inline and export `splitSetCookieString` ([#121](https://github.com/h3js/srvx/pull/121))
+
+### ❤️ Contributors
+
+- Kricsleo ([@kricsleo](https://github.com/kricsleo))
+- Валентин Степанов ([@teleskop150750](https://github.com/teleskop150750))
+
+## v0.8.15
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.14...v0.8.15)
+
+### 🩹 Fixes
+
+- Avoid inheriting `constructor` props ([3ecb746](https://github.com/h3js/srvx/commit/3ecb746))
+- **node:** Fix instance check against native `Request` after patching ([c7e7b7f](https://github.com/h3js/srvx/commit/c7e7b7f))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.14
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.13...v0.8.14)
+
+### 🚀 Enhancements
+
+- **static:** Support custom html renderer ([604ee02](https://github.com/h3js/srvx/commit/604ee02))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.13
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.12...v0.8.13)
+
+### 🩹 Fixes
+
+- **node:** Sync `FastURL` pathname changes back to node `req.url` ([#118](https://github.com/h3js/srvx/pull/118))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.12
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.11...v0.8.12)
+
+### 🩹 Fixes
+
+- Safer access to `process.getBuiltinModule` ([#117](https://github.com/h3js/srvx/pull/117))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.11
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.10...v0.8.11)
+
+### 🚀 Enhancements
+
+- **node:** Support absolute paths in request line ([#116](https://github.com/h3js/srvx/pull/116))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.10
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.9...v0.8.10)
+
+### 🩹 Fixes
+
+- **cli:** Ensure child process is killed on exit ([#114](https://github.com/h3js/srvx/pull/114))
+
+### 💅 Refactors
+
+- Reimplement `FastURL` ([#112](https://github.com/h3js/srvx/pull/112))
+- **node:** Rewrite `NodeRequestURL` based on `FastURL` ([#113](https://github.com/h3js/srvx/pull/113))
+
+### 🏡 Chore
+
+- Update deps ([946263d](https://github.com/h3js/srvx/commit/946263d))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.9
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.8...v0.8.9)
+
+### 🩹 Fixes
+
+- **node:** Safer global Request patch ([0e8d6da](https://github.com/h3js/srvx/commit/0e8d6da))
+
+### 🏡 Chore
+
+- Update benchs ([7e8782c](https://github.com/h3js/srvx/commit/7e8782c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.8.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.8.7...v0.8.8)
+
+### 🩹 Fixes
+
+- **node:** Add back `req.runtime` ([d1a148b](https://github.com/h3js/srvx/commit/d1a148b))
+
+### 💅 Refactors
+
+- **node:** Improve `NodeRequest` wrapper ([#109](https://github.com/h3js/srvx/pull/109))
+- **node:** Rewrite FastResponse ([#110](https://github.com/h3js/srvx/pull/110))
+- **node:** Avoid top level `node:` imports ([d95ccb7](https://github.com/h3js/srvx/commit/d95ccb7))
+- **node:** Improve instance types ([6e83952](https://github.com/h3js/srvx/commit/6e83952))
+
+### 📖 Documentation
+
+- **node:** Provide `async` keyword ([#107](https://github.com/h3js/srvx/pull/107))
+
+### 🏡 Chore
+
+- Update deps ([a2498c7](https://github.com/h3js/srvx/commit/a2498c7))
+- Fix typo ([#106](https://github.com/h3js/srvx/pull/106))
+- Update undocs ([663a039](https://github.com/h3js/srvx/commit/663a039))
+- Update deps ([7e5844c](https://github.com/h3js/srvx/commit/7e5844c))
+- Add fastify example ([42cb8bb](https://github.com/h3js/srvx/commit/42cb8bb))
+- Apply automated updates ([b477382](https://github.com/h3js/srvx/commit/b477382))
+- Update deps ([23ea4c5](https://github.com/h3js/srvx/commit/23ea4c5))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Abeer0 ([@iiio2](https://github.com/iiio2))
+- Mohamed Attia ([@Speelwolf](https://github.com/Speelwolf))
+
 ## v0.8.7
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.8.6...v0.8.7)
@@ -202,7 +630,7 @@
 
 ### 📦 Build
 
-- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+- ⚠️ Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
 
 ### 🌊 Types
 
@@ -217,7 +645,7 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
+- ⚠️ Remove `/types` subpath ([#83](https://github.com/h3js/srvx/pull/83))
 
 ### ❤️ Contributors
 
@@ -332,7 +760,7 @@
 ### 🚀 Enhancements
 
 - **node:** Support http2 ([#58](https://github.com/h3js/srvx/pull/58))
-- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- ⚠️ Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
 - Clone options and init `middleware: []` ([16798c1](https://github.com/h3js/srvx/commit/16798c1))
 
 ### 🩹 Fixes
@@ -342,8 +770,8 @@
 
 ### 💅 Refactors
 
-- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
-- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+- ⚠️ Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️ Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
 - Move node compat to `adapters/_node` ([e594009](https://github.com/h3js/srvx/commit/e594009))
 
 ### 📦 Build
@@ -366,9 +794,9 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
-- ⚠️  Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
-- ⚠️  Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
+- ⚠️ Top level `middleware` and simplified plugins ([#67](https://github.com/h3js/srvx/pull/67))
+- ⚠️ Remove experimental upgrade ([#68](https://github.com/h3js/srvx/pull/68))
+- ⚠️ Use `process.getBuiltinModule` for node ([#69](https://github.com/h3js/srvx/pull/69))
 
 ### ❤️ Contributors
 
@@ -381,7 +809,7 @@
 
 ### 🚀 Enhancements
 
-- ⚠️  Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
+- ⚠️ Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
 - Support `upgrade` hook (experimental) ([#63](https://github.com/h3js/srvx/pull/63))
 
 ### 🩹 Fixes
@@ -390,8 +818,8 @@
 
 ### 💅 Refactors
 
-- ⚠️  Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
-- ⚠️  Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
+- ⚠️ Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
+- ⚠️ Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
 
 ### 🏡 Chore
 
@@ -399,9 +827,9 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
-- ⚠️  Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
-- ⚠️  Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
+- ⚠️ Fetch middleware via plugins ([#62](https://github.com/h3js/srvx/pull/62))
+- ⚠️ Rename `onError` hook to `error` for consistency ([471fe57](https://github.com/h3js/srvx/commit/471fe57))
+- ⚠️ Rename to `FastURL` and `FastResponse` exports ([0fe9ed4](https://github.com/h3js/srvx/commit/0fe9ed4))
 
 ### ❤️ Contributors
 

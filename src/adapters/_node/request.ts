@@ -1,257 +1,215 @@
-import { kNodeInspect } from "./_common.ts";
-import { NodeRequestHeaders } from "./headers.ts";
+import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
 import { NodeRequestURL } from "./url.ts";
-
-import type {
-  NodeServerRequest,
-  NodeServerResponse,
-  ServerRequest,
-  ServerRuntimeContext,
-} from "../../types.ts";
+import { NodeRequestHeaders } from "./headers.ts";
+import { lazyInherit } from "../../_inherit.ts";
+import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
 };
 
-export const NodeRequest = /* @__PURE__ */ (() => {
-  const unsupportedGetters = [
-    "cache",
-    "credentials",
-    "destination",
-    "integrity",
-    "keepalive",
-    "mode",
-    "redirect",
-    "referrer",
-    "referrerPolicy",
-  ] as const;
+export const NodeRequest: {
+  new (nodeCtx: NodeRequestContext): ServerRequest;
+} = /* @__PURE__ */ (() => {
+  const NativeRequest = globalThis.Request;
 
-  const _Request = class Request
-    implements Omit<ServerRequest, (typeof unsupportedGetters)[number]>
-  {
-    #url?: InstanceType<typeof NodeRequestURL>;
-    #headers?: InstanceType<typeof NodeRequestHeaders>;
-    #bodyUsed: boolean = false;
-    #abortSignal?: AbortController;
-    #hasBody: boolean | undefined;
-    #bodyBytes?: Promise<Uint8Array<ArrayBuffer>>;
-    #blobBody?: Promise<Blob>;
-    #formDataBody?: Promise<FormData>;
-    #jsonBody?: Promise<any>;
-    #textBody?: Promise<string>;
-    #bodyStream?: undefined | ReadableStream<Uint8Array<ArrayBuffer>>;
+  class Request implements Partial<ServerRequest> {
+    runtime: ServerRequest["runtime"];
 
-    _node: { req: NodeServerRequest; res?: NodeServerResponse };
-    runtime: ServerRuntimeContext;
+    #req: NodeServerRequest;
+    #url?: URL;
+    #bodyStream?: ReadableStream | null;
+    #request?: globalThis.Request;
+    #headers?: NodeRequestHeaders;
+    #abortController?: AbortController;
 
-    constructor(nodeCtx: NodeRequestContext) {
-      this._node = nodeCtx;
+    constructor(ctx: NodeRequestContext) {
+      this.#req = ctx.req;
       this.runtime = {
         name: "node",
-        node: nodeCtx,
+        node: ctx,
       };
     }
 
-    get ip() {
-      return this._node.req.socket?.remoteAddress;
+    static [Symbol.hasInstance](val: unknown) {
+      return val instanceof NativeRequest;
     }
 
-    get headers() {
-      if (!this.#headers) {
-        this.#headers = new NodeRequestHeaders(this._node);
+    get ip(): string | undefined {
+      return this.#req.socket?.remoteAddress;
+    }
+
+    get method(): string {
+      if (this.#request) {
+        return this.#request.method;
       }
-      return this.#headers;
-    }
-
-    clone(): ServerRequest {
-      return new _Request({ ...this._node }) as unknown as ServerRequest;
+      return this.#req.method || "GET";
     }
 
     get _url() {
-      if (!this.#url) {
-        this.#url = new NodeRequestURL(this._node);
-      }
-      return this.#url;
+      return (this.#url ||= new NodeRequestURL({ req: this.#req }));
     }
 
-    get url() {
+    set _url(url: URL) {
+      this.#url = url;
+    }
+
+    get url(): string {
+      if (this.#request) {
+        return this.#request.url;
+      }
       return this._url.href;
     }
 
-    get method() {
-      return this._node.req.method || "GET";
+    get headers(): Headers {
+      if (this.#request) {
+        return this.#request.headers;
+      }
+      return (this.#headers ||= new NodeRequestHeaders(this.#req));
+    }
+
+    get _abortController() {
+      if (!this.#abortController) {
+        this.#abortController = new AbortController();
+        const { req, res } = this.runtime!.node!;
+        const abortController = this.#abortController;
+        const abort = (err?: Error) => abortController.abort?.(err);
+        if (res) {
+          res.once("close", () => {
+            const reqError = req.errored;
+            if (reqError) {
+              abort(reqError); // request error
+            } else if (!res.writableEnded) {
+              abort(); // server closed before finishing response
+            }
+          });
+        } else {
+          req.once("close", () => {
+            if (!req.complete) {
+              abort(); // client disconnected
+            }
+          });
+        }
+      }
+      return this.#abortController;
     }
 
     get signal() {
-      if (!this.#abortSignal) {
-        this.#abortSignal = new AbortController();
-        this._node.req.once("close", () => {
-          this.#abortSignal?.abort();
-        });
-      }
-      return this.#abortSignal.signal;
+      return this.#request ? this.#request.signal : this._abortController.signal;
     }
 
-    get bodyUsed() {
-      return this.#bodyUsed;
-    }
-
-    get _hasBody() {
-      if (this.#hasBody !== undefined) {
-        return this.#hasBody;
+    get body(): ReadableStream | null {
+      if (this.#request) {
+        return this.#request.body;
       }
-      // Check if request method requires a payload
-      const method = this._node.req.method?.toUpperCase();
-      if (
-        !method ||
-        !(
-          method === "PATCH" ||
-          method === "POST" ||
-          method === "PUT" ||
-          method === "DELETE"
-        )
-      ) {
-        this.#hasBody = false;
-        return false;
-      }
-
-      // Make sure either content-length or transfer-encoding/chunked is set
-      if (!Number.parseInt(this._node.req.headers["content-length"] || "")) {
-        const isChunked = (this._node.req.headers["transfer-encoding"] || "")
-          .split(",")
-          .map((e) => e.trim())
-          .filter(Boolean)
-          .includes("chunked");
-        if (!isChunked) {
-          this.#hasBody = false;
-          return false;
-        }
-      }
-      this.#hasBody = true;
-      return true;
-    }
-
-    get body(): ReadableStream<Uint8Array<ArrayBuffer>> | null {
-      if (!this._hasBody) {
-        return null;
-      }
-      if (!this.#bodyStream) {
-        this.#bodyUsed = true;
-        this.#bodyStream = new ReadableStream({
-          start: (controller) => {
-            this._node.req
-              .on("data", (chunk) => {
-                controller.enqueue(chunk);
-              })
-              .once("error", (error) => {
-                controller.error(error);
-                this.#abortSignal?.abort();
-              })
-              .once("close", () => {
-                this.#abortSignal?.abort();
-              })
-              .once("end", () => {
-                controller.close();
-              });
-          },
-        });
+      if (this.#bodyStream === undefined) {
+        const method = this.method;
+        const hasBody = !(method === "GET" || method === "HEAD");
+        this.#bodyStream = hasBody
+          ? // TODO: HTTP2ServerRequest
+            (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
+          : null;
       }
       return this.#bodyStream;
     }
 
-    bytes(): Promise<Uint8Array<ArrayBuffer>> {
-      if (!this.#bodyBytes) {
-        const _bodyStream = this.body;
-        this.#bodyBytes = _bodyStream
-          ? _readStream(_bodyStream)
-          : Promise.resolve(new Uint8Array());
+    text() {
+      if (this.#request) {
+        return this.#request.text();
       }
-      return this.#bodyBytes;
+      if (this.#bodyStream !== undefined) {
+        return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
+      }
+      return readBody(this.#req).then((buf) => buf.toString());
     }
 
-    arrayBuffer(): Promise<ArrayBuffer> {
-      return this.bytes().then((buff) => {
-        return buff.buffer.slice(
-          buff.byteOffset,
-          buff.byteOffset + buff.byteLength,
-        ) as ArrayBuffer;
-      });
+    json() {
+      if (this.#request) {
+        return this.#request.json();
+      }
+      return this.text().then((text) => JSON.parse(text));
     }
 
-    blob(): Promise<Blob> {
-      if (!this.#blobBody) {
-        this.#blobBody = this.bytes().then((bytes) => {
-          return new Blob([bytes], {
-            type: this._node.req.headers["content-type"],
-          });
+    get _request(): globalThis.Request {
+      if (!this.#request) {
+        const body = this.body;
+        this.#request = new NativeRequest(this.url, {
+          method: this.method,
+          headers: this.headers,
+          signal: this._abortController.signal,
+          body,
+          // @ts-expect-error Undici specific
+          duplex: body ? "half" : undefined,
         });
+        this.#headers = undefined;
+        this.#bodyStream = undefined;
       }
-      return this.#blobBody;
-    }
 
-    formData(): Promise<FormData> {
-      if (!this.#formDataBody) {
-        this.#formDataBody = new Response(this.body, {
-          headers: this.headers as unknown as Headers,
-        }).formData();
-      }
-      return this.#formDataBody;
+      return this.#request;
     }
-
-    text(): Promise<string> {
-      if (!this.#textBody) {
-        this.#textBody = this.bytes().then((bytes) => {
-          return new TextDecoder().decode(bytes);
-        });
-      }
-      return this.#textBody;
-    }
-
-    json(): Promise<any> {
-      if (!this.#jsonBody) {
-        this.#jsonBody = this.text().then((txt) => {
-          return JSON.parse(txt);
-        });
-      }
-      return this.#jsonBody;
-    }
-
-    get [Symbol.toStringTag]() {
-      return "Request";
-    }
-
-    [kNodeInspect]() {
-      return {
-        method: this.method,
-        url: this.url,
-        headers: this.headers,
-      };
-    }
-  };
-
-  for (const key of unsupportedGetters) {
-    Object.defineProperty(_Request.prototype, key, {
-      enumerable: true,
-      configurable: false,
-    });
   }
 
-  Object.setPrototypeOf(_Request.prototype, globalThis.Request.prototype);
+  lazyInherit(Request.prototype, NativeRequest.prototype, "_request");
 
-  return _Request;
-})() as unknown as {
-  new (nodeCtx: NodeRequestContext): ServerRequest;
-};
+  Object.setPrototypeOf(Request.prototype, NativeRequest.prototype);
 
-async function _readStream(stream: ReadableStream) {
-  const chunks: Uint8Array[] = [];
-  await stream.pipeTo(
-    new WritableStream({
-      write(chunk) {
-        chunks.push(chunk);
-      },
-    }),
-  );
-  return Buffer.concat(chunks);
+  return Request as any;
+})();
+
+/**
+ * Undici uses an incompatible Request constructor depending on private property accessors.
+ *
+ * This utility, patches global Request to support `new Request(req)` in Node.js.
+ *
+ * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
+ */
+export function patchGlobalRequest(): typeof Request {
+  const NativeRequest = ((globalThis as any)[Symbol.for("srvx.nativeRequest")] ??=
+    globalThis.Request) as typeof globalThis.Request;
+
+  const PatchedRequest = class Request extends NativeRequest {
+    static _srvx = true;
+    // @ts-expect-error
+    static [Symbol.hasInstance](instance) {
+      if (this === PatchedRequest) {
+        return instance instanceof NativeRequest;
+      } else {
+        return Object.prototype.isPrototypeOf.call(this.prototype, instance);
+      }
+    }
+    constructor(input: string | URL | globalThis.Request, options?: RequestInit) {
+      if (typeof input === "object" && "_request" in input) {
+        input = (input as any)._request;
+      }
+      super(input, options);
+    }
+  };
+  if (!(globalThis.Request as any)._srvx) {
+    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
+  }
+  return PatchedRequest;
+}
+
+function readBody(req: NodeServerRequest): Promise<any> {
+  // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
+  if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
+    return Promise.resolve(req.rawBody);
+  }
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const onData = (chunk: any) => {
+      chunks.push(chunk);
+    };
+    const onError = (err: any) => {
+      reject(err);
+    };
+    const onEnd = () => {
+      req.off("error", onError);
+      req.off("data", onData);
+      resolve(Buffer.concat(chunks));
+    };
+    req.on("data", onData).once("end", onEnd).once("error", onError);
+  });
 }

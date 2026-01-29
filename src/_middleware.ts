@@ -1,9 +1,4 @@
-import type {
-  Server,
-  ServerRequest,
-  ServerHandler,
-  ServerMiddleware,
-} from "./types.ts";
+import type { Server, ServerRequest, ServerHandler, ServerMiddleware } from "./types.ts";
 
 export function wrapFetch(server: Server): ServerHandler {
   const fetchHandler = server.options.fetch;

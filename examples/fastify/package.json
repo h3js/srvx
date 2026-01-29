@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-fastify",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx --prod",
+    "dev": "srvx"
+  },
+  "devDependencies": {
+    "fastify": "^5.6.1",
+    "srvx": "latest"
+  }
+}

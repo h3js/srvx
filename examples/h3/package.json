@@ -7,7 +7,7 @@
     "dev": "srvx"
   },
   "devDependencies": {
-    "srvx": "latest",
-    "h3": "beta"
+    "h3": "beta",
+    "srvx": "latest"
   }
 }

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import type { ServerOptions } from "../src/types.ts";
 
 // prettier-ignore
@@ -10,7 +11,10 @@ export const fixture: (
   opts?: Partial<ServerOptions>,
   _Response?: typeof globalThis.Response,
 ) => ServerOptions = (opts, _Response = globalThis.Response) => {
-  let abortCount = 0;
+  const aborts: Array<{
+    request: string; // example: GET /test
+    reason: string;
+  }> = [];
 
   return {
     ...opts,
@@ -37,12 +41,23 @@ export const fixture: (
       },
     ],
 
-    async error(err) {
+    async error(err: any) {
+      if (err.toString() !== "Error: test error") {
+        console.error(err);
+      }
       return new _Response(`error: ${(err as Error).message}`, { status: 500 });
     },
 
     async fetch(req) {
       const url = new URL(req.url);
+
+      req.signal.addEventListener("abort", () => {
+        aborts.push({
+          request: `${req.method} ${url.pathname}`,
+          reason: req.signal.reason?.toString(),
+        });
+      });
+
       switch (url.pathname) {
         case "/": {
           return new _Response("ok");
@@ -87,10 +102,38 @@ export const fixture: (
           return new _Response(`ip: ${req.ip}`);
         }
         case "/req-instanceof": {
-          return new _Response(req instanceof Request ? "yes" : "no");
+          class MyRequst extends Request {}
+          return Response.json({
+            instanceofRequest: req instanceof Request ? "yes" : "no",
+            instanceofExtended: req instanceof MyRequst ? "yes" : "no",
+          });
+        }
+        case "/extended-req-instanceof": {
+          class MyRequst extends Request {}
+          const myReq = new MyRequst("http://example.com");
+          return Response.json({
+            instanceofRequest: myReq instanceof Request ? "yes" : "no",
+            instanceofExtended: myReq instanceof MyRequst ? "yes" : "no",
+          });
         }
         case "/req-headers-instanceof": {
           return new _Response(req.headers instanceof Headers ? "yes" : "no");
+        }
+        case "/req-clone": {
+          const clone = req.clone();
+          return Response.json({
+            method: clone.method,
+            pathname: new URL(clone.url).pathname,
+            headers: Object.fromEntries(clone.headers),
+          });
+        }
+        case "/req-new-req": {
+          const clone = new Request(req._request || req);
+          return Response.json({
+            method: clone.method,
+            pathname: new URL(clone.url).pathname,
+            headers: Object.fromEntries(clone.headers),
+          });
         }
         case "/error": {
           throw new Error("test error");
@@ -142,16 +185,11 @@ export const fixture: (
           return res.clone();
         }
         case "/abort": {
-          req.signal.addEventListener("abort", () => {
-            abortCount++;
-          });
           return new _Response(
             new ReadableStream({
               async start(controller) {
                 while (!req.signal.aborted) {
-                  controller.enqueue(
-                    new TextEncoder().encode(new Date().toISOString() + "\n"),
-                  );
+                  controller.enqueue(new TextEncoder().encode(new Date().toISOString() + "\n"));
                   await new Promise((resolve) => setTimeout(resolve, 100));
                 }
                 controller.close();
@@ -164,8 +202,44 @@ export const fixture: (
             },
           );
         }
-        case "/abort-count": {
-          return _Response.json({ abortCount });
+        case "/body-cancel": {
+          const reader = req.body!.getReader();
+          await reader.read();
+          await reader.cancel();
+          const abortedAfterCancel = false; // req.signal.aborted;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const abortedAfterTimeout = req.signal.aborted;
+          return _Response.json({
+            abortedAfterCancel,
+            abortedAfterTimeout,
+          });
+        }
+        case "/response/stream-error": {
+          const encoder = new TextEncoder();
+          return new _Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(encoder.encode("chunk1\n"));
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                controller.enqueue(encoder.encode("chunk2\n"));
+                await new Promise((resolve) => setTimeout(resolve, 100));
+                throw new Error("stream error!");
+              },
+            }),
+            {
+              headers: {
+                "content-type": "text/plain",
+              },
+            },
+          );
+        }
+        case "/abort-log": {
+          return _Response.json(aborts);
+        }
+        case "/node-inspect": {
+          return _Response.json({
+            headers: inspect(req.headers),
+          });
         }
       }
       return new _Response("404", { status: 404 });

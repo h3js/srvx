@@ -12,20 +12,14 @@ export default defineBuildConfig({
         "src/cli.ts",
         "src/static.ts",
         "src/log.ts",
-        ...[
-          "deno",
-          "bun",
-          "node",
-          "cloudflare",
-          "generic",
-          "service-worker",
-          "aws-lambda",
-        ].map((adapter) => `src/adapters/${adapter}.ts`),
+        "src/tracing.ts",
+        "src/loader.ts",
+        ...["deno", "bun", "node", "cloudflare", "generic", "service-worker", "aws-lambda"].map(
+          (adapter) => `src/adapters/${adapter}.ts`,
+        ),
       ],
       rolldown: {
-        define: {
-          "globalThis.__srvx_version__": JSON.stringify(pkg.version),
-        },
+        external: ["bun", "@cloudflare/workers-types"],
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",
