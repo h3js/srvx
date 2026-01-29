@@ -8,7 +8,7 @@ describe("loadServerEntry", () => {
   describe("module exports", () => {
     it("loads module with direct fetch export", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "fetch-export"),
+        dir: resolve(fixturesDir, "fetch-export"),
       });
 
       expect(result.notFound).toBeUndefined();
@@ -22,7 +22,7 @@ describe("loadServerEntry", () => {
 
     it("loads module with default.fetch export", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "default-fetch"),
+        dir: resolve(fixturesDir, "default-fetch"),
       });
 
       expect(result.notFound).toBeUndefined();
@@ -35,7 +35,7 @@ describe("loadServerEntry", () => {
 
     it("loads Node.js style handler and upgrades it", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "node-handler"),
+        dir: resolve(fixturesDir, "node-handler"),
       });
 
       expect(result.notFound).toBeUndefined();
@@ -48,7 +48,7 @@ describe("loadServerEntry", () => {
   describe("auto-discovery", () => {
     it("discovers index.ts when server.ts is not present", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "auto-discover"),
+        dir: resolve(fixturesDir, "auto-discover"),
       });
 
       expect(result.notFound).toBeUndefined();
@@ -60,7 +60,7 @@ describe("loadServerEntry", () => {
 
     it("discovers src/server.ts", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "src-entry"),
+        dir: resolve(fixturesDir, "src-entry"),
       });
 
       expect(result.notFound).toBeUndefined();
@@ -74,8 +74,8 @@ describe("loadServerEntry", () => {
   describe("explicit url option", () => {
     it("loads from explicit url path", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "explicit-url"),
-        url: "custom-entry.ts",
+        dir: resolve(fixturesDir, "explicit-url"),
+        entry: "custom-entry.ts",
       });
 
       expect(result.notFound).toBeUndefined();
@@ -87,8 +87,8 @@ describe("loadServerEntry", () => {
 
     it("returns notFound when explicit url does not exist", async () => {
       const result = await loadServerEntry({
-        base: fixturesDir,
-        url: "non-existent.ts",
+        dir: fixturesDir,
+        entry: "non-existent.ts",
       });
 
       expect(result.notFound).toBe(true);
@@ -99,7 +99,7 @@ describe("loadServerEntry", () => {
   describe("notFound", () => {
     it("returns notFound when no entry is found", async () => {
       const result = await loadServerEntry({
-        base: resolve(fixturesDir, "empty-dir"),
+        dir: resolve(fixturesDir, "empty-dir"),
       });
 
       expect(result.notFound).toBe(true);

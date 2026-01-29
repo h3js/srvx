@@ -51,10 +51,10 @@
     "play:mkcert": "openssl req -x509 -newkey rsa:2048 -nodes -keyout server.key -out server.crt -days 365 -subj /CN=srvx.local",
     "release": "pnpm test && pnpm build && changelogen --release && npm publish && git push --follow-tags",
     "srvx": "./bin/srvx.mjs",
-    "test": "pnpm lint && pnpm test:types && vitest run --coverage",
+    "test": "pnpm lint && pnpm typecheck && vitest run --coverage",
     "test:node-compat:deno": "deno run vitest test/node.test",
     "test:node-compat:bun": "bun vitest test/node.test.ts",
-    "test:types": "tsgo --noEmit --skipLibCheck",
+    "typecheck": "tsgo --noEmit --skipLibCheck",
     "vitest": "vitest"
   },
   "devDependencies": {

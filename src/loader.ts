@@ -20,14 +20,33 @@ export type LoadOptions = {
    * If not provided, common entry points will be searched automatically
    * (e.g., `server.ts`, `index.ts`, `src/server.ts`).
    */
-  url?: string;
+  entry?: string;
 
   /**
    * Base directory for resolving relative paths.
    *
    * @default "."
    */
-  base?: string;
+  dir?: string;
+
+  /**
+   * Set to `false` to disable interception of `http.Server.listen` to detect legacy handlers.
+   *
+   * @default true
+   */
+  interceptHttpListen?: boolean;
+
+  /**
+   * Set to `false` to disable Node.js handler (req, res) compatibility.
+   */
+  nodeCompat?: boolean;
+
+  /**
+   * Hook called after the module is loaded to allow for custom processing.
+   *
+   * You can return a modified version of the module if needed.
+   */
+  onLoad?: (module: unknown) => any;
 };
 
 /**
@@ -70,16 +89,16 @@ export type LoadedServerEntry = {
 
 export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEntry> {
   // Guess entry if not provided
-  let entry: string | undefined = opts.url;
+  let entry: string | undefined = opts.entry;
   if (entry) {
-    entry = resolve(opts.base || ".", entry);
+    entry = resolve(opts.dir || ".", entry);
     if (!existsSync(entry)) {
       return { notFound: true };
     }
   } else {
     for (const defEntry of defaultEntries) {
       for (const defExt of defaultExts) {
-        const entryPath = resolve(opts.base || ".", `${defEntry}${defExt}`);
+        const entryPath = resolve(opts.dir || ".", `${defEntry}${defExt}`);
         if (existsSync(entryPath)) {
           entry = entryPath;
           break;
@@ -99,9 +118,13 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   let mod: any;
   let listenHandler: NodeHttpHandler | undefined;
   try {
-    const _loaded = await interceptListen(() => import(url));
-    mod = _loaded.res;
-    listenHandler = _loaded.listenHandler;
+    if (opts.interceptHttpListen !== false) {
+      const loaded = await interceptListen(() => import(url));
+      mod = loaded.res;
+      listenHandler = loaded.listenHandler;
+    } else {
+      mod = await import(url);
+    }
   } catch (error) {
     if ((error as { code?: string })?.code === "ERR_UNKNOWN_FILE_EXTENSION") {
       const message = String(error);
@@ -120,13 +143,15 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
     throw error;
   }
 
-  let fetchHandler = mod.fetch || mod.default?.fetch || mod.default?.default?.fetch;
+  mod = (await opts?.onLoad?.(mod)) || mod;
+
+  let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
-  if (!fetchHandler) {
+  if (!fetchHandler && opts.nodeCompat !== false) {
     const nodeHandler =
-      listenHandler || (typeof mod.default === "function" ? mod.default : undefined);
+      listenHandler || (typeof mod?.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
       nodeCompat = true;
       const { fetchNodeHandler } = await import("srvx/node");
@@ -167,7 +192,10 @@ async function interceptListen<T = unknown>(
         nodeHTTP.Server.prototype.listen = originalListen;
 
         // Defer callback execution
-        globalThis.__srvx_listen_cb__ = [arg1, arg2].find((arg) => typeof arg === "function");
+        const listenCallback = [arg1, arg2].find((arg) => typeof arg === "function");
+        setImmediate(() => {
+          listenCallback?.();
+        });
 
         // Return a deferred proxy for the server instance
         return new Proxy(
