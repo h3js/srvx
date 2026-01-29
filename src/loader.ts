@@ -20,14 +20,14 @@ export type LoadOptions = {
    * If not provided, common entry points will be searched automatically
    * (e.g., `server.ts`, `index.ts`, `src/server.ts`).
    */
-  url?: string;
+  entry?: string;
 
   /**
    * Base directory for resolving relative paths.
    *
    * @default "."
    */
-  base?: string;
+  dir?: string;
 
   /**
    * Set to `false` to disable interception of `http.Server.listen` to detect legacy handlers.
@@ -89,16 +89,16 @@ export type LoadedServerEntry = {
 
 export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEntry> {
   // Guess entry if not provided
-  let entry: string | undefined = opts.url;
+  let entry: string | undefined = opts.entry;
   if (entry) {
-    entry = resolve(opts.base || ".", entry);
+    entry = resolve(opts.dir || ".", entry);
     if (!existsSync(entry)) {
       return { notFound: true };
     }
   } else {
     for (const defEntry of defaultEntries) {
       for (const defExt of defaultExts) {
-        const entryPath = resolve(opts.base || ".", `${defEntry}${defExt}`);
+        const entryPath = resolve(opts.dir || ".", `${defEntry}${defExt}`);
         if (existsSync(entryPath)) {
           entry = entryPath;
           break;
