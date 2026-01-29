@@ -24,9 +24,6 @@ export default defineBuildConfig({
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {
-        define: {
-          "globalThis.__srvx_version__": JSON.stringify(pkg.version),
-        },
         external: ["bun", "@cloudflare/workers-types"],
         plugins: [
           pkg.name === "srvx-nightly" && {

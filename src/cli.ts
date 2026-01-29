@@ -7,6 +7,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { Readable } from "node:stream";
 import * as c from "./_color.ts";
 import { loadServerEntry } from "./loader.ts";
+import pkg from "../package.json" with { type: "json" };
 
 // prettier-ignore
 const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
@@ -27,7 +28,7 @@ export async function main(mainOpts: MainOpts): Promise<void> {
 
   // Handle version flag
   if (options._version) {
-    console.log(await version());
+    console.log(version());
     process.exit(0);
   }
   // Handle help flag
@@ -295,7 +296,6 @@ async function serve() {
 }
 
 declare global {
-  var __srvx_version__: string | undefined;
   var __srvx__: Server;
   var __srvx_listen_cb__: () => void;
 }
@@ -373,9 +373,8 @@ function printInfo(
   console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
 }
 
-async function version() {
-  const version = globalThis.__srvx_version__ || "unknown";
-  return `srvx ${version}\n${runtime()}`;
+function version() {
+  return `srvx ${pkg.version}\n${runtime()}`;
 }
 
 function runtime() {
