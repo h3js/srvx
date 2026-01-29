@@ -277,7 +277,6 @@ async function serve() {
 
     globalThis.__srvx__ = server;
     await server.ready();
-    await globalThis.__srvx_listen_cb__?.();
 
     printInfo(options, loaded);
   } catch (error) {
@@ -288,7 +287,6 @@ async function serve() {
 
 declare global {
   var __srvx__: Server;
-  var __srvx_listen_cb__: () => void;
 }
 
 type MainOpts = {

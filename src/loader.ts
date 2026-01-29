@@ -167,7 +167,10 @@ async function interceptListen<T = unknown>(
         nodeHTTP.Server.prototype.listen = originalListen;
 
         // Defer callback execution
-        globalThis.__srvx_listen_cb__ = [arg1, arg2].find((arg) => typeof arg === "function");
+        const listenCallback = [arg1, arg2].find((arg) => typeof arg === "function");
+        setImmediate(() => {
+          listenCallback?.();
+        });
 
         // Return a deferred proxy for the server instance
         return new Proxy(
