@@ -357,14 +357,23 @@ ${c.magenta("export default")} {
 
 export async function cliFetch(
   options: LoadOptions & {
+    /** The URL path to fetch (defaults to "/") */
     url?: string;
+    /** The HTTP method to use (defaults to "GET") */
     method?: string;
+    /** Additional HTTP headers in "Key: Value" format */
     headers?: string[];
+    /** Request body data to send */
     data?: string;
+    /** Enable verbose output with request/response details */
     verbose?: boolean;
+    /** The hostname to use for the request */
     hostname?: string;
+    /** Input stream for reading data (defaults to process.stdin) */
     stdin?: NodeJS.ReadStream;
+    /** Output stream for writing response (defaults to process.stdout) */
     stdout?: NodeJS.WriteStream;
+    /** Error stream for writing errors (defaults to process.stderr) */
     stderr?: NodeJS.WriteStream;
   },
 ): Promise<Response> {
