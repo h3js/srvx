@@ -382,6 +382,13 @@ export async function cliFetch(
   const stderr = options.stderr || process.stderr;
   const loaded = await loadServerEntry(options);
 
+  if (options.verbose && loaded.url) {
+    stderr.write(`* Entry: ${fileURLToPath(loaded.url)}\n`);
+    if (loaded.nodeCompat) {
+      stderr.write(`* Using node compat mode\n`);
+    }
+  }
+
   if (loaded.notFound) {
     throw new Error("Server entry file not found.", {
       cause: {
