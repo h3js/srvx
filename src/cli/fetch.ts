@@ -4,6 +4,8 @@ import { createReadStream } from "node:fs";
 
 import { loadServerEntry, type LoadOptions } from "../loader.ts";
 import type { CLIOptions } from "./types.ts";
+import type { ServerHandler } from "../types.ts";
+import { resolve } from "node:path";
 
 export async function cliFetch(
   cliOpts: CLIOptions &
@@ -18,48 +20,43 @@ export async function cliFetch(
   const stdout = cliOpts.stdout || process.stdout;
   const stderr = cliOpts.stderr || process.stderr;
 
-  const loaded = await loadServerEntry({
-    dir: cliOpts.dir,
-    entry: cliOpts.entry,
-    ...cliOpts?.loader,
-  });
+  let fetchHandler: ServerHandler = globalThis.fetch;
 
-  if (cliOpts.verbose && loaded.url) {
-    stderr.write(`* Entry: ${fileURLToPath(loaded.url)}\n`);
-    if (loaded.nodeCompat) {
-      stderr.write(`* Using node compat mode\n`);
+  const inputURL = cliOpts.url || "/";
+
+  if (inputURL[0] === "/") {
+    const loaded = await loadServerEntry({
+      dir: cliOpts.dir,
+      entry: cliOpts.entry,
+      ...cliOpts?.loader,
+    });
+    if (cliOpts.verbose && loaded.url) {
+      stderr.write(`* Entry: ${fileURLToPath(loaded.url)}\n`);
+      if (loaded.nodeCompat) {
+        stderr.write(`* Using node compat mode\n`);
+      }
     }
-  }
-
-  if (loaded.notFound) {
-    if (URL.canParse?.(cliOpts.url || "")) {
-      stderr.write(
-        `* WARNING: server entry file not found. Falling back to network fetch for URL: ${cliOpts.url}\n`,
-      );
-      loaded.fetch = globalThis.fetch.bind(globalThis);
-    } else {
-      throw new Error("Server entry file not found.", {
+    if (loaded.notFound) {
+      throw new Error(`Server entry file not found in ${resolve(cliOpts.dir || ".")}`, {
         cause: {
           dir: cliOpts.dir || process.cwd(),
           entry: cliOpts.entry || undefined,
         },
       });
+    } else if (!loaded.fetch) {
+      throw new Error("No fetch handler exported", {
+        cause: {
+          dir: cliOpts.dir || process.cwd(),
+          entry: cliOpts.entry || undefined,
+          loaded,
+        },
+      });
     }
-  } else if (!loaded.fetch) {
-    throw new Error("No fetch handler exported", {
-      cause: {
-        dir: cliOpts.dir || process.cwd(),
-        entry: cliOpts.entry || undefined,
-        loaded,
-      },
-    });
+    fetchHandler = loaded.fetch;
+  } else {
+    stderr.write(`* Fetching remote URL: ${inputURL}\n`);
+    fetchHandler = globalThis.fetch;
   }
-
-  // Build request URL
-  const url = new URL(
-    cliOpts.url || "/",
-    `http${cliOpts.tls ? "s" : ""}://${cliOpts.host || "localhost"}`,
-  ).toString();
 
   // Build Headers
   const headers = new Headers();
@@ -74,10 +71,13 @@ export async function cliFetch(
     }
   }
   if (!headers.has("User-Agent")) {
-    headers.set("User-Agent", "curl/7.81.0");
+    headers.set("User-Agent", "srvx (curl)");
   }
   if (!headers.has("Accept")) {
-    headers.set("Accept", "text/markdown, text/plain, text/html, text/*;q=0.9, */*;q=0.8");
+    headers.set(
+      "Accept",
+      "text/markdown, application/json;q=0.9, text/plain;q=0.8, text/html;q=0.7, text/*;q=0.6, */*;q=0.5",
+    );
   }
 
   // Build body
@@ -101,9 +101,12 @@ export async function cliFetch(
     }
   }
 
-  const method = cliOpts.method || (body === undefined ? "GET" : "POST");
-
   // Build request
+  const method = cliOpts.method || (body === undefined ? "GET" : "POST");
+  const url = new URL(
+    cliOpts.url || "/",
+    `http${cliOpts.tls ? "s" : ""}://${cliOpts.host || cliOpts.hostname || "localhost"}`,
+  );
   const req = new Request(url, {
     method,
     headers,
@@ -121,7 +124,7 @@ export async function cliFetch(
     stderr.write(">\n");
   }
 
-  const res = await loaded.fetch(req);
+  const res = await fetchHandler(req);
 
   // Verbose: print response info
   if (cliOpts.verbose) {

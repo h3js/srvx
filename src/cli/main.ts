@@ -35,19 +35,10 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   // Fetch mode
   if (cliOpts.mode === "fetch") {
     try {
-      const res = await cliFetch({
-        url: cliOpts.url,
-        entry: cliOpts.entry,
-        dir: cliOpts.dir,
-        method: cliOpts.method,
-        header: cliOpts.header,
-        data: cliOpts.data,
-        verbose: cliOpts.verbose,
-        host: cliOpts.host,
-      });
+      const res = await cliFetch(cliOpts);
       process.exit(res.ok ? 0 : 22);
     } catch (error) {
-      console.error("\n" + c.red((error as Error)?.stack || String(error)) + "\n");
+      console.error(error);
       process.exit(1);
     }
   }
