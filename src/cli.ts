@@ -428,6 +428,12 @@ export async function cliFetch(
       }
     }
   }
+  if (!headers.has("User-Agent")) {
+    headers.set("User-Agent", "curl/7.81.0");
+  }
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "text/markdown, text/plain, text/html, text/*;q=0.9, */*;q=0.8");
+  }
 
   // Build body
   let body: BodyInit | undefined;
