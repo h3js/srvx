@@ -5,10 +5,10 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 
 // prettier-ignore
-const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
+const defaultEntries = ["server", "server/index", "src/server", ".output/server/index"];
 
 // prettier-ignore
-const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
+const defaultExts = [".mjs", ".js", ".mts", ".ts"];
 
 /**
  * Options for loading a server entry module.
@@ -17,8 +17,7 @@ export type LoadOptions = {
   /**
    * Path or URL to the server entry file.
    *
-   * If not provided, common entry points will be searched automatically
-   * (e.g., `server.ts`, `index.ts`, `src/server.ts`).
+   * If not provided, common entry points will be searched automatically.
    */
   entry?: string;
 
