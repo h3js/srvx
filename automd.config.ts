@@ -6,18 +6,18 @@ export default {
   input: ["README.md", "docs/**/*.md"],
   generators: {
     cliUsage: {
-      async generate(_ctx) {
+      async generate(_ctx: any) {
         process.env.NO_COLOR = "1";
-        const { usage } = await import("./src/cli.js");
+        const { usage } = await import("./src/cli/usage.ts");
         delete process.env.NO_COLOR;
-        const _usage = usage({ command: "srvx", docs: "", issues: "" });
+        const _usage = usage({ usage: { command: "srvx", docs: "", issues: "" } });
         return {
           contents: md.codeBlock(_usage, "sh"),
         };
       },
     },
     examples: {
-      async generate(_ctx) {
+      async generate(_ctx: any) {
         const examples: string[][] = [];
         for await (const dir of glob(fileURLToPath(new URL("examples/*", import.meta.url)))) {
           const name = dir.split("/").pop();

@@ -4,11 +4,9 @@ import * as nodeHTTP from "node:http";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 
-// prettier-ignore
-const defaultEntries = ["server", "server/index", "src/server", ".output/server/index"];
+export const defaultExts: string[] = [".mjs", ".js", ".mts", ".ts"];
 
-// prettier-ignore
-const defaultExts = [".mjs", ".js", ".mts", ".ts"];
+export const defaultEntries: string[] = ["server", "server/index", "src/server", "server/server"];
 
 /**
  * Options for loading a server entry module.
