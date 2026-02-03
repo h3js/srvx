@@ -262,7 +262,7 @@ function runtime() {
 
 function parseArgs(args: string[]): CLIOptions {
   const pArg0 = args.find((a) => !a.startsWith("-"));
-  const mode = pArg0 === "fetch" ? "fetch" : "serve";
+  const mode = pArg0 === "fetch" || pArg0 === "curl" ? "fetch" : "serve";
 
   if (mode === "fetch") {
     const { values, positionals } = parseNodeArgs({
@@ -541,7 +541,7 @@ ${c.gray("$")} ${c.cyan(command)} --tls --cert=cert.pem --key=key.pem  ${c.gray(
 
 ${c.bold("FETCH MODE")}
 
-${c.gray("# srvx fetch [options] [url]")}
+${c.gray("# srvx fetch|curl [options] [url]")}
 ${c.gray("$")} ${c.cyan(command)} fetch                  ${c.gray("# Fetch from default entry")}
 ${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific URL/path")}
 ${c.gray("$")} ${c.cyan(command)} fetch --entry ./server.ts /api/users ${c.gray("# Fetch using a specific entry")}
