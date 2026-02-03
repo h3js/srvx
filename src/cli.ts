@@ -14,6 +14,8 @@ const defaultEntries = ["server", "index", "src/server", "src/index", "server/in
 // prettier-ignore
 const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
 
+const NO_ENTRY_ERROR = "No server entry or public directory found";
+
 const args = process.argv.slice(2);
 const options = parseArgs(args);
 
@@ -94,6 +96,12 @@ export async function main(mainOpts: MainOpts): Promise<void> {
       process.exit(code);
     }
   });
+  child.on("message", (msg) => {
+    if (msg && (msg as { error?: string }).error === "no-entry") {
+      console.error("\n" + c.red(NO_ENTRY_ERROR) + "\n");
+      process.exit(3);
+    }
+  });
 
   // Ensure child process is killed on exit
   let cleanupCalled = false;
@@ -136,8 +144,9 @@ async function serve() {
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
 
-    if (!options._entry && !options._static) {
-      throw new Error("No server entry or public directory found", {
+    if (loaded.notFound && !options._static) {
+      process.send?.({ error: "no-entry" });
+      throw new Error(NO_ENTRY_ERROR, {
         cause: { dir: options._dir, entry: options._entry || undefined },
       });
     }
