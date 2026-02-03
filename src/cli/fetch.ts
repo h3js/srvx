@@ -160,12 +160,6 @@ export async function cliFetch(
     }
   }
 
-  if (!res.ok) {
-    const err = new Error(`Request failed with status ${res.status} ${res.statusText}`);
-    Error.captureStackTrace?.(err, cliFetch);
-    throw err;
-  }
-
   return res;
 }
 

@@ -35,7 +35,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   // Fetch mode
   if (cliOpts.mode === "fetch") {
     try {
-      await cliFetch({
+      const res = await cliFetch({
         url: cliOpts.url,
         entry: cliOpts.entry,
         dir: cliOpts.dir,
@@ -45,9 +45,9 @@ export async function main(mainOpts: MainOptions): Promise<void> {
         verbose: cliOpts.verbose,
         host: cliOpts.host,
       });
-      process.exit(0);
+      process.exit(res.ok ? 0 : 22);
     } catch (error) {
-      console.error(error);
+      console.error("\n" + c.red((error as Error)?.stack || String(error)) + "\n");
       process.exit(1);
     }
   }
