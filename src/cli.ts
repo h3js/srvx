@@ -157,7 +157,8 @@ async function serve() {
       ...loaded.module,
     } as Partial<ServerOptions>;
 
-    const server = srvxServe({
+    printInfo(options, loaded);
+    const server = (globalThis.__srvx__ = srvxServe({
       gracefulShutdown: options._prod,
       ...serverOptions,
       ...options,
@@ -181,12 +182,8 @@ async function serve() {
           : undefined,
         ...(serverOptions.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
-    });
-
-    globalThis.__srvx__ = server;
+    }));
     await server.ready();
-
-    printInfo(options, loaded);
   } catch (error) {
     console.error(error);
     process.exit(1);
@@ -245,20 +242,21 @@ function renderError(error: unknown, status = 500, title = "Server Error"): Resp
 function printInfo(options: CLIOptions, loaded: Awaited<ReturnType<typeof loadServerEntry>>) {
   let entryInfo: string;
   if (loaded.notFound) {
-    entryInfo = c.gray(`(create ${c.bold(`server.ts`)} to enable)`);
+    entryInfo = c.gray(`(create ${c.bold(`server.ts`)})`);
   } else {
     entryInfo = loaded.fetch
       ? c.cyan("./" + relative(".", fileURLToPath(loaded.url!)))
       : c.red(`No fetch handler exported from ${loaded.url || resolve(options._entry)}`);
   }
-  console.log(c.gray(`${c.bold(c.gray("λ"))} Server handler: ${entryInfo}`));
+  console.log(c.gray(`${c.bold(c.gray("◆"))} Server handler: ${entryInfo}`));
   let staticInfo: string;
   if (options._static) {
     staticInfo = c.cyan("./" + relative(".", options._static) + "/");
   } else {
-    staticInfo = c.gray(`(add ${c.bold("public/")} dir to enable)`);
+    staticInfo = c.gray(`(create ${c.bold("public/")} dir)`);
   }
-  console.log(c.gray(`${c.bold(c.gray("∘"))} Static files:   ${staticInfo}`));
+  console.log(c.gray(`${c.bold(c.gray("◇"))} Static files:   ${staticInfo}`));
+  console.log("");
 }
 
 function version() {
