@@ -136,6 +136,12 @@ async function serve() {
     const staticDir = resolve(options._dir, options._static);
     options._static = existsSync(staticDir) ? staticDir : "";
 
+    if (!options._entry && !options._static) {
+      throw new Error("No server entry or public directory found", {
+        cause: { dir: options._dir, entry: options._entry || undefined },
+      });
+    }
+
     const serverOptions = {
       ...loaded.module?.default,
       default: undefined,
