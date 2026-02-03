@@ -28,7 +28,7 @@ ${c.gray("$")} ${c.cyan(command)} fetch -d '{"name":"foo"}' /api ${c.gray("# Wit
 ${c.gray("$")} ${c.cyan(command)} fetch -v /api/users    ${c.gray("# Verbose output (show headers)")}
 ${c.gray("$")} echo '{"name":"foo"}' | ${c.cyan(command)} fetch -d @- /api ${c.gray("# Body from stdin")}
 
-${c.bold("Common OPTIONS")}
+${c.bold("COMMON OPTIONS")}
 
   ${c.green("--entry")} ${c.yellow("<file>")}           Server entry file to use
   ${c.green("--dir")} ${c.yellow("<dir>")}              Working directory for resolving entry file
