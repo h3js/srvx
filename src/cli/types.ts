@@ -39,6 +39,8 @@ export type CLIOptions = {
   /** ES module to preload */
   import?: string;
   /** Host to bind to (default: all interfaces) */
+  hostname?: string;
+  /** (alias to hostname) */
   host?: string;
   /** Port to listen on (default: "3000") */
   port?: string;

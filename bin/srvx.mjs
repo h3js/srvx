@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { main } from "../dist/cli.mjs";
 
+globalThis.__srvxMain__ = import.meta.url;
+
 await main({
   usage: {
     command: "srvx",

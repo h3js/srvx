@@ -1,6 +1,6 @@
 import type { ServerMiddleware, ServerOptions } from "../types.ts";
 import type { CLIOptions } from "./types.ts";
-import { relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { loadServerEntry } from "../loader.ts";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -27,7 +27,10 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     const { serveStatic } = await import("srvx/static");
     const { log } = await import("srvx/log");
 
-    const staticDir = resolve(cliOpts.dir || ".", cliOpts.static || "public");
+    const staticDir = resolve(
+      cliOpts.dir || (loaded.url ? dirname(fileURLToPath(loaded.url)) : "."),
+      cliOpts.static || "public",
+    );
     cliOpts.static = existsSync(staticDir) ? staticDir : "";
 
     if (loaded.notFound && !cliOpts.static) {
@@ -43,10 +46,11 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
 
     printInfo(cliOpts, loaded);
     const server = (globalThis.__srvx__ = srvxServe({
-      gracefulShutdown: cliOpts.prod,
       ...serverOptions,
-      // ...cliOpts,
-      port: cliOpts.port,
+      gracefulShutdown: cliOpts.prod,
+      port: cliOpts.port ?? serverOptions.port,
+      hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
+      tls: cliOpts.tls ? { cert: cliOpts.cert, key: cliOpts.key } : undefined,
       error: (error) => {
         console.error(error);
         return renderError(cliOpts, error);

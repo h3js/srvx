@@ -1,7 +1,7 @@
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import pkg from "../../package.json" with { type: "json" };
 import * as c from "./_utils.ts";
 import type { CLIOptions, MainOptions } from "./types.ts";
@@ -13,12 +13,6 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   const args = process.argv.slice(2);
   const cliOpts = parseArgs(args);
 
-  // Running in a child process
-  if (process.send) {
-    setupProcessErrorHandlers();
-    await cliServe(cliOpts);
-  }
-
   // Handle version flag
   if (cliOpts.version) {
     console.log(`srvx ${pkg.version}\n${runtime()}`);
@@ -28,6 +22,14 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   if (cliOpts.help) {
     console.log(usage(mainOpts));
     process.exit(cliOpts.help ? 0 : 1);
+  }
+
+  // Running in a child process
+  if (process.send) {
+    console.log(c.gray(`srvx ${pkg.version} - ${runtime()}`));
+    setupProcessErrorHandlers();
+    await cliServe(cliOpts);
+    return;
   }
 
   // Fetch mode
@@ -74,7 +76,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
       runtimeArgs.push(`--import=${cliOpts.import}`);
     }
   }
-  const child = fork(fileURLToPath(import.meta.url), args, {
+  const child = fork(fileURLToPath((globalThis as any).__srvxMain__ || import.meta.url), args, {
     execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
   });
   child.on("error", (error) => {
@@ -123,6 +125,7 @@ function parseArgs(args: string[]): CLIOptions {
     dir: { type: "string" },
     entry: { type: "string" },
     host: { type: "string" },
+    hostname: { type: "string" },
     tls: { type: "boolean" },
   } as const;
 
@@ -142,9 +145,26 @@ function parseArgs(args: string[]): CLIOptions {
         key: { type: "string" },
       },
     });
-    // if (positionals[0] === "serve") {
-    //   positionals.shift();
-    // }
+    if (positionals[0] === "serve") {
+      positionals.shift();
+    }
+
+    // Backward compatibility: allow entry or dir as positional argument
+    const maybeEntryOrDir = positionals[0];
+    if (maybeEntryOrDir) {
+      if (values.entry || values.dir) {
+        throw new Error(
+          "Cannot specify entry or dir as positional argument when --entry or --dir is used!",
+        );
+      }
+      const stat = statSync(maybeEntryOrDir);
+      if (stat.isDirectory()) {
+        values.dir = maybeEntryOrDir;
+      } else {
+        values.entry = maybeEntryOrDir;
+      }
+    }
+
     return { mode, ...values };
   }
 
