@@ -273,7 +273,7 @@ function parseArgs(args: string[]): CLIOptions {
         version: { type: "boolean" },
         prod: { type: "boolean" },
         dir: { type: "string" },
-        host: { type: "string", short: "H" },
+        host: { type: "string" },
         entry: { type: "string" },
         request: { type: "string", short: "X" },
         header: { type: "string", multiple: true, short: "H" },
