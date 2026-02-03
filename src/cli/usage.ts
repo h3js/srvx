@@ -1,5 +1,5 @@
 import * as c from "./_utils.ts";
-import type { CLIOptions, MainOptions } from "./types.ts";
+import type { MainOptions } from "./types.ts";
 
 export function usage(mainOpts: MainOptions): string {
   const command = mainOpts.usage?.command || "srvx";
@@ -8,7 +8,7 @@ ${c.cyan(command)} - Universal Server CLI
 
 ${c.bold("SERVE MODE")}
 
-${c.bold(c.green("# srvx serve [options]"))}
+${c.bold(c.green(`# ${command} serve [options]`))}
 ${c.gray("$")} ${c.cyan(command)} serve --entry ${c.gray("./server.ts")}    ${c.gray("# Start development server")}
 ${c.gray("$")} ${c.cyan(command)} serve --prod                 ${c.gray("# Start production  server")}
 ${c.gray("$")} ${c.cyan(command)} serve --port=8080            ${c.gray("# Listen on port 8080")}
@@ -18,7 +18,7 @@ ${c.gray("$")} ${c.cyan(command)} serve --tls --cert=cert.pem --key=key.pem  ${c
 
 ${c.bold("FETCH MODE")}
 
-${c.bold(c.green("# srvx fetch|curl [options] [url]"))}
+${c.bold(c.green(`# ${command} fetch|curl [options] [url]`))}
 ${c.gray("$")} ${c.cyan(command)} fetch                  ${c.gray("# Fetch from default entry")}
 ${c.gray("$")} ${c.cyan(command)} fetch /api/users       ${c.gray("# Fetch a specific URL/path")}
 ${c.gray("$")} ${c.cyan(command)} fetch --entry ./server.ts /api/users ${c.gray("# Fetch using a specific entry")}
