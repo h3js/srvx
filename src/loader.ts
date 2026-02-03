@@ -143,6 +143,9 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   mod = (await opts?.onLoad?.(mod)) || mod;
 
   let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
+  if (!fetchHandler && typeof mod?.default === "function" && mod.default.length < 2) {
+    fetchHandler = mod.default;
+  }
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
