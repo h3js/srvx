@@ -76,7 +76,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
       runtimeArgs.push(`--import=${cliOpts.import}`);
     }
   }
-  const child = fork(fileURLToPath((globalThis as any).__srvxMain__ || import.meta.url), args, {
+  const child = fork(fileURLToPath(new URL("../bin/srvx.mjs", import.meta.url)), args, {
     execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
   });
   child.on("error", (error) => {
