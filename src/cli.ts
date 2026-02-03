@@ -390,15 +390,20 @@ export async function cliFetch(
   }
 
   if (loaded.notFound) {
-    throw new Error("Server entry file not found.", {
-      cause: {
-        dir: options.dir || process.cwd(),
-        entry: options.entry || undefined,
-      },
-    });
-  }
-
-  if (!loaded.fetch) {
+    if (URL.canParse?.(options.url || "")) {
+      stderr.write(
+        `* WARNING: server entry file not found. Falling back to network fetch for URL: ${options.url}\n`,
+      );
+      loaded.fetch = globalThis.fetch.bind(globalThis);
+    } else {
+      throw new Error("Server entry file not found.", {
+        cause: {
+          dir: options.dir || process.cwd(),
+          entry: options.entry || undefined,
+        },
+      });
+    }
+  } else if (!loaded.fetch) {
     throw new Error("No fetch handler exported", {
       cause: {
         dir: options.dir || process.cwd(),
@@ -409,7 +414,7 @@ export async function cliFetch(
   }
 
   // Build request URL
-  const url = new URL(options.url || "/", `http://${options.hostname || "cli"}`).toString();
+  const url = new URL(options.url || "/", `http://${options.hostname || "localhost"}`).toString();
 
   // Build Headers
   const headers = new Headers();
