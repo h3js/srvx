@@ -3,11 +3,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "serverless offline --stage local --noPrependStageInUrl --host 0.0.0.0",
-    "dev": "srvx"
+    "dev": "serverless offline"
   },
   "devDependencies": {
-    "serverless": "^3",
+    "serverless": "^4",
     "serverless-offline": "^14.4.0",
     "srvx": "latest"
   }
