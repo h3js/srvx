@@ -178,3 +178,193 @@ function stringifyQuery(obj: Record<string, unknown>) {
   }
   return params.toString();
 }
+
+// Reverse: Web Request => AWS Event (v1/v2 compatible)
+
+export type AwsLambdaEvent = APIGatewayProxyEvent & APIGatewayProxyEventV2;
+
+export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEvent> {
+  const url = new URL(request.url);
+
+  const headers: Record<string, string> = {};
+  const cookies: string[] = [];
+  for (const [key, value] of request.headers) {
+    if (key.toLowerCase() === "cookie") {
+      cookies.push(value);
+    }
+    headers[key] = value;
+  }
+
+  let body: string | undefined;
+  let isBase64Encoded = false;
+  if (request.body) {
+    const buffer = await toBuffer(request.body as ReadableStream);
+    const contentType = request.headers.get("content-type") || "";
+    if (isTextType(contentType)) {
+      body = buffer.toString("utf8");
+    } else {
+      body = buffer.toString("base64");
+      isBase64Encoded = true;
+    }
+  }
+
+  const now = Date.now();
+
+  // Return a merged object compatible with both v1 and v2
+  return {
+    // v1 (REST API) fields
+    httpMethod: request.method,
+    path: url.pathname,
+    resource: url.pathname,
+    queryStringParameters: Object.fromEntries(url.searchParams),
+    multiValueQueryStringParameters: parseMultiValueQuery(url.searchParams),
+    pathParameters: undefined,
+    stageVariables: undefined,
+    multiValueHeaders: Object.fromEntries([...request.headers].map(([k, v]) => [k, [v]])),
+
+    // v2 (HTTP API) fields
+    version: "2.0",
+    rawPath: url.pathname,
+    rawQueryString: url.search.slice(1),
+    cookies: cookies.length > 0 ? cookies : undefined,
+    routeKey: `${request.method} ${url.pathname}`,
+
+    // Shared fields
+    headers,
+    body: body ?? null,
+    isBase64Encoded,
+    requestContext: {
+      // v1 fields
+      accountId: "000000000000",
+      apiId: "local",
+      resourceId: "local",
+      stage: "$default",
+      requestId: crypto.randomUUID(),
+      identity: {
+        sourceIp: "127.0.0.1",
+        userAgent: request.headers.get("user-agent") || "",
+        accessKey: null,
+        accountId: null,
+        apiKey: null,
+        apiKeyId: null,
+        caller: null,
+        clientCert: null,
+        cognitoAuthenticationProvider: null,
+        cognitoAuthenticationType: null,
+        cognitoIdentityId: null,
+        cognitoIdentityPoolId: null,
+        principalOrgId: null,
+        user: null,
+        userArn: null,
+      },
+      resourcePath: url.pathname,
+      httpMethod: request.method,
+      path: url.pathname,
+      protocol: "HTTP/1.1",
+      requestTimeEpoch: now,
+      authorizer: undefined,
+      domainName: url.hostname,
+
+      // v2 fields
+      http: {
+        method: request.method,
+        path: url.pathname,
+        protocol: "HTTP/1.1",
+        sourceIp: "127.0.0.1",
+        userAgent: request.headers.get("user-agent") || "",
+      },
+      routeKey: `${request.method} ${url.pathname}`,
+      time: new Date(now).toISOString(),
+      timeEpoch: now,
+      domainPrefix: url.hostname.split(".")[0],
+    },
+  } as unknown as AwsLambdaEvent;
+}
+
+function parseMultiValueQuery(params: URLSearchParams): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const [key, value] of params) {
+    if (!result[key]) {
+      result[key] = [];
+    }
+    result[key].push(value);
+  }
+  return result;
+}
+
+// Reverse: AWS Result => Web Response
+
+export type AwsLambdaResult =
+  | import("aws-lambda").APIGatewayProxyResult
+  | import("aws-lambda").APIGatewayProxyResultV2;
+
+export function awsResultToResponse(result: AwsLambdaResult): Response {
+  // APIGatewayProxyResultV2 can be a plain string for simple responses
+  if (typeof result === "string") {
+    return new Response(result, { status: 200 });
+  }
+
+  const headers = new Headers();
+
+  // Handle headers (both v1 and v2)
+  if (result.headers) {
+    for (const [key, value] of Object.entries(result.headers)) {
+      if (value !== undefined) {
+        headers.set(key, String(value));
+      }
+    }
+  }
+
+  // Handle multiValueHeaders (v1)
+  if ("multiValueHeaders" in result && result.multiValueHeaders) {
+    for (const [key, values] of Object.entries(result.multiValueHeaders)) {
+      if (values) {
+        for (const value of values) {
+          headers.append(key, String(value));
+        }
+      }
+    }
+  }
+
+  // Handle cookies (v2)
+  if ("cookies" in result && result.cookies) {
+    for (const cookie of result.cookies) {
+      headers.append("set-cookie", cookie);
+    }
+  }
+
+  // Handle body
+  let body: BodyInit | undefined;
+  if (typeof result.body === "string") {
+    if (result.isBase64Encoded) {
+      body = Buffer.from(result.body, "base64");
+    } else {
+      body = result.body;
+    }
+  }
+
+  const statusCode = typeof result.statusCode === "number" ? result.statusCode : 200;
+
+  return new Response(body, {
+    status: statusCode,
+    headers,
+  });
+}
+
+export function createMockContext(): AWSContext {
+  const id = crypto.randomUUID();
+  return {
+    callbackWaitsForEmptyEventLoop: true,
+    functionName: "local",
+    functionVersion: "$LATEST",
+    invokedFunctionArn: `arn:aws:lambda:us-east-1:000000000000:function:local`,
+    memoryLimitInMB: "128",
+    awsRequestId: id,
+    logGroupName: "/aws/lambda/local",
+    logStreamName: `${new Date().toISOString().split("T")[0]}/[$LATEST]${id}`,
+    getRemainingTimeInMillis: () => 30000,
+    done: () => {},
+    fail: () => {},
+    succeed: () => {},
+  };
+}

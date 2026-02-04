@@ -2,7 +2,14 @@ import type * as AWS from "aws-lambda";
 import type { FetchHandler, Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
-import { awsRequest, awsResponseBody, awsResponseHeaders } from "./_aws/_utils.ts";
+import {
+  awsRequest,
+  awsResponseBody,
+  awsResponseHeaders,
+  requestToAwsEvent,
+  awsResultToResponse,
+  createMockContext,
+} from "./_aws/_utils.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -30,6 +37,19 @@ export async function handleLambdaEvent(
     ...awsResponseHeaders(response),
     ...(await awsResponseBody(response)),
   };
+}
+
+/**
+ * Wraps an AWS Lambda handler as a fetch-compatible function.
+ * Converts Web Request to AWS event (v1/v2 compatible) and AWS result back to Web Response.
+ */
+export async function invokeLambdaHandler(
+  handler: AWSLambdaHandler,
+  request: Request,
+): Promise<Response> {
+  const event = await requestToAwsEvent(request);
+  const result = await handler(event, createMockContext());
+  return awsResultToResponse(result);
 }
 
 class AWSLambdaServer implements Server<AWSLambdaHandler> {

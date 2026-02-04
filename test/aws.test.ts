@@ -1,6 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
-import { awsRequest, awsResponseBody, awsResponseHeaders } from "../../src/adapters/_aws/_utils.ts";
-import type { APIGatewayProxyEvent, APIGatewayProxyEventV2 } from "aws-lambda";
+import {
+  awsRequest,
+  awsResponseBody,
+  awsResponseHeaders,
+  createMockContext,
+} from "../src/adapters/_aws/_utils.ts";
+import {
+  handleLambdaEvent,
+  invokeLambdaHandler,
+  type AWSLambdaHandler,
+} from "../src/adapters/aws-lambda.ts";
+import type {
+  APIGatewayProxyEvent,
+  APIGatewayProxyEventV2,
+  APIGatewayProxyResult,
+} from "aws-lambda";
 
 // Mock Headers.getAll method for testing
 class MockHeaders extends Headers {
@@ -44,7 +58,7 @@ describe("[AWS Lambda] Request Utils", () => {
         resource: "",
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request).toBeInstanceOf(Request);
       expect(request.method).toBe("POST");
@@ -79,7 +93,7 @@ describe("[AWS Lambda] Request Utils", () => {
         } as any,
       };
 
-      const request = awsRequest(v2Event);
+      const request = awsRequest(v2Event, createMockContext());
 
       expect(request).toBeInstanceOf(Request);
       expect(request.method).toBe("POST");
@@ -110,7 +124,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.body).toBeDefined();
     });
@@ -131,7 +145,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.body).toBeNull();
     });
@@ -152,7 +166,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.headers).toBeInstanceOf(Headers);
     });
@@ -173,7 +187,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).not.toContain("?");
     });
@@ -197,7 +211,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toContain("tags=javascript");
       expect(request.url).toContain("tags=typescript");
@@ -220,7 +234,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.method).toBe("GET");
     });
@@ -244,7 +258,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toMatch(/^http:\/\//);
     });
@@ -265,7 +279,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toMatch(/^https:\/\//);
     });
@@ -286,7 +300,7 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event);
+      const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toContain("/api/users/123");
     });
@@ -534,6 +548,327 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(awsBody.body).toBe(largeContent);
       expect(awsBody.body.length).toBe(10_000);
+    });
+  });
+
+  describe("handleLambdaEvent", () => {
+    test("should convert AWS event to Response via fetch handler", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "success" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/test",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const result = (await handleLambdaEvent(
+        fetchHandler,
+        event,
+        createMockContext(),
+      )) as APIGatewayProxyResult;
+
+      expect(fetchHandler).toHaveBeenCalledTimes(1);
+      expect(result.statusCode).toBe(200);
+      expect(result.body).toBe(JSON.stringify({ message: "success" }));
+      expect(result.headers?.["content-type"]).toBe("application/json");
+    });
+
+    test("should handle POST request with body", async () => {
+      const fetchHandler = vi.fn().mockImplementation(async (req: Request) => {
+        const body = await req.json();
+        return new Response(JSON.stringify({ received: body }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "POST",
+        path: "/api/users",
+        headers: { host: "api.example.com", "content-type": "application/json" },
+        body: JSON.stringify({ name: "John" }),
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const result = (await handleLambdaEvent(
+        fetchHandler,
+        event,
+        createMockContext(),
+      )) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(201);
+      expect(JSON.parse(result.body)).toEqual({ received: { name: "John" } });
+    });
+
+    test("should handle error responses", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/missing",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const result = (await handleLambdaEvent(
+        fetchHandler,
+        event,
+        createMockContext(),
+      )) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(404);
+      expect(result.body).toBe("Not Found");
+    });
+
+    test("should handle binary response", async () => {
+      const binaryData = Buffer.from("binary content");
+      const fetchHandler = vi.fn().mockResolvedValue(
+        new Response(binaryData, {
+          status: 200,
+          headers: { "Content-Type": "application/octet-stream" },
+        }),
+      );
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/binary",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const result = (await handleLambdaEvent(
+        fetchHandler,
+        event,
+        createMockContext(),
+      )) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(200);
+      expect(result.isBase64Encoded).toBe(true);
+      expect(result.body).toBe(binaryData.toString("base64"));
+    });
+
+    test("should handle v2 event format", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("OK", { status: 200 }));
+
+      const v2Event: APIGatewayProxyEventV2 = {
+        version: "2.0",
+        routeKey: "GET /api/test",
+        rawPath: "/api/test",
+        rawQueryString: "",
+        headers: { host: "api.example.com" },
+        body: undefined,
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "GET", path: "/api/test" },
+          domainName: "api.example.com",
+        } as any,
+      };
+
+      const result = (await handleLambdaEvent(
+        fetchHandler,
+        v2Event,
+        createMockContext(),
+      )) as APIGatewayProxyResult;
+
+      expect(result.statusCode).toBe(200);
+      const request = fetchHandler.mock.calls[0][0] as Request;
+      expect(request.method).toBe("GET");
+    });
+  });
+
+  describe("invokeLambdaHandler", () => {
+    test("should convert Request to AWS event and invoke handler", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue({
+        statusCode: 200,
+        body: JSON.stringify({ message: "success" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const request = new Request("https://api.example.com/api/test", {
+        method: "GET",
+      });
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(response).toBeInstanceOf(Response);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ message: "success" });
+    });
+
+    test("should handle POST request with body", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockImplementation(async (event) => {
+        const body = JSON.parse(event.body || "{}");
+        return {
+          statusCode: 201,
+          body: JSON.stringify({ received: body }),
+          headers: { "Content-Type": "application/json" },
+        };
+      });
+
+      const request = new Request("https://api.example.com/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "John" }),
+      });
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(201);
+      expect(await response.json()).toEqual({ received: { name: "John" } });
+    });
+
+    test("should pass query parameters", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockImplementation(async (event) => {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            page: event.queryStringParameters?.page,
+            limit: event.queryStringParameters?.limit,
+          }),
+          headers: { "Content-Type": "application/json" },
+        };
+      });
+
+      const request = new Request("https://api.example.com/api/items?page=2&limit=10");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(await response.json()).toEqual({ page: "2", limit: "10" });
+    });
+
+    test("should handle cookies in request", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockImplementation(async (event) => {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ cookies: event.cookies }),
+          headers: { "Content-Type": "application/json" },
+        };
+      });
+
+      const request = new Request("https://api.example.com/api/test", {
+        headers: { Cookie: "sessionId=abc123" },
+      });
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      const body = await response.json();
+      expect(body.cookies).toContain("sessionId=abc123");
+    });
+
+    test("should handle handler returning cookies", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue({
+        statusCode: 200,
+        body: "OK",
+        cookies: ["sessionId=xyz789; HttpOnly", "theme=dark"],
+      });
+
+      const request = new Request("https://api.example.com/api/login");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.getSetCookie()).toContain("sessionId=xyz789; HttpOnly");
+      expect(response.headers.getSetCookie()).toContain("theme=dark");
+    });
+
+    test("should handle binary response from handler", async () => {
+      const binaryData = Buffer.from("binary content");
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue({
+        statusCode: 200,
+        body: binaryData.toString("base64"),
+        isBase64Encoded: true,
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+
+      const request = new Request("https://api.example.com/api/binary");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(200);
+      const arrayBuffer = await response.arrayBuffer();
+      expect(Buffer.from(arrayBuffer).toString()).toBe("binary content");
+    });
+
+    test("should handle error status codes", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue({
+        statusCode: 500,
+        body: "Internal Server Error",
+      });
+
+      const request = new Request("https://api.example.com/api/error");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("Internal Server Error");
+    });
+
+    test("should handle multiValueHeaders from handler (v1)", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue({
+        statusCode: 200,
+        body: "OK",
+        multiValueHeaders: {
+          "Set-Cookie": ["a=1", "b=2"],
+          "X-Custom": ["value1", "value2"],
+        },
+      });
+
+      const request = new Request("https://api.example.com/api/test");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.getSetCookie()).toContain("a=1");
+      expect(response.headers.getSetCookie()).toContain("b=2");
+    });
+
+    test("should handle string response (v2 simple format)", async () => {
+      const handler: AWSLambdaHandler = vi.fn().mockResolvedValue("Hello World" as any);
+
+      const request = new Request("https://api.example.com/api/simple");
+
+      const response = await invokeLambdaHandler(handler, request);
+
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("Hello World");
     });
   });
 });
