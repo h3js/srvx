@@ -177,10 +177,7 @@ export async function awsStreamResponse(
   }
 
   // awslambda is a global provided by Lambda runtime
-  const writer = (globalThis as any).awslambda.HttpResponseStream.from(
-    responseStream,
-    metadata,
-  );
+  const writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);
 
   if (!response.body) {
     writer.end();
