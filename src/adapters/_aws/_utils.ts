@@ -68,7 +68,9 @@ function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): 
   return headers;
 }
 
-function awsEventBody(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): BodyInit | undefined {
+export function awsEventBody(
+  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+): BodyInit | undefined {
   if (!event.body) {
     return undefined;
   }
@@ -141,12 +143,16 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
 }
 
 function stringifyQuery(obj: Record<string, unknown>) {
-  return Object.entries(obj)
-    .filter(([_, value]) => value != null) // usuwa null/undefined
-    .map(([key, value]) =>
-      Array.isArray(value)
-        ? value.map((v) => `${encodeURIComponent(key)}=${encodeURIComponent(v)}`).join("&")
-        : `${encodeURIComponent(key)}=${encodeURIComponent(value as string)}`,
-    )
-    .join("&");
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(obj)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        params.append(key, String(v));
+      }
+    } else {
+      params.append(key, String(value));
+    }
+  }
+  return params.toString();
 }

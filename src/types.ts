@@ -4,7 +4,6 @@ import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
-import type * as AWS from "aws-lambda";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -374,8 +373,3 @@ export type NodeHTTP2Middleware = (
 export type NodeHTTPMiddleware = NodeHTTP1Middleware | NodeHTTP2Middleware;
 
 export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
-
-export type AWSLambdaFetchHandler = (
-  event: AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2,
-  context: AWS.Context,
-) => MaybePromise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2>;
