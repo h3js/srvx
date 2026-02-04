@@ -46,18 +46,6 @@ describe("loadServerEntry", () => {
   });
 
   describe("auto-discovery", () => {
-    it("discovers index.ts when server.ts is not present", async () => {
-      const result = await loadServerEntry({
-        dir: resolve(fixturesDir, "auto-discover"),
-      });
-
-      expect(result.notFound).toBeUndefined();
-      expect(result.url).toContain("auto-discover/index.ts");
-
-      const response = await result.fetch!(new Request("http://test/"));
-      expect(await response.text()).toBe("auto-discover");
-    });
-
     it("discovers src/server.ts", async () => {
       const result = await loadServerEntry({
         dir: resolve(fixturesDir, "src-entry"),

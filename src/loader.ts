@@ -4,11 +4,9 @@ import * as nodeHTTP from "node:http";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 
-// prettier-ignore
-const defaultEntries = ["server", "index", "src/server", "src/index", "server/index"];
+export const defaultExts: string[] = [".mjs", ".js", ".mts", ".ts"];
 
-// prettier-ignore
-const defaultExts = [".mts", ".ts", ".cts", ".js", ".mjs", ".cjs", ".jsx", ".tsx"];
+export const defaultEntries: string[] = ["server", "server/index", "src/server", "server/server"];
 
 /**
  * Options for loading a server entry module.
@@ -17,8 +15,7 @@ export type LoadOptions = {
   /**
    * Path or URL to the server entry file.
    *
-   * If not provided, common entry points will be searched automatically
-   * (e.g., `server.ts`, `index.ts`, `src/server.ts`).
+   * If not provided, common entry points will be searched automatically.
    */
   entry?: string;
 
@@ -146,6 +143,9 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   mod = (await opts?.onLoad?.(mod)) || mod;
 
   let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
+  if (!fetchHandler && typeof mod?.default === "function" && mod.default.length < 2) {
+    fetchHandler = mod.default;
+  }
 
   // Upgrade legacy Node.js handler
   let nodeCompat = false;
@@ -203,6 +203,9 @@ async function interceptListen<T = unknown>(
           {
             get(_, prop) {
               const server = globalThis.__srvx__;
+              if (!server && prop === "address") {
+                return () => ({ address: "", family: "", port: 0 });
+              }
               // @ts-expect-error
               return server?.node?.server?.[prop];
             },

@@ -1,4 +1,4 @@
-import * as c from "./_color.ts";
+import * as c from "./cli/_utils.ts";
 import type { ServerPlugin } from "./types.ts";
 
 export const errorPlugin: ServerPlugin = (server) => {
