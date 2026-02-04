@@ -10,20 +10,20 @@ export type AwsLambdaEvent = AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEvent
 
 export type AWSLambdaHandler = (
   event: AwsLambdaEvent,
-  ctx: AWS.Context,
+  context: AWS.Context,
 ) => MaybePromise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2>;
 
 export function toLambdaHandler(options: ServerOptions): AWSLambdaHandler {
   const server = new AWSLambdaServer(options);
-  return (event, ctx) => server.fetch(event, ctx);
+  return (event, context) => server.fetch(event, context);
 }
 
 export async function handleLambdaEvent(
   fetchHandler: FetchHandler,
   event: AwsLambdaEvent,
-  _ctx: AWS.Context,
+  context: AWS.Context,
 ): Promise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2> {
-  const request = awsRequest(event);
+  const request = awsRequest(event, context);
   const response = await fetchHandler(request);
   return {
     statusCode: response.status,
@@ -45,8 +45,8 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
 
     const fetchHandler = wrapFetch(this as unknown as Server);
 
-    this.fetch = (event: AwsLambdaEvent, ctx: AWS.Context) =>
-      handleLambdaEvent(fetchHandler, event, ctx);
+    this.fetch = (event: AwsLambdaEvent, context: AWS.Context) =>
+      handleLambdaEvent(fetchHandler, event, context);
   }
 
   serve() {}

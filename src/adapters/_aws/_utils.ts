@@ -1,8 +1,10 @@
-import type { APIGatewayProxyEvent, APIGatewayProxyEventV2 } from "aws-lambda";
+import type { ServerRequest } from "../../types.ts";
+import type {
+  APIGatewayProxyEvent,
+  Context as AWSContext,
+  APIGatewayProxyEventV2,
+} from "aws-lambda";
 
-/**
- * AWS Lambda response structure for API Gateway integration
- */
 export interface AWSResponseHeaders {
   headers: Record<string, string>;
   cookies?: string[];
@@ -10,12 +12,25 @@ export interface AWSResponseHeaders {
 }
 
 // Incoming (AWS => Web)
-export function awsRequest(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): Request {
-  const method = awsEventMethod(event);
-  const url = awsEventURL(event);
-  const headers = awsEventHeaders(event);
-  const body = awsEventBody(event);
-  return new Request(url, { method, headers, body });
+
+export function awsRequest(
+  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  context: AWSContext,
+): ServerRequest {
+  const req = new Request(awsEventURL(event), {
+    method: awsEventMethod(event),
+    headers: awsEventHeaders(event),
+    body: awsEventBody(event),
+  }) as ServerRequest;
+
+  req.runtime = {
+    name: "aws-lambda",
+    awsLambda: { event, context },
+  };
+
+  req.ip = awsEventIP(event);
+
+  return req;
 }
 
 function awsEventMethod(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string {
@@ -23,6 +38,13 @@ function awsEventMethod(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): s
     (event as APIGatewayProxyEvent).httpMethod ||
     (event as APIGatewayProxyEventV2).requestContext?.http?.method ||
     "GET"
+  );
+}
+
+function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string | undefined {
+  return (
+    (event as APIGatewayProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
+    (event as APIGatewayProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
   );
 }
 
