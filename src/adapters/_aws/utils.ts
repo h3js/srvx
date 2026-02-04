@@ -5,6 +5,20 @@ import type {
   APIGatewayProxyEventV2,
 } from "aws-lambda";
 
+// -- Streaming types --
+
+export interface AWSLambdaStreamResponseMetadata {
+  statusCode: number;
+  headers?: Record<string, string>;
+  cookies?: string[];
+}
+
+export type AWSLambdaResponseStream = NodeJS.WritableStream & {
+  setContentType(contentType: string): void;
+};
+
+// -- Incoming/Outgoing types --
+
 export interface AWSResponseHeaders {
   headers: Record<string, string>;
   cookies?: string[];
@@ -144,6 +158,59 @@ export async function awsResponseBody(
   return isTextType(contentType)
     ? { body: buffer.toString("utf8") }
     : { body: buffer.toString("base64"), isBase64Encoded: true };
+}
+
+// Streaming response (uses awslambda global from Lambda runtime)
+// https://docs.aws.amazon.com/lambda/latest/dg/response-streaming.html
+export async function awsStreamResponse(
+  response: Response,
+  responseStream: AWSLambdaResponseStream,
+  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+): Promise<void> {
+  const metadata: AWSLambdaStreamResponseMetadata = {
+    statusCode: response.status,
+    ...awsResponseHeaders(response, event),
+  };
+
+  if (!metadata.headers!["transfer-encoding"]) {
+    metadata.headers!["transfer-encoding"] = "chunked";
+  }
+
+  // awslambda is a global provided by Lambda runtime
+  const writer = (globalThis as any).awslambda.HttpResponseStream.from(
+    responseStream,
+    metadata,
+  );
+
+  if (!response.body) {
+    writer.end();
+    return;
+  }
+
+  try {
+    await streamToNodeStream(response.body, writer);
+  } finally {
+    writer.end();
+  }
+}
+
+async function streamToNodeStream(
+  body: ReadableStream,
+  writer: NodeJS.WritableStream,
+): Promise<void> {
+  const reader = body.getReader();
+  try {
+    let result = await reader.read();
+    while (!result.done) {
+      const canContinue = writer.write(result.value);
+      if (!canContinue) {
+        await new Promise<void>((resolve) => writer.once("drain", resolve));
+      }
+      result = await reader.read();
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function isTextType(contentType = "") {

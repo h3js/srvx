@@ -6,19 +6,29 @@ import {
   awsRequest,
   awsResponseBody,
   awsResponseHeaders,
+  awsStreamResponse,
   requestToAwsEvent,
   awsResultToResponse,
   createMockContext,
-} from "./_aws/_utils.ts";
+  type AWSLambdaResponseStream,
+} from "./_aws/utils.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
 export type AwsLambdaEvent = AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
 
+export type { AWSLambdaResponseStream };
+
 export type AWSLambdaHandler = (
   event: AwsLambdaEvent,
   context: AWS.Context,
 ) => MaybePromise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2>;
+
+export type AWSLambdaStreamingHandler = (
+  event: AwsLambdaEvent,
+  responseStream: AWSLambdaResponseStream,
+  context: AWS.Context,
+) => MaybePromise<void>;
 
 export function toLambdaHandler(options: ServerOptions): AWSLambdaHandler {
   const server = new AWSLambdaServer(options);
@@ -39,10 +49,17 @@ export async function handleLambdaEvent(
   };
 }
 
-/**
- * Wraps an AWS Lambda handler as a fetch-compatible function.
- * Converts Web Request to AWS event (v1/v2 compatible) and AWS result back to Web Response.
- */
+export async function handleLambdaEventWithStream(
+  fetchHandler: FetchHandler,
+  event: AwsLambdaEvent,
+  responseStream: AWSLambdaResponseStream,
+  context: AWS.Context,
+): Promise<void> {
+  const request = awsRequest(event, context);
+  const response = await fetchHandler(request);
+  await awsStreamResponse(response, responseStream, event);
+}
+
 export async function invokeLambdaHandler(
   handler: AWSLambdaHandler,
   request: Request,

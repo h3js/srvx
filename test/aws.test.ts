@@ -1,12 +1,15 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   awsRequest,
   awsResponseBody,
   awsResponseHeaders,
+  awsStreamResponse,
   createMockContext,
-} from "../src/adapters/_aws/_utils.ts";
+  type AWSLambdaResponseStream,
+} from "../src/adapters/_aws/utils.ts";
 import {
   handleLambdaEvent,
+  handleLambdaEventWithStream,
   invokeLambdaHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
@@ -869,6 +872,337 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Hello World");
+    });
+  });
+
+  describe("awsStreamResponse", () => {
+    function createMockResponseStream() {
+      const chunks: unknown[] = [];
+      let metadata: unknown;
+      let endCalled = false;
+      let drainCallback: (() => void) | null = null;
+
+      const mockWriter = {
+        write: vi.fn((chunk: unknown) => {
+          chunks.push(chunk);
+          return true; // No backpressure by default
+        }),
+        end: vi.fn(() => {
+          endCalled = true;
+        }),
+        once: vi.fn((event: string, callback: () => void) => {
+          if (event === "drain") {
+            drainCallback = callback;
+          }
+        }),
+      };
+
+      const mockStream = {} as AWSLambdaResponseStream;
+
+      // Mock the awslambda global
+      (globalThis as any).awslambda = {
+        HttpResponseStream: {
+          from: vi.fn((stream: unknown, meta: unknown) => {
+            metadata = meta;
+            return mockWriter;
+          }),
+        },
+      };
+
+      return {
+        mockStream,
+        mockWriter,
+        getChunks: () => chunks,
+        getMetadata: () => metadata,
+        isEndCalled: () => endCalled,
+        triggerDrain: () => drainCallback?.(),
+      };
+    }
+
+    afterEach(() => {
+      delete (globalThis as any).awslambda;
+    });
+
+    test("should stream response body to writer", async () => {
+      const { mockStream, mockWriter, getChunks, getMetadata, isEndCalled } =
+        createMockResponseStream();
+
+      const response = new Response("Hello, Stream!", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      });
+
+      await awsStreamResponse(response, mockStream);
+
+      expect(getMetadata()).toMatchObject({
+        statusCode: 200,
+        headers: expect.objectContaining({
+          "content-type": "text/plain",
+          "transfer-encoding": "chunked",
+        }),
+      });
+      expect(getChunks().length).toBeGreaterThan(0);
+      expect(isEndCalled()).toBe(true);
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    test("should handle empty response body", async () => {
+      const { mockStream, mockWriter, getChunks, isEndCalled } = createMockResponseStream();
+
+      const response = new Response(null, { status: 204 });
+
+      await awsStreamResponse(response, mockStream);
+
+      expect(getChunks().length).toBe(0);
+      expect(isEndCalled()).toBe(true);
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    test("should set transfer-encoding to chunked by default", async () => {
+      const { mockStream, getMetadata } = createMockResponseStream();
+
+      const response = new Response("content", { status: 200 });
+
+      await awsStreamResponse(response, mockStream);
+
+      expect((getMetadata() as any).headers["transfer-encoding"]).toBe("chunked");
+    });
+
+    test("should preserve existing transfer-encoding header", async () => {
+      const { mockStream, getMetadata } = createMockResponseStream();
+
+      const response = new Response("content", {
+        status: 200,
+        headers: { "Transfer-Encoding": "gzip" },
+      });
+
+      await awsStreamResponse(response, mockStream);
+
+      expect((getMetadata() as any).headers["transfer-encoding"]).toBe("gzip");
+    });
+
+    test("should call writer.end even when streaming fails", async () => {
+      const { mockStream, mockWriter } = createMockResponseStream();
+
+      // Create a response with a body that will error during streaming
+      const errorStream = new ReadableStream({
+        start(controller) {
+          controller.error(new Error("Stream error"));
+        },
+      });
+
+      const response = new Response(errorStream, { status: 200 });
+
+      await expect(awsStreamResponse(response, mockStream)).rejects.toThrow("Stream error");
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    test("should handle backpressure from writer", async () => {
+      const { mockStream, mockWriter, triggerDrain } = createMockResponseStream();
+
+      let writeCount = 0;
+      mockWriter.write.mockImplementation(() => {
+        writeCount++;
+        // Simulate backpressure on first write
+        if (writeCount === 1) {
+          // Trigger drain after a microtask
+          Promise.resolve().then(() => triggerDrain());
+          return false;
+        }
+        return true;
+      });
+
+      const response = new Response("AB", { status: 200 });
+
+      await awsStreamResponse(response, mockStream);
+
+      expect(mockWriter.once).toHaveBeenCalledWith("drain", expect.any(Function));
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    test("should pass event to awsResponseHeaders for v2 format", async () => {
+      const { mockStream, getMetadata } = createMockResponseStream();
+
+      const headers = new MockHeaders({ "Content-Type": "application/json" });
+      headers.setCookie("session=abc");
+
+      const response = new Response("{}", { status: 200, headers });
+      Object.defineProperty(response, "headers", { value: headers });
+
+      const v2Event: APIGatewayProxyEventV2 = {
+        version: "2.0",
+        routeKey: "GET /test",
+        rawPath: "/test",
+        rawQueryString: "",
+        headers: { host: "example.com" },
+        isBase64Encoded: false,
+        requestContext: { http: { method: "GET", path: "/test" } } as any,
+      };
+
+      await awsStreamResponse(response, mockStream, v2Event);
+
+      const metadata = getMetadata() as any;
+      expect(metadata.cookies).toEqual(["session=abc"]);
+    });
+  });
+
+  describe("handleLambdaEventWithStream", () => {
+    function createMockResponseStream() {
+      const chunks: unknown[] = [];
+      let metadata: unknown;
+
+      const mockWriter = {
+        write: vi.fn((chunk: unknown) => {
+          chunks.push(chunk);
+          return true;
+        }),
+        end: vi.fn(),
+        once: vi.fn(),
+      };
+
+      const mockStream = {} as AWSLambdaResponseStream;
+
+      (globalThis as any).awslambda = {
+        HttpResponseStream: {
+          from: vi.fn((stream: unknown, meta: unknown) => {
+            metadata = meta;
+            return mockWriter;
+          }),
+        },
+      };
+
+      return {
+        mockStream,
+        mockWriter,
+        getChunks: () => chunks,
+        getMetadata: () => metadata,
+      };
+    }
+
+    afterEach(() => {
+      delete (globalThis as any).awslambda;
+    });
+
+    test("should convert event to request and stream response", async () => {
+      const { mockStream, mockWriter, getMetadata } = createMockResponseStream();
+
+      const fetchHandler = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "streamed" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/stream",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      await handleLambdaEventWithStream(fetchHandler, event, mockStream, createMockContext());
+
+      expect(fetchHandler).toHaveBeenCalledTimes(1);
+      const request = fetchHandler.mock.calls[0][0] as Request;
+      expect(request.method).toBe("GET");
+      expect(request.url).toContain("/api/stream");
+
+      expect((getMetadata() as any).statusCode).toBe(200);
+      expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    test("should handle POST request with body", async () => {
+      const { mockStream } = createMockResponseStream();
+
+      const fetchHandler = vi.fn().mockImplementation(async (req: Request) => {
+        const body = await req.json();
+        return new Response(JSON.stringify({ received: body }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "POST",
+        path: "/api/data",
+        headers: { host: "api.example.com", "content-type": "application/json" },
+        body: JSON.stringify({ name: "Test" }),
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      await handleLambdaEventWithStream(fetchHandler, event, mockStream, createMockContext());
+
+      expect(fetchHandler).toHaveBeenCalledTimes(1);
+    });
+
+    test("should handle v2 event format", async () => {
+      const { mockStream, getMetadata } = createMockResponseStream();
+
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("OK", { status: 200 }));
+
+      const v2Event: APIGatewayProxyEventV2 = {
+        version: "2.0",
+        routeKey: "GET /api/v2",
+        rawPath: "/api/v2",
+        rawQueryString: "foo=bar",
+        headers: { host: "api.example.com" },
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "GET", path: "/api/v2" },
+          domainName: "api.example.com",
+        } as any,
+      };
+
+      await handleLambdaEventWithStream(fetchHandler, v2Event, mockStream, createMockContext());
+
+      const request = fetchHandler.mock.calls[0][0] as Request;
+      expect(request.method).toBe("GET");
+      expect(request.url).toContain("/api/v2");
+      expect(request.url).toContain("foo=bar");
+      expect((getMetadata() as any).statusCode).toBe(200);
+    });
+
+    test("should handle fetch handler errors", async () => {
+      const { mockStream, mockWriter } = createMockResponseStream();
+
+      const fetchHandler = vi.fn().mockRejectedValue(new Error("Handler error"));
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/error",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      await expect(
+        handleLambdaEventWithStream(fetchHandler, event, mockStream, createMockContext()),
+      ).rejects.toThrow("Handler error");
+
+      // writer.end should NOT be called since error happened before streaming
+      expect(mockWriter.end).not.toHaveBeenCalled();
     });
   });
 });
