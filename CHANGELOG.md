@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.11.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.10.1...v0.11.0)
+
+### 🚀 Enhancements
+
+- Support `req.rawBody: Buffer` in google cloud functions ([#166](https://github.com/h3js/srvx/pull/166))
+- `loadServerEntry` ([#168](https://github.com/h3js/srvx/pull/168))
+- `srvx fetch` ([#169](https://github.com/h3js/srvx/pull/169))
+- **loader:** Extended options ([#173](https://github.com/h3js/srvx/pull/173))
+- Export `cliFetch` util ([#174](https://github.com/h3js/srvx/pull/174))
+- **cli:** Add verbose output for entry file and node compat mode in `cliFetch` ([98b35cc](https://github.com/h3js/srvx/commit/98b35cc))
+- **cli:** Fallback to global fetch ([17e115b](https://github.com/h3js/srvx/commit/17e115b))
+- **cli:** Default user agent and accept header ([765282e](https://github.com/h3js/srvx/commit/765282e))
+- **cli:** `srvx curl` alias ([169e26f](https://github.com/h3js/srvx/commit/169e26f))
+- `aws-lambda` adapter and utils ([#104](https://github.com/h3js/srvx/pull/104))
+
+### 🩹 Fixes
+
+- Externalize type pkgs ([43c000a](https://github.com/h3js/srvx/commit/43c000a))
+- **cli:** Enable `gracefulShutdown` only in production mode ([85cce89](https://github.com/h3js/srvx/commit/85cce89))
+- **loader:** Optional access to `mod` ([a2a65fa](https://github.com/h3js/srvx/commit/a2a65fa))
+- **loader:** Always call listen callback ([bc92090](https://github.com/h3js/srvx/commit/bc92090))
+- **loader:** Mock `server.address()` in programmatic mode ([c9bb7c6](https://github.com/h3js/srvx/commit/c9bb7c6))
+- **cli:** Use `localhost` as default hostname ([716408f](https://github.com/h3js/srvx/commit/716408f))
+- **cli:** Remove conflicting `H` alias ([7dce970](https://github.com/h3js/srvx/commit/7dce970))
+- **cli:** Throw error when no static dir and entry exist ([eaa99aa](https://github.com/h3js/srvx/commit/eaa99aa))
+- **cli:** Fixed path to cli entry ([6ad9563](https://github.com/h3js/srvx/commit/6ad9563))
+- **cli:** Remove hardcoded srvx command from usage ([3b224b8](https://github.com/h3js/srvx/commit/3b224b8))
+- **loader:** Use default export as web handler when has less than two args ([3fc370c](https://github.com/h3js/srvx/commit/3fc370c))
+- **cli:** Normalize urls ([f4a75fa](https://github.com/h3js/srvx/commit/f4a75fa))
+
+### 💅 Refactors
+
+- **loader:** Safer search path for default server entry ([8933e6b](https://github.com/h3js/srvx/commit/8933e6b))
+- ⚠️  Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
+- **cli:** Improve fetch mode ([20796e2](https://github.com/h3js/srvx/commit/20796e2))
+- Add missing runtime types ([5bcec0d](https://github.com/h3js/srvx/commit/5bcec0d))
+
+### 📖 Documentation
+
+- **cli:** Add JSDoc comments to cliFetch options ([262e6b2](https://github.com/h3js/srvx/commit/262e6b2))
+
+### 📦 Build
+
+- Fix cli version ([b438181](https://github.com/h3js/srvx/commit/b438181))
+
+### 🏡 Chore
+
+- Update deps ([c187dfc](https://github.com/h3js/srvx/commit/c187dfc))
+- Update deps ([09f7b5d](https://github.com/h3js/srvx/commit/09f7b5d))
+- Update readme ([6da8b18](https://github.com/h3js/srvx/commit/6da8b18))
+- Migrate to oxlint and oxfmt ([3df52ee](https://github.com/h3js/srvx/commit/3df52ee))
+- Rename typecheck script ([7a04c69](https://github.com/h3js/srvx/commit/7a04c69))
+- Update tests ([0ec7758](https://github.com/h3js/srvx/commit/0ec7758))
+- Update cli usage ([af7a46e](https://github.com/h3js/srvx/commit/af7a46e))
+- Update docs ([516dd9e](https://github.com/h3js/srvx/commit/516dd9e))
+- Update deps ([f06bb42](https://github.com/h3js/srvx/commit/f06bb42))
+
+#### ⚠️ Breaking Changes
+
+- ⚠️  Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Oskar Lebuda <oskar.lebuda@enp.pl>
+- Nikita Lvov ([@niklv](https://github.com/niklv))
+
 ## v0.10.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.10.0...v0.10.1)

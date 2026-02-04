@@ -1,6 +1,6 @@
 {
   "name": "srvx",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Universal Server API based on web platform standards. Works seamlessly with Deno, Bun and Node.js.",
   "homepage": "https://srvx.h3.dev",
   "license": "MIT",
