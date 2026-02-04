@@ -19,7 +19,7 @@ export default defineBuildConfig({
         ),
       ],
       rolldown: {
-        external: ["bun", "@cloudflare/workers-types"],
+        external: ["bun", "@cloudflare/workers-types", "aws-lambda"],
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",
