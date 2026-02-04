@@ -104,7 +104,10 @@ export function awsEventBody(
 
 // Outgoing (Web => AWS)
 
-export function awsResponseHeaders(response: Response): AWSResponseHeaders {
+export function awsResponseHeaders(
+  response: Response,
+  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+): AWSResponseHeaders {
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
     if (value) {
@@ -114,13 +117,17 @@ export function awsResponseHeaders(response: Response): AWSResponseHeaders {
 
   const cookies = response.headers.getSetCookie();
 
-  return cookies.length > 0
-    ? {
-        headers,
-        cookies, // ApiGateway v2
-        multiValueHeaders: { "set-cookie": cookies }, // ApiGateway v1
-      }
-    : { headers };
+  if (cookies.length === 0) {
+    return { headers };
+  }
+
+  const isV2 =
+    (event as APIGatewayProxyEventV2)?.version === "2.0" ||
+    !!(event as APIGatewayProxyEventV2)?.requestContext?.http;
+
+  return isV2
+    ? { headers, cookies }
+    : { headers, cookies, multiValueHeaders: { "set-cookie": cookies } };
 }
 
 // AWS Lambda proxy integrations requires base64 encoded buffers

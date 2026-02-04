@@ -34,7 +34,7 @@ export async function handleLambdaEvent(
   const response = await fetchHandler(request);
   return {
     statusCode: response.status,
-    ...awsResponseHeaders(response),
+    ...awsResponseHeaders(response, event),
     ...(await awsResponseBody(response)),
   };
 }
