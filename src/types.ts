@@ -290,6 +290,14 @@ export interface ServerRuntimeContext {
     context: AWS.Context;
     event: AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
   };
+
+  serviceWorker?: { event: FetchEvent };
+
+  netlify?: { context: any };
+
+  stormkit?: { event: any; context: any };
+
+  vercel?: { context: { waitUntil?: (promise: Promise<any>) => void } };
 }
 
 export interface ServerRequestContext {
