@@ -22,7 +22,7 @@ export async function cliFetch(
 
   let fetchHandler: ServerHandler = globalThis.fetch;
 
-  const inputURL = cliOpts.url || "/";
+  let inputURL = cliOpts.url || "/";
 
   if (inputURL[0] === "/") {
     const loaded = await loadServerEntry({
@@ -55,6 +55,9 @@ export async function cliFetch(
     fetchHandler = loaded.fetch;
   } else {
     stderr.write(`* Fetching remote URL: ${inputURL}\n`);
+    if (!URL?.canParse(inputURL)) {
+      inputURL = `http${cliOpts.tls ? "s" : ""}://${inputURL}`;
+    }
     fetchHandler = globalThis.fetch;
   }
 
@@ -104,7 +107,7 @@ export async function cliFetch(
   // Build request
   const method = cliOpts.method || (body === undefined ? "GET" : "POST");
   const url = new URL(
-    cliOpts.url || "/",
+    inputURL,
     `http${cliOpts.tls ? "s" : ""}://${cliOpts.host || cliOpts.hostname || "localhost"}`,
   );
   const req = new Request(url, {
