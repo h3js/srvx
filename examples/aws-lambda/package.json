@@ -1,0 +1,13 @@
+{
+  "name": "srvx-examples-aws-lambda",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "serverless offline"
+  },
+  "devDependencies": {
+    "serverless": "^4",
+    "serverless-offline": "^14.4.0",
+    "srvx": "latest"
+  }
+}

@@ -4,6 +4,7 @@ import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
+import type * as AWS from "aws-lambda";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -182,7 +183,14 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Current runtime name
    */
-  readonly runtime: "node" | "deno" | "bun" | "cloudflare" | "service-worker" | "generic";
+  readonly runtime:
+    | "node"
+    | "deno"
+    | "bun"
+    | "cloudflare"
+    | "service-worker"
+    | "aws-lambda"
+    | "generic";
 
   /**
    * Server options
@@ -244,7 +252,7 @@ export interface Server<Handler = ServerHandler> {
 // ----------------------------------------------------------------------------
 
 export interface ServerRuntimeContext {
-  name: "node" | "deno" | "bun" | "cloudflare" | (string & {});
+  name: "node" | "deno" | "bun" | "cloudflare" | "aws-lambda" | (string & {});
 
   /**
    * Underlying Node.js server request info.
@@ -276,6 +284,11 @@ export interface ServerRuntimeContext {
     env: IsAny<typeof import("cloudflare:workers")> extends true
       ? Record<string, unknown>
       : typeof import("cloudflare:workers").env;
+  };
+
+  awsLambda?: {
+    context: AWS.Context;
+    event: AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
   };
 }
 

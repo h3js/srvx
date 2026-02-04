@@ -1,0 +1,36 @@
+service: srvx-examples-aws-lambda
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: eu-central-1
+  stage: local
+
+plugins:
+  - serverless-offline
+
+package:
+  patterns:
+    - dist/**
+    - public/**
+
+functions:
+  api:
+    handler: server.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+
+custom:
+  serverless-offline:
+    noPrependStageInUrl: true
+    httpPort: 3000
+    lambdaPort: 3001
+    host: 0.0.0.0
