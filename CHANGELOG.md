@@ -35,7 +35,7 @@
 ### 💅 Refactors
 
 - **loader:** Safer search path for default server entry ([8933e6b](https://github.com/h3js/srvx/commit/8933e6b))
-- ⚠️  Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
+- ⚠️ Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
 - **cli:** Improve fetch mode ([20796e2](https://github.com/h3js/srvx/commit/20796e2))
 - Add missing runtime types ([5bcec0d](https://github.com/h3js/srvx/commit/5bcec0d))
 
@@ -61,7 +61,7 @@
 
 #### ⚠️ Breaking Changes
 
-- ⚠️  Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
+- ⚠️ Rewamp cli ([#175](https://github.com/h3js/srvx/pull/175))
 
 ### ❤️ Contributors
 
