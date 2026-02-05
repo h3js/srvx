@@ -23,14 +23,6 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     process.exit(cliOpts.help ? 0 : 1);
   }
 
-  // Running in a child process
-  if (process.send) {
-    console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
-    setupProcessErrorHandlers();
-    await cliServe(cliOpts);
-    return;
-  }
-
   // Fetch mode
   if (cliOpts.mode === "fetch") {
     try {
@@ -42,69 +34,45 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     }
   }
 
+  // Running in a child process
+  if (process.send) {
+    return startServer(mainOpts, cliOpts);
+  }
+
+  // Resolve .env files
+  const envFiles = [".env", cliOpts.prod ? ".env.production" : ".env.local"].filter((f) =>
+    existsSync(f),
+  );
+  if (envFiles.length > 0) {
+    console.log(
+      `${c.gray(`Loading environment variables from ${c.magenta(envFiles.join(", "))}`)}`,
+    );
+  }
+
+  // In prod mode without --import, run directly in current process (no fork needed)
+  if (cliOpts.prod && !cliOpts.import) {
+    // Load env files manually since we're not forking with --env-file args
+    for (const envFile of [...envFiles].reverse() /* overrides first */) {
+      process.loadEnvFile?.(envFile);
+    }
+    await startServer(mainOpts, cliOpts);
+    return;
+  }
+
   // Fork a child process with additional args
   const isBun = !!process.versions.bun;
   const isDeno = !!process.versions.deno;
   const isNode = !isBun && !isDeno;
   const runtimeArgs: string[] = [];
+  runtimeArgs.push(...envFiles.map((f) => `--env-file=${f}`));
   if (!cliOpts.prod) {
     runtimeArgs.push("--watch");
   }
-  if (isNode || isDeno) {
-    runtimeArgs.push(
-      ...[".env", cliOpts.prod ? ".env.production" : ".env.local"]
-        .filter((f) => existsSync(f))
-        .map((f) => `--env-file=${f}`),
-    );
+  if (cliOpts.import && (isNode || isBun)) {
+    runtimeArgs.push(`--import=${cliOpts.import}`);
   }
-  if (isNode) {
-    const [major, minor] = process.versions.node.split(".");
-    if (major === "22" && +minor >= 6) {
-      runtimeArgs.push("--experimental-strip-types");
-    }
-    if (cliOpts.import) {
-      runtimeArgs.push(`--import=${cliOpts.import}`);
-    }
-  }
-  const child = fork(fileURLToPath(new URL("../bin/srvx.mjs", import.meta.url)), args, {
-    execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
-  });
-  child.on("error", (error) => {
-    console.error("Error in child process:", error);
-    process.exit(1);
-  });
-  child.on("exit", (code) => {
-    if (code !== 0) {
-      console.error(`Child process exited with code ${code}`);
-      process.exit(code);
-    }
-  });
-  child.on("message", (msg) => {
-    if (msg && (msg as { error?: string }).error === "no-entry") {
-      console.error("\n" + c.red(NO_ENTRY_ERROR) + "\n");
-      process.exit(3);
-    }
-  });
 
-  // Ensure child process is killed on exit
-  let cleanupCalled = false;
-  const cleanup = (signal: any, exitCode?: number) => {
-    if (cleanupCalled) return;
-    cleanupCalled = true;
-    try {
-      child.kill(signal || "SIGTERM");
-    } catch (error) {
-      console.error("Error killing child process:", error);
-    }
-    if (exitCode !== undefined) {
-      process.exit(exitCode);
-    }
-  };
-  process.on("exit", () => cleanup("SIGTERM"));
-  process.on("SIGTERM", () => cleanup("SIGTERM", 143));
-  if (!cliOpts.prod) {
-    process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
-  }
+  await forkCLI(args, runtimeArgs);
 }
 
 function parseArgs(args: string[]): CLIOptions {
@@ -180,6 +148,56 @@ function parseArgs(args: string[]): CLIOptions {
   const method = values.method || values.request;
   const url = values.url || positionals[0] || "/";
   return { mode, ...values, url, method };
+}
+
+async function startServer(mainOpts: MainOptions, cliOpts: CLIOptions) {
+  console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
+  setupProcessErrorHandlers();
+  await cliServe(cliOpts);
+}
+
+async function forkCLI(args: string[], runtimeArgs: string[]) {
+  const srvxBin = fileURLToPath(
+    (globalThis as any).__SRVX_BIN__ || new URL("../bin/srvx.mjs", import.meta.url),
+  );
+  const child = fork(srvxBin, [...args], {
+    execArgv: [...process.execArgv, ...runtimeArgs].filter(Boolean),
+  });
+  child.on("error", (error) => {
+    console.error("Error in child process:", error);
+    process.exit(1);
+  });
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code}`);
+      process.exit(code);
+    }
+  });
+  child.on("message", (msg) => {
+    if (msg && (msg as { error?: string }).error === "no-entry") {
+      console.error("\n" + c.red(NO_ENTRY_ERROR) + "\n");
+      process.exit(3);
+    }
+  });
+  // Ensure child process is killed on exit
+  let cleanupCalled = false;
+  const cleanup = (signal: any, exitCode?: number) => {
+    if (cleanupCalled) return;
+    cleanupCalled = true;
+    try {
+      child.kill(signal || "SIGTERM");
+    } catch (error) {
+      console.error("Error killing child process:", error);
+    }
+    if (exitCode !== undefined) {
+      process.exit(exitCode);
+    }
+  };
+  process.on("exit", () => cleanup("SIGTERM"));
+  process.on("SIGTERM", () => cleanup("SIGTERM", 143));
+  if (args.includes("--watch")) {
+    process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
+  }
 }
 
 function setupProcessErrorHandlers() {
