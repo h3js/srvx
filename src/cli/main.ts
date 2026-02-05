@@ -18,6 +18,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     process.stdout.write(versions(mainOpts).join("\n") + "\n");
     process.exit(0);
   }
+
   // Handle help flag
   if (cliOpts.help) {
     console.log(usage(mainOpts));
@@ -37,8 +38,11 @@ export async function main(mainOpts: MainOptions): Promise<void> {
 
   // Running in a child process
   if (process.send) {
-    return startServer(mainOpts, cliOpts);
+    return startServer(cliOpts);
   }
+
+  // Log versions
+  console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
 
   // Resolve .env files
   const envFiles = [".env", cliOpts.prod ? ".env.production" : ".env.local"].filter((f) =>
@@ -56,7 +60,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     for (const envFile of [...envFiles].reverse() /* overrides first */) {
       process.loadEnvFile?.(envFile);
     }
-    await startServer(mainOpts, cliOpts);
+    await startServer(cliOpts);
     return;
   }
 
@@ -151,8 +155,7 @@ function parseArgs(args: string[]): CLIOptions {
   return { mode, ...values, url, method };
 }
 
-async function startServer(mainOpts: MainOptions, cliOpts: CLIOptions) {
-  console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
+async function startServer(cliOpts: CLIOptions) {
   setupProcessErrorHandlers();
   await cliServe(cliOpts);
 }
