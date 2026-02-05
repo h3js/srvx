@@ -101,8 +101,10 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     }
   };
   process.on("exit", () => cleanup("SIGTERM"));
-  process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
   process.on("SIGTERM", () => cleanup("SIGTERM", 143));
+  if (!cliOpts.prod) {
+    process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
+  }
 }
 
 function parseArgs(args: string[]): CLIOptions {

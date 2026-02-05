@@ -23,56 +23,53 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
   ) {
     return;
   }
-  const gracefulShutdown =
+  const gracefulTimeout =
     config === true || !config?.gracefulTimeout
-      ? Number.parseInt(process.env.SERVER_SHUTDOWN_TIMEOUT || "") || 3
+      ? Number.parseInt(process.env.SERVER_SHUTDOWN_TIMEOUT || "") || 5
       : config.gracefulTimeout;
-  const forceShutdown =
-    config === true || !config?.forceTimeout
-      ? Number.parseInt(process.env.SERVER_FORCE_SHUTDOWN_TIMEOUT || "") || 5
-      : config.forceTimeout;
+
   let isShuttingDown = false;
-  let forceClose: (() => void) | undefined;
-  const shutdown = async () => {
-    if (isShuttingDown) {
-      forceClose?.();
-      return;
-    }
-    isShuttingDown = true;
-    const w = process.stderr.write.bind(process.stderr);
-    w(
-      c.gray(
-        `\nShutting down server in ${gracefulShutdown}s... (press Ctrl+C again to force close)`,
-      ),
-    );
-    let timeout: any;
-    await Promise.race([
-      // Graceful shutdown
-      server.close().finally(() => {
-        clearTimeout(timeout);
-        w(c.gray(" Server closed.\n"));
-      }),
-      new Promise<void>((resolve) => {
-        forceClose = () => {
-          clearTimeout(timeout);
-          w(c.gray("\nForce closing...\n"));
-          server.close(true);
-          resolve();
-        };
-        timeout = setTimeout(() => {
-          // Graceful shutdown timeout
-          w(c.gray(`\nForce closing connections in ${forceShutdown}s...`));
-          timeout = setTimeout(() => {
-            // Force shutdown timeout
-            w(c.red("\nCould not close connections in time, force exiting."));
-            resolve();
-          }, forceShutdown * 1000);
-          return server.close(true);
-        }, gracefulShutdown * 1000);
-      }),
-    ]);
+
+  const w = server.options.silent ? () => {} : process.stderr.write.bind(process.stderr);
+
+  const forceClose = async () => {
+    w(c.red("\x1b[2K\rForcibly closing connections...\n"));
+    await server.close(true);
+    w(c.yellow("Server closed.\n"));
     globalThis.process.exit(0);
   };
+
+  const shutdown = async () => {
+    // Second call: force close immediately
+    if (isShuttingDown) {
+      return forceClose();
+    }
+
+    isShuttingDown = true;
+    const closePromise = server.close();
+
+    // Countdown with updates each second
+    for (let remaining = gracefulTimeout; remaining > 0; remaining--) {
+      w(
+        c.gray(
+          `\rStopping server gracefully (${remaining}s)... Press ${c.bold("Ctrl+C")} again to force close.`,
+        ),
+      );
+      const closed = await Promise.race([
+        closePromise.then(() => true),
+        new Promise<false>((r) => setTimeout(() => r(false), 1000)),
+      ]);
+      if (closed) {
+        w("\x1b[2K\r" + c.green("Server closed successfully.\n"));
+        globalThis.process.exit(0);
+      }
+    }
+
+    // Graceful period expired: force close
+    w("\x1b[2K\rGraceful shutdown timed out.\n");
+    await forceClose();
+  };
+
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     globalThis.process.on(sig, shutdown);
   }
