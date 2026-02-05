@@ -25,7 +25,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
 
   // Running in a child process
   if (process.send) {
-    console.log(c.gray(versions(mainOpts).join(" · ")));
+    console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
     setupProcessErrorHandlers();
     await cliServe(cliOpts);
     return;

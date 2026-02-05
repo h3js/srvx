@@ -47,7 +47,7 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     printInfo(cliOpts, loaded);
     const server = (globalThis.__srvx__ = srvxServe({
       ...serverOptions,
-      gracefulShutdown: cliOpts.prod,
+      gracefulShutdown: !!cliOpts.prod,
       port: cliOpts.port ?? serverOptions.port,
       hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
       tls: cliOpts.tls ? { cert: cliOpts.cert, key: cliOpts.key } : undefined,
