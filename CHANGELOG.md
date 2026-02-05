@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.11.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.1...v0.11.2)
+
+### 💅 Refactors
+
+- **tracing:** Rename tracing channel `h3.fetch` to `h3.request` ([#176](https://github.com/h3js/srvx/pull/176))
+
+### 🏡 Chore
+
+- Apply automated updates ([54acbbf](https://github.com/h3js/srvx/commit/54acbbf))
+- Avoid adding version to docs ([e644208](https://github.com/h3js/srvx/commit/e644208))
+
+### ❤️ Contributors
+
+- Abdelrahman Awad <abdelrahman.awad@sentry.io>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.0...v0.11.1)
