@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.11.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.0...v0.11.1)
+
+### 🚀 Enhancements
+
+- **cli:** Allow overriding meta ([0cad0a7](https://github.com/h3js/srvx/commit/0cad0a7))
+
+### 🩹 Fixes
+
+- **cli:** Enable graceful shutdown only for prod ([e57ada8](https://github.com/h3js/srvx/commit/e57ada8))
+- **cli:** Log versions in main process ([674ca46](https://github.com/h3js/srvx/commit/674ca46))
+
+### 💅 Refactors
+
+- Improve graceful shutdown behavior ([54e7074](https://github.com/h3js/srvx/commit/54e7074))
+- **cli:** Improve serve mode ([92a06a5](https://github.com/h3js/srvx/commit/92a06a5))
+- **cli:** Bundle srvx meta ([7420599](https://github.com/h3js/srvx/commit/7420599))
+
+### 🏡 Chore
+
+- Apply automated updates ([07d7caf](https://github.com/h3js/srvx/commit/07d7caf))
+- Apply automated updates ([b6d5668](https://github.com/h3js/srvx/commit/b6d5668))
+- Apply automated updates ([359a728](https://github.com/h3js/srvx/commit/359a728))
+- Update undocs ([3c87afc](https://github.com/h3js/srvx/commit/3c87afc))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.10.1...v0.11.0)
