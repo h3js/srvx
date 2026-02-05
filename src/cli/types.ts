@@ -6,6 +6,11 @@ declare global {
 
 export type MainOptions = CLIOptions & {
   args?: string[];
+  meta?: {
+    name?: string;
+    version?: string;
+    description?: string;
+  };
   usage?: {
     command?: string;
     docs?: string;

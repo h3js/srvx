@@ -3,8 +3,13 @@ import type { MainOptions } from "./types.ts";
 
 export function usage(mainOpts: MainOptions): string {
   const command = mainOpts.usage?.command || "srvx";
+
+  const name = mainOpts.meta?.name || command;
+  const ver = mainOpts.meta?.version || "";
+  const desc = mainOpts.meta?.description;
+
   return `
-${c.cyan(command)} - Universal Server CLI
+${c.cyan(name)}${c.gray(`${ver ? ` ${ver}` : ""} ${desc ? `- ${desc}` : ""}`)}
 
 ${c.bold("SERVE MODE")}
 

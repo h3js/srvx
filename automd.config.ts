@@ -1,6 +1,7 @@
 import { glob } from "node:fs/promises";
 import * as md from "mdbox";
 import { fileURLToPath } from "node:url";
+import pkg from "./package.json" with { type: "json" };
 
 export default {
   input: ["README.md", "docs/**/*.md"],
@@ -10,7 +11,12 @@ export default {
         process.env.NO_COLOR = "1";
         const { usage } = await import("./src/cli/usage.ts");
         delete process.env.NO_COLOR;
-        const _usage = usage({ usage: { command: "srvx", docs: "", issues: "" } });
+        const _usage = usage({
+          meta: {
+            name: "srvx",
+            description: pkg.description,
+          },
+        });
         return {
           contents: md.codeBlock(_usage, "sh"),
         };

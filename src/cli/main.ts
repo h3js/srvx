@@ -2,7 +2,6 @@ import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import pkg from "../../package.json" with { type: "json" };
 import * as c from "./_utils.ts";
 import type { CLIOptions, MainOptions } from "./types.ts";
 import { cliServe, NO_ENTRY_ERROR } from "./serve.ts";
@@ -15,7 +14,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
 
   // Handle version flag
   if (cliOpts.version) {
-    console.log(`srvx ${pkg.version}\n${runtime()}`);
+    process.stdout.write(versions(mainOpts).join("\n") + "\n");
     process.exit(0);
   }
   // Handle help flag
@@ -26,7 +25,7 @@ export async function main(mainOpts: MainOptions): Promise<void> {
 
   // Running in a child process
   if (process.send) {
-    console.log(c.gray(`srvx ${pkg.version} - ${runtime()}`));
+    console.log(c.gray(versions(mainOpts).join(" · ")));
     setupProcessErrorHandlers();
     await cliServe(cliOpts);
     return;
@@ -191,6 +190,15 @@ function setupProcessErrorHandlers() {
     console.error("Unhandled rejection:", reason);
     process.exit(1);
   });
+}
+
+function versions(mainOpts: MainOptions): string[] {
+  const versions: string[] = [];
+  if (mainOpts.meta?.name) {
+    versions.push(`${mainOpts.meta.name} ${mainOpts.meta.version || ""}`.trim());
+  }
+  versions.push(runtime());
+  return versions;
 }
 
 function runtime(): string {
