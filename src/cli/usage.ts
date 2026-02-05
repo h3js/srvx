@@ -1,12 +1,13 @@
+import { srvxMeta } from "./_meta.ts";
 import * as c from "./_utils.ts";
 import type { MainOptions } from "./types.ts";
 
 export function usage(mainOpts: MainOptions): string {
   const command = mainOpts.usage?.command || "srvx";
 
-  const name = mainOpts.meta?.name || command;
-  const ver = mainOpts.meta?.version || "";
-  const desc = mainOpts.meta?.description;
+  const name = mainOpts.meta?.name || srvxMeta.name;
+  const ver = mainOpts.meta?.version || srvxMeta.version;
+  const desc = mainOpts.meta?.description || srvxMeta.description;
 
   return `
 ${c.cyan(name)}${c.gray(`${ver ? ` ${ver}` : ""} ${desc ? `- ${desc}` : ""}`)}

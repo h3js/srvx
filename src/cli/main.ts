@@ -7,6 +7,7 @@ import type { CLIOptions, MainOptions } from "./types.ts";
 import { cliServe, NO_ENTRY_ERROR } from "./serve.ts";
 import { cliFetch } from "./fetch.ts";
 import { usage } from "./usage.ts";
+import { srvxMeta } from "./_meta.ts";
 
 export async function main(mainOpts: MainOptions): Promise<void> {
   const args = process.argv.slice(2);
@@ -217,6 +218,7 @@ function versions(mainOpts: MainOptions): string[] {
   if (mainOpts.meta?.name) {
     versions.push(`${mainOpts.meta.name} ${mainOpts.meta.version || ""}`.trim());
   }
+  versions.push(`${srvxMeta.name} ${srvxMeta.version}`);
   versions.push(runtime());
   return versions;
 }

@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import { main } from "../dist/cli.mjs";
-import pkg from "../package.json" with { type: "json" };
 
 globalThis.__SRVX_BIN__ = import.meta.url;
 
 await main({
-  meta: pkg,
   usage: {
     command: "srvx",
     docs: "https://srvx.h3.dev",
