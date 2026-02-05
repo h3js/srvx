@@ -15,6 +15,7 @@ export default {
           meta: {
             name: "srvx",
             description: pkg.description,
+            version: " ",
           },
         });
         return {
