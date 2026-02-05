@@ -10,7 +10,7 @@ export default {
 // --- debug tracing channels ---
 
 debugChannel("srvx.middleware");
-debugChannel("srvx.fetch");
+debugChannel("srvx.request");
 
 function debugChannel(name: string) {
   const { tracingChannel } = process.getBuiltinModule("node:diagnostics_channel");

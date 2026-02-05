@@ -21,7 +21,7 @@ describe("tracing channels", () => {
   it("should emit fetch tracing events", async () => {
     const events: Array<{ type: string; method?: string }> = [];
 
-    const fetchChannel = tracingChannel("srvx.fetch");
+    const fetchChannel = tracingChannel("srvx.request");
 
     const startHandler = (data: any) => {
       events.push({ type: "fetch.start", method: data.request.method });
@@ -355,7 +355,7 @@ describe("tracing channels", () => {
   it("should emit fetch events when no middleware present", async () => {
     const events: Array<string> = [];
 
-    const fetchChannel = tracingChannel("srvx.fetch");
+    const fetchChannel = tracingChannel("srvx.request");
 
     const startHandler = () => {
       events.push("fetch.start");

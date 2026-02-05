@@ -19,7 +19,7 @@ export type RequestEvent = {
  * Tracing plugin that adds diagnostics channel tracing to middleware and fetch handlers.
  *
  * This plugin wraps all middleware and the fetch handler with tracing instrumentation,
- * allowing you to subscribe to `srvx.fetch` and `srvx.middleware` tracing channels.
+ * allowing you to subscribe to `srvx.request` and `srvx.middleware` tracing channels.
  *
  * @example
  * ```ts
@@ -44,7 +44,7 @@ export function tracingPlugin(opts: { middleware?: boolean; fetch?: boolean } = 
 
     // Wrap the fetch handler with tracing
     if (opts.fetch !== false) {
-      const fetchChannel = tracingChannel<unknown, RequestEvent>("srvx.fetch");
+      const fetchChannel = tracingChannel<unknown, RequestEvent>("srvx.request");
       const originalFetch = server.options.fetch;
       server.options.fetch = (request) => {
         return fetchChannel.tracePromise(async () => await originalFetch(request), {
