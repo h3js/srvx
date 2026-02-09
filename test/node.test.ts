@@ -15,22 +15,26 @@ const testConfigs = [
   {
     name: "http1",
     Response: globalThis.Response,
+    fastResponse: false,
   },
   {
     name: "http1, FastResponse",
     Response: FastResponse,
+    fastResponse: true,
   },
   {
     name: "http2",
     Response: globalThis.Response,
     http2: true,
     serveOptions: { tls, node: { http2: true, allowHTTP1: false } },
+    fastResponse: false,
   },
   {
     name: "http2, FastResponse",
     Response: FastResponse,
     http2: true,
     serveOptions: { tls, node: { http2: true, allowHTTP1: false } },
+    fastResponse: true,
   },
 ];
 
@@ -66,6 +70,7 @@ for (const config of testConfigs) {
       runtime,
       http2: config.http2,
       fetch: client.fetch,
+      fastResponse: config.fastResponse,
     });
   });
 }
