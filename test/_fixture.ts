@@ -184,6 +184,22 @@ export const fixture: (
           }
           return res.clone();
         }
+        case "/clone-node-stream": {
+          // Test case for h3js/srvx issue: clone() should preserve Node.js pipe-style bodies
+          // Create a response with a pipe-style body (like Node.js streams)
+          const pipeBody = {
+            pipe(writable: { write: (chunk: string) => void; end: () => void }) {
+              writable.write("streamed-content");
+              writable.end();
+            },
+          };
+          const res = new _Response(pipeBody as any, {
+            headers: { "content-type": "text/plain" },
+          });
+          // Clone the response (this should not break the original response's body)
+          res.clone();
+          return res;
+        }
         case "/abort": {
           return new _Response(
             new ReadableStream({
