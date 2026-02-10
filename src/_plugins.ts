@@ -28,24 +28,26 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
       ? Number.parseInt(process.env.SERVER_SHUTDOWN_TIMEOUT || "") || 5
       : config.gracefulTimeout;
 
-  let isShuttingDown = false;
+  let isClosing = false;
+  let isClosed = false;
 
   const w = server.options.silent ? () => {} : process.stderr.write.bind(process.stderr);
 
   const forceClose = async () => {
+    if (isClosed) return;
     w(c.red("\x1b[2K\rForcibly closing connections...\n"));
+    isClosed = true;
     await server.close(true);
     w(c.yellow("Server closed.\n"));
-    globalThis.process.exit(0);
   };
 
   const shutdown = async () => {
     // Second call: force close immediately
-    if (isShuttingDown) {
-      return forceClose();
+    if (isClosing || isClosed) {
+      return;
     }
 
-    isShuttingDown = true;
+    isClosing = true;
     const closePromise = server.close();
 
     // Countdown with updates each second
@@ -61,6 +63,7 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
       ]);
       if (closed) {
         w("\x1b[2K\r" + c.green("Server closed successfully.\n"));
+        isClosed = true;
         return;
       }
     }
