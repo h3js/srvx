@@ -262,19 +262,16 @@ export function addTests(opts: {
       expect(response.headers.get("x-clone-with-headers")).toBe("true");
     });
 
-    test.skipIf(!opts.fastResponse)(
-      "clone response with Node.js pipe-style body",
-      async () => {
-        // Regression test: clone() should not break responses with Node.js-specific bodies
-        // See: https://github.com/unjs/h3/issues/1278
-        // This test only works with FastResponse (NodeResponse) since native Response
-        // cannot handle Node.js pipe-style bodies.
-        const response = await fetch(url("/clone-node-stream"));
-        expect(response.status).toBe(200);
-        const text = await response.text();
-        expect(text).toBe("streamed-content");
-      },
-    );
+    test.skipIf(!opts.fastResponse)("clone response with Node.js pipe-style body", async () => {
+      // Regression test: clone() should not break responses with Node.js-specific bodies
+      // See: https://github.com/unjs/h3/issues/1278
+      // This test only works with FastResponse (NodeResponse) since native Response
+      // cannot handle Node.js pipe-style bodies.
+      const response = await fetch(url("/clone-node-stream"));
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toBe("streamed-content");
+    });
   });
 
   test("inspect objects", async () => {
