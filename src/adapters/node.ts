@@ -143,11 +143,11 @@ class NodeServer implements Server {
       this.#wait.wait(),
       new Promise<void>((resolve, reject) => {
         const server = this.node?.server;
+        if (server && closeAll && "closeAllConnections" in server) {
+          server.closeAllConnections();
+        }
         if (!server || !server.listening) {
           return resolve();
-        }
-        if (closeAll && "closeAllConnections" in server) {
-          server.closeAllConnections();
         }
         server.close((error?: Error) => (error ? reject(error) : resolve()));
       }),
