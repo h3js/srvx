@@ -61,7 +61,7 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
       ]);
       if (closed) {
         w("\x1b[2K\r" + c.green("Server closed successfully.\n"));
-        globalThis.process.exit(0);
+        return;
       }
     }
 
