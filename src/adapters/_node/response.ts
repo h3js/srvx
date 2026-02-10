@@ -1,4 +1,4 @@
-import type { Readable as NodeReadable } from "node:stream";
+import { PassThrough, Readable as NodeReadable } from "node:stream";
 
 import { lazyInherit } from "../../_inherit.ts";
 
@@ -34,8 +34,6 @@ export const NodeResponse: {
     #init?: ResponseInit;
     #headers?: Headers;
     #response?: globalThis.Response;
-    // Preserve Node.js-specific body (e.g. objects with .pipe) that can't be passed to native Response
-    #nodeBody?: NodeReadable;
 
     constructor(body?: BodyInit | null, init?: ResponseInit) {
       this.#body = body;
@@ -80,15 +78,8 @@ export const NodeResponse: {
       if (this.#response) {
         return this.#response;
       }
-      // Preserve Node.js-specific bodies (objects with .pipe) that can't be passed to native Response
-      // These will be handled in _toNodeResponse() instead
-      let bodyForNativeResponse: BodyInit | null | undefined = this.#body;
-      if (this.#body && typeof (this.#body as unknown as NodeReadable).pipe === "function") {
-        this.#nodeBody = this.#body as unknown as NodeReadable;
-        bodyForNativeResponse = null;
-      }
       this.#response = new NativeResponse(
-        bodyForNativeResponse,
+        _normalizeBody(this.#body),
         this.#headers ? { ...this.#init, headers: this.#headers } : this.#init,
       );
       this.#init = undefined;
@@ -106,10 +97,7 @@ export const NodeResponse: {
       let body: PreparedNodeResponseBody;
       let contentType: string | undefined | null;
       let contentLength: string | number | undefined | null;
-      // Check for preserved Node.js-specific body first (e.g. from clone() scenario)
-      if (this.#nodeBody) {
-        body = this.#nodeBody;
-      } else if (this.#response) {
+      if (this.#response) {
         body = this.#response.body;
       } else if (this.#body) {
         if (this.#body instanceof ReadableStream) {
@@ -182,7 +170,6 @@ export const NodeResponse: {
       this.#headers = undefined;
       this.#response = undefined;
       this.#body = undefined;
-      this.#nodeBody = undefined;
 
       return {
         status,
@@ -197,6 +184,20 @@ export const NodeResponse: {
 
   Object.setPrototypeOf(NodeResponse, NativeResponse);
   Object.setPrototypeOf(NodeResponse.prototype, NativeResponse.prototype);
+
+  // Pipeable objects might not implement asyncIterator, so we need to convert them to NodeReadable first.
+  function _normalizeBody(body: BodyInit | null | undefined): BodyInit | null | undefined {
+    if (
+      body &&
+      typeof (body as unknown as NodeReadable).pipe === "function" &&
+      !(body instanceof NodeReadable)
+    ) {
+      const pt = new PassThrough();
+      (body as unknown as NodeReadable).pipe(pt);
+      return pt as unknown as BodyInit;
+    }
+    return body;
+  }
 
   return NodeResponse as any;
 })();
