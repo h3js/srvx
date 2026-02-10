@@ -1,4 +1,4 @@
-import { PassThrough, Readable as NodeReadable } from "node:stream";
+import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
 import { lazyInherit } from "../../_inherit.ts";
 
@@ -78,13 +78,32 @@ export const NodeResponse: {
       if (this.#response) {
         return this.#response;
       }
+
+      // Undici accepts standard Response body or async iterators (which Node Readable implements too).
+      // Pipeable objects, like React's renderToPipeableStream, do not implement async iterators.
+      let body: BodyInit | null | undefined = this.#body;
+      if (
+        body &&
+        typeof (body as unknown as NodeReadable).pipe === "function" &&
+        !(body instanceof NodeReadable)
+      ) {
+        const stream = new PassThrough();
+        (body as unknown as NodeReadable).pipe(stream);
+        const abort = (body as unknown as { abort?: () => void }).abort;
+        if (abort) {
+          stream.once("close", () => abort());
+        }
+        body = stream as unknown as BodyInit;
+      }
+
       this.#response = new NativeResponse(
-        _normalizeBody(this.#body),
+        body,
         this.#headers ? { ...this.#init, headers: this.#headers } : this.#init,
       );
       this.#init = undefined;
       this.#headers = undefined;
       this.#body = undefined;
+
       return this.#response;
     }
 
@@ -184,20 +203,6 @@ export const NodeResponse: {
 
   Object.setPrototypeOf(NodeResponse, NativeResponse);
   Object.setPrototypeOf(NodeResponse.prototype, NativeResponse.prototype);
-
-  // Pipeable objects might not implement asyncIterator, so we need to convert them to NodeReadable first.
-  function _normalizeBody(body: BodyInit | null | undefined): BodyInit | null | undefined {
-    if (
-      body &&
-      typeof (body as unknown as NodeReadable).pipe === "function" &&
-      !(body instanceof NodeReadable)
-    ) {
-      const pt = new PassThrough();
-      (body as unknown as NodeReadable).pipe(pt);
-      return pt as unknown as BodyInit;
-    }
-    return body;
-  }
 
   return NodeResponse as any;
 })();
