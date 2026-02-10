@@ -38,14 +38,18 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
     w(c.red("\x1b[2K\rForcibly closing connections...\n"));
     isClosed = true;
     await server.close(true);
-    w(c.yellow("Server closed.\n"));
   };
 
   const shutdown = async () => {
-    // Second call: force close immediately
     if (isClosing || isClosed) {
       return;
     }
+
+    // Force close with second Ctrl+C
+    // CLIs might trigger multiple SIGINTs, so we delay the listener registration
+    setTimeout(() => {
+      globalThis.process.once("SIGINT", forceClose);
+    }, 100);
 
     isClosing = true;
     const closePromise = server.close();
