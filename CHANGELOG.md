@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.11.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.2...v0.11.3)
+
+### 🩹 Fixes
+
+- Avoid `process.exit` after graceful server close ([#179](https://github.com/h3js/srvx/pull/179))
+- **node:** Normalize pipeable bodies in `FastResponse` when cloning ([#177](https://github.com/h3js/srvx/pull/177))
+
+### 🏡 Chore
+
+- Update deps ([1dd903f](https://github.com/h3js/srvx/commit/1dd903f))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Kai Gritun <kaigritun@gmail.com>
+- Wade Fletcher ([@wadefletch](https://github.com/wadefletch))
+
 ## v0.11.2
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.1...v0.11.2)
