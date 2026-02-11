@@ -68,7 +68,7 @@ class NodeServer implements Server {
       | undefined;
     if (loader) {
       loader(fetchHandler);
-      return this;
+      return;
     }
 
     gracefulShutdownPlugin(this);

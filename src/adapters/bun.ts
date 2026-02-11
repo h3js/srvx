@@ -44,7 +44,7 @@ class BunServer implements Server<BunFetchHandler> {
     if (loader) {
       this.fetch = fetchHandler;
       loader(fetchHandler);
-      return this;
+      return;
     }
 
     this.#wait = createWaitUntil();
