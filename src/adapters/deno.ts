@@ -1,4 +1,4 @@
-import type { DenoFetchHandler, Server, ServerOptions } from "../types.ts";
+import type { DenoFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
 import {
   createWaitUntil,
   fmtURL,
@@ -22,13 +22,16 @@ class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
   readonly options: Server["options"];
   readonly deno: Server["deno"] = {};
-  readonly serveOptions: Deno.ServeTcpOptions | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem);
+  readonly serveOptions:
+    | Deno.ServeTcpOptions
+    | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem)
+    | undefined;
   readonly fetch: DenoFetchHandler;
 
   #listeningPromise?: Promise<void>;
   #listeningInfo?: { hostname: string; port: number };
 
-  #wait: ReturnType<typeof createWaitUntil>;
+  #wait: ReturnType<typeof createWaitUntil> | undefined;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -39,11 +42,21 @@ class DenoServer implements Server<DenoFetchHandler> {
 
     const fetchHandler = wrapFetch(this);
 
+    // Detect running in srvx loader
+    const loader = (globalThis as any).__srvxLoader__ as
+      | ((handler: ServerHandler) => void)
+      | undefined;
+    if (loader) {
+      this.fetch = fetchHandler;
+      loader(fetchHandler);
+      return this;
+    }
+
     this.#wait = createWaitUntil();
 
     this.fetch = (request, info) => {
       Object.defineProperties(request, {
-        waitUntil: { value: this.#wait.waitUntil },
+        waitUntil: { value: this.#wait?.waitUntil },
         runtime: {
           enumerable: true,
           value: { name: "deno", deno: { info, server: this.deno?.server } },
@@ -110,6 +123,6 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.#wait.wait(), Promise.resolve(this.deno?.server?.shutdown())]);
+    await Promise.all([this.#wait?.wait(), Promise.resolve(this.deno?.server?.shutdown())]);
   }
 }
