@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.3...v0.11.4)
+
+### 🚀 Enhancements
+
+- **loader:** Intercept nested `srvx.serve()` ([#181](https://github.com/h3js/srvx/pull/181))
+
+### ❤️ Contributors
+
+- Pooya Parsa <pyapar@gmail.com>
+
 ## v0.11.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.2...v0.11.3)
