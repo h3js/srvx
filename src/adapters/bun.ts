@@ -1,4 +1,4 @@
-import type { BunFetchHandler, Server, ServerOptions } from "../types.ts";
+import type { BunFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
 import type * as bun from "bun";
 import {
   fmtURL,
@@ -23,10 +23,10 @@ class BunServer implements Server<BunFetchHandler> {
   readonly runtime = "bun";
   readonly options: Server["options"];
   readonly bun: Server["bun"] = {};
-  readonly serveOptions: bun.Serve.Options<any>;
+  readonly serveOptions: bun.Serve.Options<any> | undefined;
   readonly fetch: BunFetchHandler;
 
-  #wait: ReturnType<typeof createWaitUntil>;
+  #wait: ReturnType<typeof createWaitUntil> | undefined;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -37,11 +37,21 @@ class BunServer implements Server<BunFetchHandler> {
 
     const fetchHandler = wrapFetch(this);
 
+    // Detect running in srvx loader
+    const loader = (globalThis as any).__srvxLoader__ as
+      | ((handler: ServerHandler) => void)
+      | undefined;
+    if (loader) {
+      this.fetch = fetchHandler;
+      loader(fetchHandler);
+      return;
+    }
+
     this.#wait = createWaitUntil();
 
     this.fetch = (request, server) => {
       Object.defineProperties(request, {
-        waitUntil: { value: this.#wait.waitUntil },
+        waitUntil: { value: this.#wait?.waitUntil },
         runtime: {
           enumerable: true,
           value: { name: "bun", bun: { server } },
@@ -78,7 +88,7 @@ class BunServer implements Server<BunFetchHandler> {
 
   serve(): Promise<this> {
     if (!this.bun!.server) {
-      this.bun!.server = Bun.serve(this.serveOptions);
+      this.bun!.server = Bun.serve(this.serveOptions!);
     }
     printListening(this.options, this.url);
     return Promise.resolve(this);
@@ -103,6 +113,6 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   async close(closeAll?: boolean): Promise<void> {
-    await Promise.all([this.#wait.wait(), Promise.resolve(this.bun?.server?.stop(closeAll))]);
+    await Promise.all([this.#wait?.wait(), Promise.resolve(this.bun?.server?.stop(closeAll))]);
   }
 }
