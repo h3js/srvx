@@ -19,7 +19,7 @@ export function resolvePortAndHost(opts: ServerOptions): {
 export function fmtURL(
   host: string | undefined,
   port: number | undefined,
-  secure: boolean,
+  secure: boolean | undefined,
 ): string | undefined {
   if (!host || !port) {
     return undefined;

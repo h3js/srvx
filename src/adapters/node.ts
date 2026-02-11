@@ -48,11 +48,11 @@ class NodeServer implements Server {
   readonly node: Server["node"];
   readonly serveOptions: ServerOptions["node"];
   readonly fetch: ServerHandler;
-  readonly #isSecure: boolean;
+  readonly #isSecure?: boolean;
 
   #listeningPromise?: Promise<void>;
 
-  #wait: ReturnType<typeof createWaitUntil>;
+  #wait?: ReturnType<typeof createWaitUntil>;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -77,7 +77,7 @@ class NodeServer implements Server {
 
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
-      request.waitUntil = this.#wait.waitUntil;
+      request.waitUntil = this.#wait?.waitUntil;
       const res = fetchHandler(request);
       return res instanceof Promise
         ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
@@ -149,7 +149,7 @@ class NodeServer implements Server {
 
   async close(closeAll?: boolean): Promise<void> {
     await Promise.all([
-      this.#wait.wait(),
+      this.#wait?.wait(),
       new Promise<void>((resolve, reject) => {
         const server = this.node?.server;
         if (server && closeAll && "closeAllConnections" in server) {
