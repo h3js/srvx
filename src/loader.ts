@@ -113,12 +113,14 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
 
   // Import the user file
   let mod: any;
-  let listenHandler: NodeHttpHandler | undefined;
+  let interceptedNodeHandler: NodeHttpHandler | undefined;
+  let interceptedFetchHandler: ServerHandler | undefined;
   try {
     if (opts.interceptHttpListen !== false) {
       const loaded = await interceptListen(() => import(url));
       mod = loaded.res;
-      listenHandler = loaded.listenHandler;
+      interceptedNodeHandler = loaded.listenHandler;
+      interceptedFetchHandler = loaded.fetchHandler;
     } else {
       mod = await import(url);
     }
@@ -142,7 +144,8 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
 
   mod = (await opts?.onLoad?.(mod)) || mod;
 
-  let fetchHandler = mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch;
+  let fetchHandler =
+    mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch || interceptedFetchHandler;
   if (!fetchHandler && typeof mod?.default === "function" && mod.default.length < 2) {
     fetchHandler = mod.default;
   }
@@ -151,7 +154,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   let nodeCompat = false;
   if (!fetchHandler && opts.nodeCompat !== false) {
     const nodeHandler =
-      listenHandler || (typeof mod?.default === "function" ? mod.default : undefined);
+      interceptedNodeHandler || (typeof mod?.default === "function" ? mod.default : undefined);
     if (nodeHandler) {
       nodeCompat = true;
       const { fetchNodeHandler } = await import("srvx/node");
@@ -172,12 +175,18 @@ let _interceptQueue: Promise<unknown> = Promise.resolve();
 
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
-): Promise<{ res?: T; listenHandler?: NodeHttpHandler }> {
+): Promise<{ res?: T; listenHandler?: NodeHttpHandler; fetchHandler?: ServerHandler }> {
   // Chain onto the queue to ensure sequential execution
   const result = _interceptQueue.then(async () => {
     const originalListen = nodeHTTP.Server.prototype.listen;
     let res: T;
     let listenHandler: NodeHttpHandler | undefined;
+    let fetchHandler: ServerHandler | undefined;
+
+    (globalThis as any).__srvxLoader__ = (handler: ServerHandler) => {
+      fetchHandler = handler;
+    };
+
     try {
       // @ts-expect-error
       nodeHTTP.Server.prototype.listen = function (this: Server, arg1, arg2) {
@@ -215,8 +224,9 @@ async function interceptListen<T = unknown>(
       res = await cb();
     } finally {
       nodeHTTP.Server.prototype.listen = originalListen;
+      delete (globalThis as any).__srvxLoader__;
     }
-    return { res, listenHandler };
+    return { res, listenHandler, fetchHandler };
   });
 
   // Update queue to point to this operation (swallow errors for queue chaining)

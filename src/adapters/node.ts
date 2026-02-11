@@ -60,9 +60,18 @@ class NodeServer implements Server {
     for (const plugin of options.plugins || []) plugin(this);
     errorPlugin(this);
 
-    gracefulShutdownPlugin(this);
-
     const fetchHandler = (this.fetch = wrapFetch(this));
+
+    // Detect running in srvx loader
+    const loader = (globalThis as any).__srvxLoader__ as
+      | ((handler: ServerHandler) => void)
+      | undefined;
+    if (loader) {
+      loader(fetchHandler);
+      return this;
+    }
+
+    gracefulShutdownPlugin(this);
 
     this.#wait = createWaitUntil();
 
