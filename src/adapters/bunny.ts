@@ -1,5 +1,5 @@
 import process from "node:process";
-
+import { createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -40,15 +40,17 @@ declare namespace Bunny {
 
 export function serve(
   options: ServerOptions,
-): Server<(request: Request) => MaybePromise<Response>> {
+): Server {
   return new BunnyServer(options);
 }
 
-class BunnyServer implements Server<(request: Request) => MaybePromise<Response>> {
+class BunnyServer implements Server {
   readonly runtime = "bunny";
   readonly options: Server["options"];
   readonly fetch: (request: Request) => MaybePromise<Response>;
   private _denoServer?: Deno.HttpServer = undefined;
+
+  #wait: ReturnType<typeof createWaitUntil> | undefined;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -58,11 +60,14 @@ class BunnyServer implements Server<(request: Request) => MaybePromise<Response>
 
     const fetchHandler = wrapFetch(this);
 
+    this.#wait = createWaitUntil();
+
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
+        waitUntil: { value: this.#wait?.waitUntil },
         runtime: {
           enumerable: true,
-          value: { name: "bunny", bunny: {} },
+          value: { name: "bunny" },
         },
         // IP address from Bunny headers
         ip: {
@@ -115,15 +120,16 @@ class BunnyServer implements Server<(request: Request) => MaybePromise<Response>
     }
   }
 
-  ready(): Promise<Server<(request: Request) => MaybePromise<Response>>> {
+  ready(): Promise<Server> {
     return Promise.resolve(this);
   }
 
-  close() {
-    if (this._denoServer) {
-      return this._denoServer.shutdown();
-    }
+  async close(): Promise<void> {
     // Bunny runtime doesn't support closing the server
-    return Promise.resolve();
+    const promises = [this.#wait?.wait()];
+    if (this._denoServer) {
+      promises.push(this._denoServer.shutdown());
+    }
+    await Promise.all(promises);
   }
 }
