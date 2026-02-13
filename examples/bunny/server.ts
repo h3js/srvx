@@ -14,7 +14,8 @@ export default {
     }
 
     // Default response
-    return new Response(`
+    return new Response(
+      `
 <!DOCTYPE html>
 <html>
   <head>
