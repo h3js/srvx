@@ -33,7 +33,6 @@
       "types": "./dist/types.d.mts",
       "deno": "./dist/adapters/deno.mjs",
       "bun": "./dist/adapters/bun.mjs",
-      "bunny": "./dist/adapters/bunny.mjs",
       "workerd": "./dist/adapters/cloudflare.mjs",
       "browser": "./dist/adapters/service-worker.mjs",
       "node": "./dist/adapters/node.mjs",

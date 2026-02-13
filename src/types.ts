@@ -278,11 +278,6 @@ export interface ServerRuntimeContext {
   };
 
   /**
-   * Underlying Bunny edge runtime context.
-   */
-  bunny?: {};
-
-  /**
    * Underlying Cloudflare request context.
    */
   cloudflare?: {
@@ -361,8 +356,6 @@ export type DenoFetchHandler = (
   request: Request,
   info?: Deno.ServeHandlerInfo<Deno.NetAddr>,
 ) => Response | Promise<Response>;
-
-export type BunnyFetchHandler = (request: Request) => Response | Promise<Response>;
 
 export type NodeServerRequest = NodeHttp.IncomingMessage | NodeHttp2.Http2ServerRequest;
 

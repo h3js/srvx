@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import type { BunnyFetchHandler, Server, ServerOptions } from "../types.ts";
+import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
@@ -38,14 +38,14 @@ declare namespace Bunny {
   export const v1: BunnySDKV1;
 }
 
-export function serve(options: ServerOptions): Server<BunnyFetchHandler> {
+export function serve(options: ServerOptions): Server<(request: Request) => MaybePromise<Response>> {
   return new BunnyServer(options);
 }
 
-class BunnyServer implements Server<BunnyFetchHandler> {
+class BunnyServer implements Server<(request: Request) => MaybePromise<Response>> {
   readonly runtime = "bunny";
   readonly options: Server["options"];
-  readonly fetch: BunnyFetchHandler;
+  readonly fetch: (request: Request) => MaybePromise<Response>;
   private _denoServer?: Deno.HttpServer = undefined;
 
   constructor(options: ServerOptions) {
@@ -113,7 +113,7 @@ class BunnyServer implements Server<BunnyFetchHandler> {
     }
   }
 
-  ready(): Promise<Server<BunnyFetchHandler>> {
+  ready(): Promise<Server<(request: Request) => MaybePromise<Response>>> {
     return Promise.resolve(this);
   }
 
