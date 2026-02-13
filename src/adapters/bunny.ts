@@ -94,9 +94,9 @@ class BunnyServer implements Server<BunnyFetchHandler> {
       const _parsedPort =
         typeof this.options.port === "number"
           ? this.options.port
-          : Number.parseInt(this.options.port ?? process.env.NITRO_PORT ?? process.env.PORT ?? "");
+          : Number.parseInt(this.options.port ?? process.env.PORT ?? "");
       const port = !Number.isNaN(_parsedPort) ? _parsedPort : 3000;
-      const hostname = this.options.hostname || process.env.NITRO_HOST || process.env.HOST;
+      const hostname = this.options.hostname || process.env.HOST;
 
       Deno.serve(
         {
