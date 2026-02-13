@@ -114,6 +114,9 @@ class BunnyServer implements Server<(request: Request) => MaybePromise<Response>
   }
 
   ready(): Promise<Server<(request: Request) => MaybePromise<Response>>> {
+    if (this._denoServer) {
+      return this._denoServer.finished.then(() => this);
+    }
     return Promise.resolve(this);
   }
 
