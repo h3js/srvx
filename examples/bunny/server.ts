@@ -3,11 +3,6 @@ export default {
   fetch(req: Request) {
     const url = new URL(req.url);
 
-    // Serve static files
-    if (url.pathname.startsWith("/public/")) {
-      return new Response(null, { status: 404 });
-    }
-
     // API endpoint example
     if (url.pathname === "/api/info") {
       return Response.json({
@@ -19,8 +14,7 @@ export default {
     }
 
     // Default response
-    return new Response(
-      `
+    return new Response(`
 <!DOCTYPE html>
 <html>
   <head>
@@ -67,8 +61,7 @@ export default {
   },
 };</code></pre>
   </body>
-</html>
-      `.trim(),
+</html>`.trim(),
       {
         headers: {
           "content-type": "text/html; charset=utf-8",

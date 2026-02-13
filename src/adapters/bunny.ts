@@ -1,6 +1,10 @@
+import process from "node:process";
+
 import type { BunnyFetchHandler, Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
+
+type MaybePromise<T> = T | Promise<T>;
 
 export const FastURL: typeof globalThis.URL = URL;
 export const FastResponse: typeof globalThis.Response = Response;
@@ -14,7 +18,7 @@ declare namespace Bunny {
     /**
      * Serve function for Bunny Edge runtime
      */
-    serve: (handler: (request: Request) => Response | Promise<Response>) => void;
+    serve: (handler: (request: Request) => MaybePromise<Response>) => void;
     /**
      * Serve PullZone function, to leverage middlewares
      */
@@ -46,10 +50,10 @@ class BunnyServer implements Server<BunnyFetchHandler> {
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
-    for (const plugin of options.plugins || []) plugin(this as unknown as Server);
-    errorPlugin(this as unknown as Server);
+    for (const plugin of options.plugins || []) plugin(this);
+    errorPlugin(this);
 
-    const fetchHandler = wrapFetch(this as unknown as Server);
+    const fetchHandler = wrapFetch(this);
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
@@ -70,7 +74,7 @@ class BunnyServer implements Server<BunnyFetchHandler> {
           },
         },
       });
-      return fetchHandler(request as unknown as Request) as Response | Promise<Response>;
+      return fetchHandler(request);
     };
 
     if (!options.manual) {
@@ -82,13 +86,29 @@ class BunnyServer implements Server<BunnyFetchHandler> {
     // Check if running in Bunny runtime
     if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
       Bunny.v1.serve(this.fetch);
-    } else {
-      // Not in Bunny runtime - could be in development or testing
-      // In this case, we can't actually serve, but we won't throw an error
-      // to allow for testing and development scenarios
+    } else if (typeof Deno !== "undefined") {
+      // Try to fallback to Deno's serve for local use
       if (!this.options.silent) {
-        console.warn("[srvx] Bunny runtime not detected. The server will not be started.");
+        console.warn("[srvx] Bunny runtime not detected. Falling back to Deno for local use.");
       }
+      const _parsedPort =
+        typeof this.options.port === "number"
+          ? this.options.port
+          : Number.parseInt(this.options.port ?? process.env.NITRO_PORT ?? process.env.PORT ?? "");
+      const port = !Number.isNaN(_parsedPort) ? _parsedPort : 3000;
+      const hostname = this.options.hostname || process.env.NITRO_HOST || process.env.HOST;
+
+      Deno.serve(
+        {
+          port,
+          hostname,
+        },
+        this.fetch,
+      );
+    } else {
+      throw new Error(
+        "[srvx] Bunny runtime not detected and Deno is not available. Unable to start server.",
+      );
     }
   }
 
