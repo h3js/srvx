@@ -1,0 +1,12 @@
+{
+  "name": "srvx-examples-bunny",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "srvx --prod",
+    "dev": "srvx"
+  },
+  "devDependencies": {
+    "srvx": "latest"
+  }
+}

@@ -187,6 +187,7 @@ export interface Server<Handler = ServerHandler> {
     | "node"
     | "deno"
     | "bun"
+    | "bunny"
     | "cloudflare"
     | "service-worker"
     | "aws-lambda"
@@ -252,7 +253,7 @@ export interface Server<Handler = ServerHandler> {
 // ----------------------------------------------------------------------------
 
 export interface ServerRuntimeContext {
-  name: "node" | "deno" | "bun" | "cloudflare" | "aws-lambda" | (string & {});
+  name: "node" | "deno" | "bun" | "bunny" | "cloudflare" | "aws-lambda" | (string & {});
 
   /**
    * Underlying Node.js server request info.
@@ -275,6 +276,11 @@ export interface ServerRuntimeContext {
   bun?: {
     server: Bun.Server<any>;
   };
+
+  /**
+   * Underlying Bunny edge runtime context.
+   */
+  bunny?: {};
 
   /**
    * Underlying Cloudflare request context.
@@ -355,6 +361,8 @@ export type DenoFetchHandler = (
   request: Request,
   info?: Deno.ServeHandlerInfo<Deno.NetAddr>,
 ) => Response | Promise<Response>;
+
+export type BunnyFetchHandler = (request: Request) => Response | Promise<Response>;
 
 export type NodeServerRequest = NodeHttp.IncomingMessage | NodeHttp2.Http2ServerRequest;
 
