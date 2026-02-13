@@ -38,7 +38,9 @@ declare namespace Bunny {
   export const v1: BunnySDKV1;
 }
 
-export function serve(options: ServerOptions): Server<(request: Request) => MaybePromise<Response>> {
+export function serve(
+  options: ServerOptions,
+): Server<(request: Request) => MaybePromise<Response>> {
   return new BunnyServer(options);
 }
 
