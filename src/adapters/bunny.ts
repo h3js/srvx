@@ -1,11 +1,4 @@
-import process from "node:process";
-import {
-  fmtURL,
-  printListening,
-  resolvePortAndHost,
-  resolveTLSOptions,
-  createWaitUntil,
-} from "../_utils.ts";
+import { resolvePortAndHost, createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -108,12 +101,7 @@ class BunnyServer implements Server {
       if (!this.options.silent) {
         console.warn("[srvx] Bunny runtime not detected. Falling back to Deno for local use.");
       }
-      const _parsedPort =
-        typeof this.options.port === "number"
-          ? this.options.port
-          : Number.parseInt(this.options.port ?? process.env.PORT ?? "");
-      const port = !Number.isNaN(_parsedPort) ? _parsedPort : 3000;
-      const hostname = this.options.hostname || process.env.HOST;
+      const { port, hostname } = resolvePortAndHost(this.options);
 
       this._denoServer = Deno.serve(
         {
