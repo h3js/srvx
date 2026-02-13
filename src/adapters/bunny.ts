@@ -119,7 +119,7 @@ class BunnyServer implements Server<BunnyFetchHandler> {
 
   close() {
     if (this._denoServer) {
-      this._denoServer.shutdown();
+      return this._denoServer.shutdown();
     }
     // Bunny runtime doesn't support closing the server
     return Promise.resolve();
