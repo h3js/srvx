@@ -46,6 +46,7 @@ class BunnyServer implements Server<BunnyFetchHandler> {
   readonly runtime = "bunny";
   readonly options: Server["options"];
   readonly fetch: BunnyFetchHandler;
+  private _denoServer?: Deno.HttpServer = undefined;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -98,7 +99,7 @@ class BunnyServer implements Server<BunnyFetchHandler> {
       const port = !Number.isNaN(_parsedPort) ? _parsedPort : 3000;
       const hostname = this.options.hostname || process.env.HOST;
 
-      Deno.serve(
+      this._denoServer = Deno.serve(
         {
           port,
           hostname,
@@ -117,6 +118,9 @@ class BunnyServer implements Server<BunnyFetchHandler> {
   }
 
   close() {
+    if (this._denoServer) {
+      this._denoServer.shutdown();
+    }
     // Bunny runtime doesn't support closing the server
     return Promise.resolve();
   }
