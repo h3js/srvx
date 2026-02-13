@@ -44,9 +44,7 @@ declare namespace Bunny {
   export const v1: BunnySDKV1;
 }
 
-export function serve(
-  options: ServerOptions,
-): Server {
+export function serve(options: ServerOptions): Server {
   return new BunnyServer(options);
 }
 
