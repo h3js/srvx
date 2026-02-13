@@ -1,5 +1,11 @@
 import process from "node:process";
-import { createWaitUntil } from "../_utils.ts";
+import {
+  fmtURL,
+  printListening,
+  resolvePortAndHost,
+  resolveTLSOptions,
+  createWaitUntil,
+} from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -49,6 +55,7 @@ class BunnyServer implements Server {
   readonly options: Server["options"];
   readonly fetch: (request: Request) => MaybePromise<Response>;
   private _denoServer?: Deno.HttpServer = undefined;
+  private _started = false;
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -91,6 +98,10 @@ class BunnyServer implements Server {
   }
 
   serve() {
+    // Prevent multiple calls to serve, mostly for Bunny
+    if (this._started) return;
+    this._started = true;
+
     // Check if running in Bunny runtime
     if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
       Bunny.v1.serve(this.fetch);
