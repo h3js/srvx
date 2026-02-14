@@ -132,7 +132,7 @@ class BunnyServer implements Server {
   }
 
   ready(): Promise<Server> {
-    return Promise.resolve(this);
+    return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
   async close(): Promise<void> {
