@@ -1,8 +1,13 @@
-import { createWaitUntil } from "../_utils.ts";
+import {
+  resolvePortAndHost,
+  resolveTLSOptions,
+  printListening,
+  fmtURL,
+  createWaitUntil,
+} from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
-import { serve as serveDeno } from "./deno.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -39,10 +44,7 @@ declare namespace Bunny {
 }
 
 export function serve(options: ServerOptions): Server {
-  if (typeof Bunny !== "undefined" && Bunny.v1 && typeof Bunny.v1.serve === "function") {
-    return new BunnyServer(options);
-  }
-  return serveDeno(options);
+  return new BunnyServer(options);
 }
 
 class BunnyServer implements Server {
@@ -51,6 +53,9 @@ class BunnyServer implements Server {
   readonly fetch: (request: Request) => MaybePromise<Response>;
   private _denoServer?: Deno.HttpServer = undefined;
   private _started = false;
+
+  // Deno only properties for local use, not available in Bunny runtime
+  #listeningPromise?: Promise<void>;
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -97,7 +102,47 @@ class BunnyServer implements Server {
     if (this._started) return;
     this._started = true;
 
-    Bunny.v1.serve(this.fetch);
+    // Check if running in Bunny runtime
+    if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
+      Bunny.v1.serve(this.fetch);
+    } else if (typeof Deno !== "undefined") {
+      // Try to fallback to Deno's serve for local use
+      if (!this.options.silent) {
+        console.warn("[srvx] Bunny runtime not detected. Falling back to Deno for local use.");
+      }
+
+      if (this._denoServer) {
+        return Promise.resolve(this.#listeningPromise).then(() => this);
+      }
+      const onListenPromise = Promise.withResolvers<void>();
+      this.#listeningPromise = onListenPromise.promise;
+      const tls = resolveTLSOptions(this.options);
+
+      const denoServeOptions = {
+        ...resolvePortAndHost(this.options),
+        reusePort: this.options.reusePort,
+        onError: this.options.error,
+        ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
+        ...this.options.deno,
+      };
+      this._denoServer = Deno.serve(
+        {
+          ...denoServeOptions,
+          onListen: (info) => {
+            if (this.options.deno?.onListen) {
+              this.options.deno.onListen(info);
+            }
+            printListening(this.options, fmtURL(info.hostname, info.port, !!denoServeOptions.cert));
+            onListenPromise.resolve();
+          },
+        },
+        this.fetch,
+      );
+    } else {
+      throw new Error(
+        "[srvx] Bunny runtime not detected and Deno is not available. Unable to start server.",
+      );
+    }
   }
 
   ready(): Promise<Server> {
