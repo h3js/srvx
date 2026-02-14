@@ -1,8 +1,6 @@
 import {
   resolvePortAndHost,
   resolveTLSOptions,
-  printListening,
-  fmtURL,
   createWaitUntil,
 } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
@@ -69,7 +67,7 @@ class BunnyServer implements Server {
 
     this.#wait = createWaitUntil();
 
-    this.fetch = (request: Request) => {
+    this.fetch = (request: Request, denoInfo: { remoteAddr?: Deno.Addr } = {}) => {
       Object.defineProperties(request, {
         waitUntil: { value: this.#wait?.waitUntil },
         runtime: {
@@ -84,6 +82,7 @@ class BunnyServer implements Server {
             return (
               request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
               request.headers.get("x-real-ip") ||
+              (denoInfo?.remoteAddr as Deno.NetAddr)?.hostname ||
               undefined
             );
           },
@@ -98,12 +97,12 @@ class BunnyServer implements Server {
   }
 
   serve() {
-    // Prevent multiple calls to serve, mostly for Bunny
-    if (this._started) return;
-    this._started = true;
-
     // Check if running in Bunny runtime
     if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
+      // Prevent multiple calls to serve, mostly for Bunny
+      if (this._started) return;
+      this._started = true;
+
       Bunny.v1.serve(this.fetch);
     } else if (typeof Deno !== "undefined") {
       // Try to fallback to Deno's serve for local use
@@ -118,23 +117,14 @@ class BunnyServer implements Server {
       this.#listeningPromise = onListenPromise.promise;
       const tls = resolveTLSOptions(this.options);
 
-      const denoServeOptions = {
-        ...resolvePortAndHost(this.options),
-        reusePort: this.options.reusePort,
-        onError: this.options.error,
-        ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
-        ...this.options.deno,
-      };
       this._denoServer = Deno.serve(
         {
-          ...denoServeOptions,
-          onListen: (info) => {
-            if (this.options.deno?.onListen) {
-              this.options.deno.onListen(info);
-            }
-            printListening(this.options, fmtURL(info.hostname, info.port, !!denoServeOptions.cert));
-            onListenPromise.resolve();
-          },
+          ...this.options.deno,
+          ...resolvePortAndHost(this.options),
+          reusePort: this.options.reusePort,
+          onError: this.options.error,
+          ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
+          ...this.options.deno,
         },
         this.fetch,
       );
