@@ -39,7 +39,10 @@ declare namespace Bunny {
 }
 
 export function serve(options: ServerOptions): Server {
-  return typeof Bunny !== "undefined" ? new BunnyServer(options) : serveDeno(options);
+  if (typeof Bunny !== "undefined" && Bunny.v1 && typeof Bunny.v1.serve === "function") {
+    return new BunnyServer(options);
+  }
+  return serveDeno(options);
 }
 
 class BunnyServer implements Server {
