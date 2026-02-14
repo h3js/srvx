@@ -1,8 +1,4 @@
-import {
-  resolvePortAndHost,
-  resolveTLSOptions,
-  createWaitUntil,
-} from "../_utils.ts";
+import { resolvePortAndHost, resolveTLSOptions, createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
