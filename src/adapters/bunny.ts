@@ -1,7 +1,8 @@
-import { resolvePortAndHost, createWaitUntil } from "../_utils.ts";
+import { createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
+import { serve as serveDeno } from "./deno.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -38,7 +39,7 @@ declare namespace Bunny {
 }
 
 export function serve(options: ServerOptions): Server {
-  return new BunnyServer(options);
+  return typeof Bunny !== "undefined" ? new BunnyServer(options) : serveDeno(options);
 }
 
 class BunnyServer implements Server {
@@ -93,28 +94,7 @@ class BunnyServer implements Server {
     if (this._started) return;
     this._started = true;
 
-    // Check if running in Bunny runtime
-    if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
-      Bunny.v1.serve(this.fetch);
-    } else if (typeof Deno !== "undefined") {
-      // Try to fallback to Deno's serve for local use
-      if (!this.options.silent) {
-        console.warn("[srvx] Bunny runtime not detected. Falling back to Deno for local use.");
-      }
-      const { port, hostname } = resolvePortAndHost(this.options);
-
-      this._denoServer = Deno.serve(
-        {
-          port,
-          hostname,
-        },
-        this.fetch,
-      );
-    } else {
-      throw new Error(
-        "[srvx] Bunny runtime not detected and Deno is not available. Unable to start server.",
-      );
-    }
+    Bunny.v1.serve(this.fetch);
   }
 
   ready(): Promise<Server> {
