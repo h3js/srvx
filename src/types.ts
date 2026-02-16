@@ -237,6 +237,13 @@ export interface Server<Handler = ServerHandler> {
   ready(): Promise<Server<Handler>>;
 
   /**
+   * Register a background task that the server should await before closing.
+   *
+   * Same as `request.waitUntil` but available at the server level for use outside of request handlers.
+   */
+  readonly waitUntil?: (promise: Promise<unknown>) => void;
+
+  /**
    * Stop listening to prevent new connections from being accepted.
    *
    * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.

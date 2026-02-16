@@ -25,6 +25,7 @@ class BunServer implements Server<BunFetchHandler> {
   readonly bun: Server["bun"] = {};
   readonly serveOptions: bun.Serve.Options<any> | undefined;
   readonly fetch: BunFetchHandler;
+  readonly waitUntil?: Server["waitUntil"];
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -48,6 +49,7 @@ class BunServer implements Server<BunFetchHandler> {
     }
 
     this.#wait = createWaitUntil();
+    this.waitUntil = this.#wait.waitUntil;
 
     this.fetch = (request, server) => {
       Object.defineProperties(request, {
