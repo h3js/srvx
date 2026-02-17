@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.11.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.4...v0.11.5)
+
+### 🚀 Enhancements
+
+- Expose `server.waitUntil` ([#183](https://github.com/h3js/srvx/pull/183))
+- Add `bunny` adapter ([#182](https://github.com/h3js/srvx/pull/182))
+
+### 🏡 Chore
+
+- Update deps ([e37da5e](https://github.com/h3js/srvx/commit/e37da5e))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Sandro Circi ([@sandros94](https://github.com/sandros94))
+- Rihan Arfan ([@RihanArfan](https://github.com/RihanArfan))
+
 ## v0.11.4
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.3...v0.11.4)
