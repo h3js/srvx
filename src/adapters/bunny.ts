@@ -1,4 +1,4 @@
-import { resolvePortAndHost, resolveTLSOptions, createWaitUntil } from "../_utils.ts";
+import { createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -17,26 +17,8 @@ export const FastResponse: typeof globalThis.Response = Response;
  */
 declare namespace Bunny {
   export const v1: BunnySDKV1;
-
   type BunnySDKV1 = {
-    /**
-     * Serve function for Bunny Edge runtime
-     */
     serve: (handler: (request: Request) => MaybePromise<Response>) => void;
-    /**
-     * Serve PullZone function, to leverage middlewares
-     */
-    registerMiddlewares: (middlewares: {
-      onOriginRequest: Array<
-        (ctx: { request: Request }) => Promise<Request> | Promise<Response> | undefined
-      >;
-      onOriginResponse: Array<
-        (ctx: {
-          request: Request;
-          response: Response;
-        }) => Promise<Request> | Promise<Response> | undefined
-      >;
-    }) => void;
   };
 }
 
