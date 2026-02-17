@@ -27,6 +27,7 @@ class DenoServer implements Server<DenoFetchHandler> {
     | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem)
     | undefined;
   readonly fetch: DenoFetchHandler;
+  readonly waitUntil?: Server["waitUntil"];
 
   #listeningPromise?: Promise<void>;
   #listeningInfo?: { hostname: string; port: number };
@@ -53,6 +54,7 @@ class DenoServer implements Server<DenoFetchHandler> {
     }
 
     this.#wait = createWaitUntil();
+    this.waitUntil = this.#wait.waitUntil;
 
     this.fetch = (request, info) => {
       Object.defineProperties(request, {

@@ -14,6 +14,7 @@ class GenericServer implements Server {
   readonly runtime = "generic";
   readonly options: Server["options"];
   readonly fetch: ServerHandler;
+  readonly waitUntil: Server["waitUntil"];
 
   #wait: ReturnType<typeof createWaitUntil>;
 
@@ -24,6 +25,7 @@ class GenericServer implements Server {
     errorPlugin(this);
 
     this.#wait = createWaitUntil();
+    this.waitUntil = this.#wait.waitUntil;
 
     const fetchHandler = wrapFetch(this as unknown as Server);
 

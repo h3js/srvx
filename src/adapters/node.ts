@@ -48,6 +48,7 @@ class NodeServer implements Server {
   readonly node: Server["node"];
   readonly serveOptions: ServerOptions["node"];
   readonly fetch: ServerHandler;
+  readonly waitUntil?: Server["waitUntil"];
   readonly #isSecure?: boolean;
 
   #listeningPromise?: Promise<void>;
@@ -74,6 +75,7 @@ class NodeServer implements Server {
     gracefulShutdownPlugin(this);
 
     this.#wait = createWaitUntil();
+    this.waitUntil = this.#wait.waitUntil;
 
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
