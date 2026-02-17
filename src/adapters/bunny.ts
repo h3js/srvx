@@ -78,7 +78,7 @@ class BunnyServer implements Server {
         // official documentation. Users should verify that Bunny.net's infrastructure
         // properly sanitizes these headers before relying on them for security-critical
         // purposes such as rate limiting or access control.
-        // See: https://github.com/h3js/srvx/pull/182#discussion_r2815608515
+        // See: https://github.com/h3js/srvx/pull/182
         ip: {
           enumerable: true,
           get() {
