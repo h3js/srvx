@@ -71,10 +71,17 @@ class BunnyServer implements Server {
           value: { name: "bunny" },
         },
         // IP address from Bunny headers
+        // Note: This implementation assumes Bunny.net Edge Scripting filters and sets
+        // x-forwarded-for and x-real-ip headers to prevent IP spoofing. While this
+        // follows the pattern used in similar edge runtimes (like Cloudflare with
+        // cf-connecting-ip), we have not verified this behavior in Bunny.net's
+        // official documentation. Users should verify that Bunny.net's infrastructure
+        // properly sanitizes these headers before relying on them for security-critical
+        // purposes such as rate limiting or access control.
+        // See: https://github.com/h3js/srvx/pull/182#discussion_r2815608515
         ip: {
           enumerable: true,
           get() {
-            // Bunny uses X-Forwarded-For or similar headers
             return (
               request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
               request.headers.get("x-real-ip") ||
