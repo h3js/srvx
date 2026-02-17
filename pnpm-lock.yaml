@@ -120,6 +120,12 @@ importers:
         specifier: link:../..
         version: link:../..
 
+  examples/bunny:
+    devDependencies:
+      srvx:
+        specifier: link:../..
+        version: link:../..
+
   examples/elysia:
     devDependencies:
       elysia:

@@ -187,6 +187,7 @@ export interface Server<Handler = ServerHandler> {
     | "node"
     | "deno"
     | "bun"
+    | "bunny"
     | "cloudflare"
     | "service-worker"
     | "aws-lambda"
@@ -259,7 +260,7 @@ export interface Server<Handler = ServerHandler> {
 // ----------------------------------------------------------------------------
 
 export interface ServerRuntimeContext {
-  name: "node" | "deno" | "bun" | "cloudflare" | "aws-lambda" | (string & {});
+  name: "node" | "deno" | "bun" | "bunny" | "cloudflare" | "aws-lambda" | (string & {});
 
   /**
    * Underlying Node.js server request info.

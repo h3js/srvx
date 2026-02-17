@@ -7,6 +7,7 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: [
         "src/adapters/bun.ts",
+        "src/adapters/bunny.ts",
         "src/adapters/cloudflare.ts",
         "src/adapters/deno.ts",
         "src/types.ts",

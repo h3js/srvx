@@ -20,6 +20,7 @@
     "./bun": "./dist/adapters/bun.mjs",
     "./node": "./dist/adapters/node.mjs",
     "./cloudflare": "./dist/adapters/cloudflare.mjs",
+    "./bunny": "./dist/adapters/bunny.mjs",
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
     "./aws-lambda": "./dist/adapters/aws-lambda.mjs",
