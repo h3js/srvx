@@ -9,10 +9,15 @@ export const FastURL: typeof globalThis.URL = URL;
 export const FastResponse: typeof globalThis.Response = Response;
 
 /**
- * Bunny global namespace types (from @bunny.net/edgescript-sdk)
+ * Bunny global namespace types
+ *
+ * Source: https://github.com/BunnyWay/edge-script-sdk/blob/main/libs/bunny-sdk/types/bunny.d.ts
+ *
  * @internal
  */
 declare namespace Bunny {
+  export const v1: BunnySDKV1;
+
   type BunnySDKV1 = {
     /**
      * Serve function for Bunny Edge runtime
@@ -33,8 +38,6 @@ declare namespace Bunny {
       >;
     }) => void;
   };
-
-  export const v1: BunnySDKV1;
 }
 
 export function serve(options: ServerOptions): Server {
@@ -45,11 +48,7 @@ class BunnyServer implements Server {
   readonly runtime = "bunny";
   readonly options: Server["options"];
   readonly fetch: (request: Request) => MaybePromise<Response>;
-  private _denoServer?: Deno.HttpServer = undefined;
   private _started = false;
-
-  // Deno only properties for local use, not available in Bunny runtime
-  #listeningPromise?: Promise<void>;
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -63,24 +62,14 @@ class BunnyServer implements Server {
 
     this.#wait = createWaitUntil();
 
-    this.fetch = (request: Request, denoInfo: { remoteAddr?: Deno.Addr } = {}) => {
+    this.fetch = (request: Request) => {
       Object.defineProperties(request, {
         waitUntil: { value: this.#wait?.waitUntil },
-        runtime: {
-          enumerable: true,
-          value: { name: "bunny" },
-        },
-        // IP address from Bunny headers
+        runtime: { enumerable: true, value: { name: "bunny" } },
         ip: {
           enumerable: true,
           get() {
-            // Bunny uses X-Forwarded-For or similar headers
-            return (
-              request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-              request.headers.get("x-real-ip") ||
-              (denoInfo?.remoteAddr as Deno.NetAddr)?.hostname ||
-              undefined
-            );
+            return request.headers.get("x-real-ip");
           },
         },
       });
@@ -100,47 +89,16 @@ class BunnyServer implements Server {
       this._started = true;
 
       Bunny.v1.serve(this.fetch);
-    } else if (typeof Deno !== "undefined") {
-      // Try to fallback to Deno's serve for local use
-      if (!this.options.silent) {
-        console.warn("[srvx] Bunny runtime not detected. Falling back to Deno for local use.");
-      }
-
-      if (this._denoServer) {
-        return Promise.resolve(this.#listeningPromise).then(() => this);
-      }
-      const onListenPromise = Promise.withResolvers<void>();
-      this.#listeningPromise = onListenPromise.promise;
-      const tls = resolveTLSOptions(this.options);
-
-      this._denoServer = Deno.serve(
-        {
-          ...this.options.deno,
-          ...resolvePortAndHost(this.options),
-          reusePort: this.options.reusePort,
-          onError: this.options.error,
-          ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
-          ...this.options.deno,
-        },
-        this.fetch,
-      );
     } else {
-      throw new Error(
-        "[srvx] Bunny runtime not detected and Deno is not available. Unable to start server.",
-      );
+      throw new Error("[srvx] Bunny runtime not detected.");
     }
   }
 
   ready(): Promise<Server> {
-    return Promise.resolve(this.#listeningPromise).then(() => this);
+    return Promise.resolve(this);
   }
 
   async close(): Promise<void> {
-    // Bunny runtime doesn't support closing the server
-    const promises = [this.#wait?.wait()];
-    if (this._denoServer) {
-      promises.push(this._denoServer.shutdown());
-    }
-    await Promise.all(promises);
+    await this.#wait?.wait();
   }
 }
