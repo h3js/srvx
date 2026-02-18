@@ -39,6 +39,11 @@ export type LoadOptions = {
   nodeCompat?: boolean;
 
   /**
+   * Node.js server instance to return when intercepting `http.Server.listen`.
+   */
+  nodeServer?: NodeServer;
+
+  /**
    * Hook called after the module is loaded to allow for custom processing.
    *
    * You can return a modified version of the module if needed.
@@ -122,7 +127,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   let interceptedServer: Server | undefined;
   try {
     if (opts.interceptHttpListen !== false) {
-      const loaded = await interceptListen(() => import(url));
+      const loaded = await interceptListen(() => import(url), opts.nodeServer);
       mod = loaded.res;
       interceptedNodeHandler = loaded.listenHandler;
       interceptedServer = loaded.server;
@@ -179,8 +184,11 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
 // Concurrency lock to prevent parallel interceptions
 let _interceptQueue: Promise<unknown> = Promise.resolve();
 
+type NodeServer = NonNullable<Server["node"]>["server"];
+
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
+  nodeServer?: NodeServer,
 ): Promise<{
   res?: T;
   listenHandler?: NodeHttpHandler;
@@ -193,8 +201,27 @@ async function interceptListen<T = unknown>(
     let listenHandler: NodeHttpHandler | undefined;
     let server: Server | undefined;
 
+    const nodeServerStub =
+      nodeServer ||
+      new Proxy(
+        {},
+        {
+          get(_, prop) {
+            const server = globalThis.__srvx__;
+            if (!server && prop === "address") {
+              return () => ({ address: "", family: "", port: 0 });
+            }
+            // @ts-expect-error
+            return server?.node?.server?.[prop];
+          },
+        },
+      );
+
     (globalThis as any).__srvxLoader__ = (obj: { server?: Server }) => {
       server = obj.server;
+      if (server && server.node) {
+        server.node.server ||= nodeServerStub as any;
+      }
     };
 
     try {
@@ -216,20 +243,7 @@ async function interceptListen<T = unknown>(
           listenCallback?.();
         });
 
-        // Return a deferred proxy for the server instance
-        return new Proxy(
-          {},
-          {
-            get(_, prop) {
-              const server = globalThis.__srvx__;
-              if (!server && prop === "address") {
-                return () => ({ address: "", family: "", port: 0 });
-              }
-              // @ts-expect-error
-              return server?.node?.server?.[prop];
-            },
-          },
-        );
+        return nodeServerStub;
       };
       res = await cb();
     } finally {
