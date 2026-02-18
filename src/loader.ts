@@ -2,6 +2,7 @@ import type { NodeHttpHandler, Server, ServerHandler, ServerRequest } from "srvx
 import { pathToFileURL } from "node:url";
 import * as nodeHTTP from "node:http";
 import { resolve } from "node:path";
+import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 
 export const defaultExts: string[] = [".mjs", ".js", ".mts", ".ts"];
@@ -42,6 +43,11 @@ export type LoadOptions = {
    * Node.js server instance to return when intercepting `http.Server.listen`.
    */
   nodeServer?: NodeServer;
+
+  /**
+   * srvx server instance to return when intercepting `http.Server.listen`.
+   */
+  srvxServer?: Server;
 
   /**
    * Hook called after the module is loaded to allow for custom processing.
@@ -127,7 +133,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   let interceptedServer: Server | undefined;
   try {
     if (opts.interceptHttpListen !== false) {
-      const loaded = await interceptListen(() => import(url), opts.nodeServer);
+      const loaded = await interceptListen(() => import(url), opts);
       mod = loaded.res;
       interceptedNodeHandler = loaded.listenHandler;
       interceptedServer = loaded.server;
@@ -188,7 +194,7 @@ type NodeServer = NonNullable<Server["node"]>["server"];
 
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
-  nodeServer?: NodeServer,
+  opts: { nodeServer?: NodeServer; srvxServer?: Server } = {},
 ): Promise<{
   res?: T;
   listenHandler?: NodeHttpHandler;
@@ -202,20 +208,9 @@ async function interceptListen<T = unknown>(
     let server: Server | undefined;
 
     const nodeServerStub =
-      nodeServer ||
-      new Proxy(
-        {},
-        {
-          get(_, prop) {
-            const server = globalThis.__srvx__;
-            if (!server && prop === "address") {
-              return () => ({ address: "", family: "", port: 0 });
-            }
-            // @ts-expect-error
-            return server?.node?.server?.[prop];
-          },
-        },
-      );
+      opts.nodeServer ||
+      opts.srvxServer?.node?.server ||
+      (new StubNodeServer(() => opts.srvxServer?.node?.server) as unknown as NodeServer);
 
     (globalThis as any).__srvxLoader__ = (obj: { server?: Server }) => {
       server = obj.server;
@@ -257,4 +252,36 @@ async function interceptListen<T = unknown>(
   _interceptQueue = result.catch(() => {});
 
   return result;
+}
+
+class StubNodeServer
+  extends EventEmitter
+  implements Pick<nodeHTTP.Server, "address" | "listen" | "close">
+{
+  constructor(getServer: () => NodeServer) {
+    super();
+    return new Proxy(this, {
+      get(target, prop, receiver) {
+        const server = getServer();
+        if (!server) {
+          return Reflect.get(target, prop, receiver);
+        }
+        const value = (server as any)[prop];
+        if (typeof value === "function") {
+          return value.bind(server);
+        }
+        return value;
+      },
+    });
+  }
+  address() {
+    return { address: "", family: "", port: 0 };
+  }
+  listen() {
+    return this as any;
+  }
+  close(callback?: ((err?: Error) => void) | undefined) {
+    callback?.();
+    return this as any;
+  }
 }

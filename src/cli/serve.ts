@@ -1,4 +1,4 @@
-import type { ServerMiddleware, ServerOptions } from "../types.ts";
+import type { Server, ServerMiddleware, ServerOptions } from "../types.ts";
 import type { CLIOptions } from "./types.ts";
 import { dirname, relative, resolve } from "node:path";
 import { loadServerEntry } from "../loader.ts";
@@ -15,10 +15,15 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
       process.env.NODE_ENV = cliOpts.prod ? "production" : "development";
     }
 
+    let server: Server | undefined;
+
     // Load server entry file and create a new server instance
     const loaded = await loadServerEntry({
       entry: cliOpts.entry,
       dir: cliOpts.dir,
+      get srvxServer() {
+        return server;
+      },
     });
 
     const { serve: srvxServe } = loaded.nodeCompat
@@ -45,7 +50,7 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     } as Partial<ServerOptions>;
 
     printInfo(cliOpts, loaded);
-    const server = (globalThis.__srvx__ = srvxServe({
+    server = srvxServe({
       ...serverOptions,
       gracefulShutdown: !!cliOpts.prod,
       port: cliOpts.port ?? serverOptions.port,
@@ -72,7 +77,7 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
           : undefined,
         ...(serverOptions.middleware || []),
       ].filter(Boolean) as ServerMiddleware[],
-    }));
+    });
     await server.ready();
   } catch (error) {
     console.error(error);

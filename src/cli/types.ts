@@ -1,9 +1,5 @@
 import type { Server } from "srvx";
 
-declare global {
-  var __srvx__: Server | undefined;
-}
-
 export type MainOptions = CLIOptions & {
   args?: string[];
   meta?: {
