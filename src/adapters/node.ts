@@ -63,20 +63,6 @@ class NodeServer implements Server {
 
     const fetchHandler = (this.fetch = wrapFetch(this));
 
-    // Detect running in srvx loader
-    const loader = (globalThis as any).__srvxLoader__ as
-      | ((handler: ServerHandler) => void)
-      | undefined;
-    if (loader) {
-      loader(fetchHandler);
-      return;
-    }
-
-    gracefulShutdownPlugin(this);
-
-    this.#wait = createWaitUntil();
-    this.waitUntil = this.#wait.waitUntil;
-
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait?.waitUntil;
@@ -85,6 +71,22 @@ class NodeServer implements Server {
         ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
         : sendNodeResponse(nodeRes, res);
     };
+
+    this.node = { handler, server: undefined };
+
+    // Detect running in srvx loader
+    const loader = (globalThis as any).__srvxLoader__ as
+      | ((obj: { server: Server }) => void)
+      | undefined;
+    if (loader) {
+      loader({ server: this });
+      return;
+    }
+
+    gracefulShutdownPlugin(this);
+
+    this.#wait = createWaitUntil();
+    this.waitUntil = this.#wait.waitUntil;
 
     const tls = resolveTLSOptions(this.options);
     const { port, hostname: host } = resolvePortAndHost(this.options);
@@ -115,7 +117,7 @@ class NodeServer implements Server {
       server = nodeHTTP.createServer(this.serveOptions as NodeHttp.ServerOptions, handler);
     }
 
-    this.node = { server, handler };
+    this.node.server = server;
 
     if (!options.manual) {
       this.serve();

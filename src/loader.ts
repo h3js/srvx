@@ -82,6 +82,11 @@ export type LoadedServerEntry = {
    * When `true`, no valid entry point could be located.
    */
   notFound?: boolean;
+
+  /**
+   * The original srvx server instance if the module used the loader API to export a server directly.
+   */
+  srvxServer?: Server;
 };
 
 export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEntry> {
@@ -114,13 +119,13 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   // Import the user file
   let mod: any;
   let interceptedNodeHandler: NodeHttpHandler | undefined;
-  let interceptedFetchHandler: ServerHandler | undefined;
+  let interceptedServer: Server | undefined;
   try {
     if (opts.interceptHttpListen !== false) {
       const loaded = await interceptListen(() => import(url));
       mod = loaded.res;
       interceptedNodeHandler = loaded.listenHandler;
-      interceptedFetchHandler = loaded.fetchHandler;
+      interceptedServer = loaded.server;
     } else {
       mod = await import(url);
     }
@@ -145,7 +150,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   mod = (await opts?.onLoad?.(mod)) || mod;
 
   let fetchHandler =
-    mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch || interceptedFetchHandler;
+    mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch || interceptedServer?.fetch;
   if (!fetchHandler && typeof mod?.default === "function" && mod.default.length < 2) {
     fetchHandler = mod.default;
   }
@@ -167,6 +172,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
     nodeCompat,
     url,
     fetch: fetchHandler,
+    srvxServer: interceptedServer,
   };
 }
 
@@ -175,16 +181,20 @@ let _interceptQueue: Promise<unknown> = Promise.resolve();
 
 async function interceptListen<T = unknown>(
   cb: () => T | Promise<T>,
-): Promise<{ res?: T; listenHandler?: NodeHttpHandler; fetchHandler?: ServerHandler }> {
+): Promise<{
+  res?: T;
+  listenHandler?: NodeHttpHandler;
+  server?: Server;
+}> {
   // Chain onto the queue to ensure sequential execution
   const result = _interceptQueue.then(async () => {
     const originalListen = nodeHTTP.Server.prototype.listen;
     let res: T;
     let listenHandler: NodeHttpHandler | undefined;
-    let fetchHandler: ServerHandler | undefined;
+    let server: Server | undefined;
 
-    (globalThis as any).__srvxLoader__ = (handler: ServerHandler) => {
-      fetchHandler = handler;
+    (globalThis as any).__srvxLoader__ = (obj: { server?: Server }) => {
+      server = obj.server;
     };
 
     try {
@@ -226,7 +236,7 @@ async function interceptListen<T = unknown>(
       nodeHTTP.Server.prototype.listen = originalListen;
       delete (globalThis as any).__srvxLoader__;
     }
-    return { res, listenHandler, fetchHandler };
+    return { res, listenHandler, server };
   });
 
   // Update queue to point to this operation (swallow errors for queue chaining)

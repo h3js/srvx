@@ -40,11 +40,11 @@ class BunServer implements Server<BunFetchHandler> {
 
     // Detect running in srvx loader
     const loader = (globalThis as any).__srvxLoader__ as
-      | ((handler: ServerHandler) => void)
+      | ((obj: { server: Server }) => void)
       | undefined;
     if (loader) {
       this.fetch = fetchHandler;
-      loader(fetchHandler);
+      loader({ server: this });
       return;
     }
 
