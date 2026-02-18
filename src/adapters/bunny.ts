@@ -1,4 +1,3 @@
-import { createWaitUntil } from "../_utils.ts";
 import type { Server, ServerOptions } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -17,8 +16,12 @@ export const FastResponse: typeof globalThis.Response = Response;
  */
 declare namespace Bunny {
   export const v1: BunnySDKV1;
+  export const unstable: BunnySDKUnstable;
   type BunnySDKV1 = {
     serve: (handler: (request: Request) => MaybePromise<Response>) => void;
+  };
+  type BunnySDKUnstable = {
+    waitUntil(promise: Promise<unknown>): void;
   };
 }
 
@@ -31,8 +34,7 @@ class BunnyServer implements Server {
   readonly options: Server["options"];
   readonly fetch: (request: Request) => MaybePromise<Response>;
   private _started = false;
-
-  #wait: ReturnType<typeof createWaitUntil> | undefined;
+  readonly waitUntil: Server["waitUntil"];
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -41,12 +43,11 @@ class BunnyServer implements Server {
     errorPlugin(this);
 
     const fetchHandler = wrapFetch(this);
-
-    this.#wait = createWaitUntil();
+    this.waitUntil = (promise: Promise<unknown>) => Bunny.unstable.waitUntil(promise);
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
-        waitUntil: { value: this.#wait?.waitUntil },
+        waitUntil: { value: (promise: Promise<unknown>) => Bunny.unstable.waitUntil(promise) },
         runtime: { enumerable: true, value: { name: "bunny" } },
         ip: {
           enumerable: true,
@@ -80,7 +81,7 @@ class BunnyServer implements Server {
     return Promise.resolve(this);
   }
 
-  async close(): Promise<void> {
-    await this.#wait?.wait();
+  close(): Promise<void> {
+    return Promise.resolve();
   }
 }
