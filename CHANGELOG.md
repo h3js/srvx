@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.11.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.6...v0.11.7)
+
+### 🚀 Enhancements
+
+- **loader:** Access to the whole intercepted srvx instance ([bbf4d9d](https://github.com/h3js/srvx/commit/bbf4d9d))
+- **loader:** Allow passing custom node server to inspector ([4a817ec](https://github.com/h3js/srvx/commit/4a817ec))
+
+### 💅 Refactors
+
+- **cli, loader:** Pass underlying server without depending on globals ([c0d9520](https://github.com/h3js/srvx/commit/c0d9520))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.5...v0.11.6)
