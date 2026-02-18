@@ -43,12 +43,13 @@ class BunnyServer implements Server {
     errorPlugin(this);
 
     const fetchHandler = wrapFetch(this);
-    this.waitUntil = (promise: Promise<unknown>) => Bunny.unstable.waitUntil(promise);
+
+    const waitUntil = (this.waitUntil = (p: Promise<unknown>) => Bunny.unstable?.waitUntil?.(p));
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
-        waitUntil: { value: (promise: Promise<unknown>) => Bunny.unstable.waitUntil(promise) },
         runtime: { enumerable: true, value: { name: "bunny" } },
+        waitUntil: { value: waitUntil },
         ip: {
           enumerable: true,
           get() {
