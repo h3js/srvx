@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.5...v0.11.6)
+
+### 🚀 Enhancements
+
+- **bunny:** Add support for native `waitUntil` ([#186](https://github.com/h3js/srvx/pull/186))
+
+### ❤️ Contributors
+
+- Sandro Circi ([@sandros94](https://github.com/sandros94))
+
 ## v0.11.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.4...v0.11.5)
