@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.11.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.7...v0.11.8)
+
+### 🩹 Fixes
+
+- **node:** Validate host header ([7c8c962](https://github.com/h3js/srvx/commit/7c8c962))
+
+### 🏡 Chore
+
+- Update deps ([b6738bd](https://github.com/h3js/srvx/commit/b6738bd))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.7
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.6...v0.11.7)
