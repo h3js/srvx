@@ -1,7 +1,7 @@
 import type { ServerMiddleware } from "./types.ts";
 import type { Transform } from "node:stream";
 
-import { extname, join, resolve } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { createReadStream, ReadStream } from "node:fs";
 import { FastResponse } from "srvx";
@@ -55,7 +55,7 @@ const COMMON_MIME_TYPES: Record<string, string> = {
 };
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
-  const dir = resolve(options.dir) + "/";
+  const dir = resolve(options.dir) + sep;
   const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
 
   return async (req, next) => {
