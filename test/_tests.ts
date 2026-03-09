@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import http from "node:http";
+import http2 from "node:http2";
 
 export function addTests(opts: {
   url: (path: string) => string;
@@ -7,6 +8,7 @@ export function addTests(opts: {
   fetch?: typeof globalThis.fetch;
   http2?: boolean;
   fastResponse?: boolean;
+  ca?: string;
 }): void {
   const { url, fetch: _fetch = globalThis.fetch } = opts;
 
@@ -281,6 +283,61 @@ export function addTests(opts: {
     expect(response.status).toBe(200);
     const data = await response.text();
     expect(data.includes("x-foo"));
+  });
+
+  test("normalize traversal in request path", async () => {
+    const _url = new URL(url("/"));
+
+    let body: string;
+    let statusCode: number | undefined;
+
+    if (opts.http2) {
+      const client = http2.connect(_url.origin, { ca: opts.ca });
+      try {
+        const req = client.request({ ":path": "/foo/../bar/baz", ":authority": "localhost" });
+        const res = await new Promise<{ headers: http2.IncomingHttpHeaders; body: string }>(
+          (resolve, reject) => {
+            let headers: http2.IncomingHttpHeaders;
+            const chunks: Uint8Array[] = [];
+            req.on("response", (h) => {
+              headers = h;
+            });
+            req.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+            req.on("end", () =>
+              resolve({ headers: headers!, body: Buffer.concat(chunks).toString("utf8") }),
+            );
+            req.on("error", reject);
+          },
+        );
+        statusCode = res.headers[":status"] as number | undefined;
+        body = res.body;
+      } finally {
+        client.close();
+      }
+    } else {
+      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const req = http.request({
+          method: "GET",
+          path: "/foo/../bar/baz",
+          hostname: "localhost",
+          port: _url.port,
+        });
+        req.end();
+        req.on("response", resolve);
+        req.on("error", reject);
+      });
+      statusCode = res.statusCode;
+      body = await new Promise<string>((resolve, reject) => {
+        const chunks: Uint8Array[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        res.on("error", reject);
+      });
+    }
+
+    expect(statusCode).toBe(200);
+    const data = JSON.parse(body);
+    expect(data.pathname).toBe("/bar/baz");
   });
 
   // TODO: Write test to make sure it is forbidden for http2/tls

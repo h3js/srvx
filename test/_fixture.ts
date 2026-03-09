@@ -257,6 +257,12 @@ export const fixture: (
             headers: inspect(req.headers),
           });
         }
+        case "/bar/baz": {
+          return Response.json({
+            pathname: url.pathname,
+            url: req.url,
+          });
+        }
       }
       return new _Response("404", { status: 404 });
     },

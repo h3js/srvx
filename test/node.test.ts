@@ -71,6 +71,7 @@ for (const config of testConfigs) {
       http2: config.http2,
       fetch: client.fetch,
       fastResponse: config.fastResponse,
+      ca: tls.ca,
     });
   });
 }

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { FastURL } from "../src/_url.ts";
+import { NodeRequestURL } from "../src/adapters/_node/url.ts";
 
 const urlTests = await import("./wpt/url_tests.json", {
   with: { type: "json" },
@@ -120,6 +121,63 @@ describe("FastURL", () => {
             }
           });
         }
+      });
+    }
+  });
+
+  describe("pathname normalization", () => {
+    const cases = [
+      // Literal dot segments
+      ["/foo/../bar/baz", "/bar/baz"],
+      ["/foo/./bar", "/foo/bar"],
+      ["/a/b/../c/../d", "/a/d"],
+      ["/a/b/../../c", "/c"],
+      ["/../a", "/a"],
+      ["/a/..", "/"],
+      ["/a/.", "/a/"],
+      ["/a/b/../c?q=1", "/a/c"],
+      // Percent-encoded dot segments
+      ["/%2e/b", "/b"],
+      ["/%2E/b", "/b"],
+      ["/%2e%2e/b", "/b"],
+      ["/%2E%2E/b", "/b"],
+      ["/a/%2e%2e/b", "/b"],
+      ["/a/%2e./b", "/b"],
+      ["/a/.%2e/b", "/b"],
+      ["/a/.%2E/b", "/b"],
+      ["/a/%2E./b", "/b"],
+      ["/a/%2e", "/a/"],
+      ["/a/%2e%2e", "/"],
+      // Trailing encoded dot produces trailing slash
+      ["/a/b/%2e", "/a/b/"],
+      ["/a/b/%2e%2e", "/a/"],
+      // Mixed
+      ["/a/%2e/../b", "/b"],
+      ["/a/./%2e%2e/b", "/b"],
+      // Backslash normalization
+      ["/a\\b", "/a/b"],
+      ["/a\\b\\c", "/a/b/c"],
+      ["/a\\b/c", "/a/b/c"],
+      // Non-ASCII characters (percent-encoded by native URL)
+      ["/caf\u00e9", "/caf%C3%A9"],
+      ["/\u00fc\u00f6\u00e4", "/%C3%BC%C3%B6%C3%A4"],
+      // Not dot segments (should be untouched)
+      ["/a/b/c", "/a/b/c"],
+      ["/.hidden", "/.hidden"],
+      ["/a/.hidden/b", "/a/.hidden/b"],
+    ] as const;
+
+    for (const [input, expected] of cases) {
+      test(`native URL: "${input}" => "${expected}"`, () => {
+        const url = new URL(`http://localhost${input}`);
+        expect(url.pathname).toBe(expected);
+      });
+
+      test(`NodeRequestURL: "${input}" => "${expected}"`, () => {
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(url.pathname).toBe(expected);
       });
     }
   });

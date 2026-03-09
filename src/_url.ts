@@ -7,6 +7,12 @@ export type URLInit = {
   search: string;
 };
 
+// Matches paths that need native URL normalization:
+// - dot segments (. / .. / %2e variants)
+// - backslashes
+// - non-ASCII characters
+const _needsNormRE = /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^\x80-\uffff]/i;
+
 /**
  * URL wrapper with fast paths to access to the following props:
  *
@@ -38,6 +44,10 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
       constructor(url: string | URLInit) {
         if (typeof url === "string") {
           this.#href = url;
+        } else if (_needsNormRE.test(url.pathname)) {
+          this.#url = new NativeURL(
+            `${url.protocol || "http:"}//${url.host || "localhost"}${url.pathname}${url.search || ""}`,
+          );
         } else {
           this.#protocol = url.protocol;
           this.#host = url.host;
