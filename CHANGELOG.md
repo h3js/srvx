@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.11.9
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.8...v0.11.9)
+
+### 🩹 Fixes
+
+- **static:** Use path separator instead of hardcoded slash ([#190](https://github.com/h3js/srvx/pull/190))
+- **fasturl, node:** Normalize pathname if necessary ([bd8c0d3](https://github.com/h3js/srvx/commit/bd8c0d3))
+
+### 🏡 Chore
+
+- Update deps ([cb8c4ed](https://github.com/h3js/srvx/commit/cb8c4ed))
+- Update tsconfig ([fc1a711](https://github.com/h3js/srvx/commit/fc1a711))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Joël Charles ([@magne4000](https://github.com/magne4000))
+
 ## v0.11.8
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.7...v0.11.8)
