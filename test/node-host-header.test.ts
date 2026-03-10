@@ -7,11 +7,10 @@
  * NodeRequestURL becomes an uncaughtException that kills the process
  * because there is no try/catch in the Node adapter's handler.
  *
- * The fix: instead of throwing, invalid Host headers fall back to the
- * socket address (same path as missing Host). The request is processed
- * normally with a safe URL. This matches how other HTTP servers like
- * nginx and Caddy behave. They use the socket address when the Host
- * is unusable, rather than rejecting the request.
+ * The fix: instead of throwing, invalid Host headers are replaced with
+ * "_invalid_" so the request can be processed safely. This avoids
+ * falling back to the socket address, which could allow requests with
+ * forged Host headers to bypass localhost-only authentication.
  */
 
 import { afterEach, describe, expect, test } from "vitest";
@@ -79,7 +78,7 @@ describe("malformed Host header handling", () => {
     }
   });
 
-  test("malformed Host falls back to socket address, not crash", async () => {
+  test("malformed Host is replaced with _invalid_, not crash", async () => {
     server = serve({
       port: 0,
       fetch(request) {
@@ -92,9 +91,8 @@ describe("malformed Host header handling", () => {
     const result = await rawRequest(port, "localhost:3000/malicious-path");
 
     expect(result.statusCode).toBe(200);
-    // URL should use socket address, not the malformed host
     expect(result.body).not.toContain("malicious-path");
-    expect(result.body).toContain(String(port));
+    expect(result.body).toContain("_invalid_");
   });
 
   test("server remains operational after malformed request", async () => {
@@ -110,14 +108,15 @@ describe("malformed Host header handling", () => {
     // Malformed request
     const malformed = await rawRequest(port, "localhost:3000/evil");
     expect(malformed.statusCode).toBe(200);
+    expect(malformed.body).toContain("_invalid_");
 
-    // Valid request afterwards -- server must still work
+    // Valid request afterwards
     const valid = await rawRequest(port, "localhost");
     expect(valid.statusCode).toBe(200);
     expect(valid.body).toContain("localhost");
   });
 
-  test.each(MALFORMED_HOSTS)("malformed Host %s falls back gracefully", async (hostValue) => {
+  test.each(MALFORMED_HOSTS)("malformed Host %s is replaced with _invalid_", async (hostValue) => {
     server = serve({
       port: 0,
       fetch(request) {
@@ -129,9 +128,8 @@ describe("malformed Host header handling", () => {
 
     const result = await rawRequest(port, hostValue);
 
-    // Must not crash -- should process normally with fallback URL
     expect(result.statusCode).toBe(200);
-    expect(result.body).toContain(String(port));
+    expect(result.body).toContain("_invalid_");
   });
 
   test("valid Host headers work normally", async () => {
@@ -200,5 +198,7 @@ describe("malformed Host header handling", () => {
     });
 
     expect(result.statusCode).toBe(200);
+    // Socket-derived fallback: URL should contain the actual port
+    expect(result.body).toContain(String(port));
   });
 });

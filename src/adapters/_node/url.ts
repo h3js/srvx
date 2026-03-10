@@ -20,9 +20,8 @@ export class NodeRequestURL extends FastURL {
 
       let host = req.headers.host || (req.headers[":authority"] as string);
       if (host && !HOST_RE.test(host)) {
-        host = "";
-      }
-      if (!host) {
+        host = "_invalid_";
+      } else if (!host) {
         if (req.socket) {
           host = `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
         } else {
