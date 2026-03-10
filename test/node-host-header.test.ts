@@ -23,10 +23,7 @@ import type { Server } from "../src/types.ts";
  * Send a raw HTTP request with a custom Host header.
  * Uses http.request because fetch() normalizes headers.
  */
-function rawRequest(
-  port: number,
-  host: string,
-): Promise<{ statusCode: number; body: string }> {
+function rawRequest(port: number, host: string): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
@@ -65,12 +62,12 @@ function getPort(server: Server): number {
 
 // Malformed Host header values that fail HOST_RE
 const MALFORMED_HOSTS = [
-  "localhost:3000/foobar",      // path in host
-  "example.com?query=1",       // query in host
-  "host with spaces",          // spaces
-  "evil@host.com",             // @ sign
+  "localhost:3000/foobar", // path in host
+  "example.com?query=1", // query in host
+  "host with spaces", // spaces
+  "evil@host.com", // @ sign
   "<script>alert(1)</script>", // XSS attempt
-  "host:port:extra",           // double colon
+  "host:port:extra", // double colon
 ];
 
 describe("malformed Host header handling", () => {
@@ -120,25 +117,22 @@ describe("malformed Host header handling", () => {
     expect(valid.body).toContain("localhost");
   });
 
-  test.each(MALFORMED_HOSTS)(
-    "malformed Host %s falls back gracefully",
-    async (hostValue) => {
-      server = serve({
-        port: 0,
-        fetch(request) {
-          return new Response(request.url);
-        },
-      });
-      await server.ready();
-      const port = getPort(server);
+  test.each(MALFORMED_HOSTS)("malformed Host %s falls back gracefully", async (hostValue) => {
+    server = serve({
+      port: 0,
+      fetch(request) {
+        return new Response(request.url);
+      },
+    });
+    await server.ready();
+    const port = getPort(server);
 
-      const result = await rawRequest(port, hostValue);
+    const result = await rawRequest(port, hostValue);
 
-      // Must not crash -- should process normally with fallback URL
-      expect(result.statusCode).toBe(200);
-      expect(result.body).toContain(String(port));
-    },
-  );
+    // Must not crash -- should process normally with fallback URL
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toContain(String(port));
+  });
 
   test("valid Host headers work normally", async () => {
     server = serve({
@@ -182,30 +176,28 @@ describe("malformed Host header handling", () => {
     const port = getPort(server);
 
     // HTTP/1.0 without Host header
-    const result = await new Promise<{ statusCode: number; body: string }>(
-      (resolve, reject) => {
-        const net = require("node:net");
-        const socket = new net.Socket();
-        socket.connect(port, "127.0.0.1", () => {
-          socket.write("GET / HTTP/1.0\r\n\r\n");
-        });
-        let data = "";
-        socket.on("data", (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        socket.on("end", () => {
-          const statusLine = data.split("\r\n")[0];
-          const statusCode = Number.parseInt(statusLine.split(" ")[1], 10);
-          const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
-          resolve({ statusCode, body });
-        });
-        socket.on("error", reject);
-        socket.setTimeout(2000, () => {
-          socket.destroy();
-          reject(new Error("socket timed out"));
-        });
-      },
-    );
+    const result = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const net = require("node:net");
+      const socket = new net.Socket();
+      socket.connect(port, "127.0.0.1", () => {
+        socket.write("GET / HTTP/1.0\r\n\r\n");
+      });
+      let data = "";
+      socket.on("data", (chunk: Buffer) => {
+        data += chunk.toString();
+      });
+      socket.on("end", () => {
+        const statusLine = data.split("\r\n")[0];
+        const statusCode = Number.parseInt(statusLine.split(" ")[1], 10);
+        const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+        resolve({ statusCode, body });
+      });
+      socket.on("error", reject);
+      socket.setTimeout(2000, () => {
+        socket.destroy();
+        reject(new Error("socket timed out"));
+      });
+    });
 
     expect(result.statusCode).toBe(200);
   });
