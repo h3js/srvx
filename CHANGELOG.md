@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.11.10
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.9...v0.11.10)
+
+### 🩹 Fixes
+
+- **node:** Handle error and abort propagation for piped Node.js streams ([77f879b](https://github.com/h3js/srvx/commit/77f879b))
+- **node:** Fallback to socket address on invalid Host header ([#192](https://github.com/h3js/srvx/pull/192))
+- **node:** Combine duplicate headers in `entries()` iterator ([4ed7453](https://github.com/h3js/srvx/commit/4ed7453))
+
+### 🏡 Chore
+
+- Apply automated updates ([9b00c0c](https://github.com/h3js/srvx/commit/9b00c0c))
+- Update deps ([aa84077](https://github.com/h3js/srvx/commit/aa84077))
+- Apply automated updates ([91a5c14](https://github.com/h3js/srvx/commit/91a5c14))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Marc <marc@plastikpalme.de>
+
 ## v0.11.9
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.8...v0.11.9)
