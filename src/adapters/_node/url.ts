@@ -19,14 +19,14 @@ export class NodeRequestURL extends FastURL {
       const search = qIndex === -1 ? "" : path?.slice(qIndex) || "";
 
       let host = req.headers.host || (req.headers[":authority"] as string);
-      if (host) {
-        if (!HOST_RE.test(host)) {
-          throw new TypeError(`Invalid host header: ${host}`);
+      if (host && !HOST_RE.test(host)) {
+        host = "_invalid_";
+      } else if (!host) {
+        if (req.socket) {
+          host = `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
+        } else {
+          host = "localhost";
         }
-      } else if (req.socket) {
-        host = `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
-      } else {
-        host = "localhost";
       }
 
       const protocol =
