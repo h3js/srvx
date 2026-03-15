@@ -4,8 +4,7 @@ import { serve } from "../src/adapters/node.ts";
 
 describe("node response stream error handling", () => {
   test("client abort propagates to node readable stream", async () => {
-    const { promise: destroyed, resolve: onDestroyed } =
-      Promise.withResolvers<boolean>();
+    const { promise: destroyed, resolve: onDestroyed } = Promise.withResolvers<boolean>();
 
     const server = serve({
       port: 0,
@@ -78,8 +77,7 @@ describe("node response stream error handling", () => {
   });
 
   test("web readable stream client abort propagates to cancel", async () => {
-    const { promise: cancelled, resolve: onCancelled } =
-      Promise.withResolvers<boolean>();
+    const { promise: cancelled, resolve: onCancelled } = Promise.withResolvers<boolean>();
 
     const server = serve({
       port: 0,
@@ -126,9 +124,7 @@ describe("node response stream error handling", () => {
             pull(controller) {
               chunkCount++;
               if (chunkCount <= 2) {
-                controller.enqueue(
-                  new TextEncoder().encode("x".repeat(1024)),
-                );
+                controller.enqueue(new TextEncoder().encode("x".repeat(1024)));
               } else {
                 controller.error(new Error("read error"));
               }

@@ -64,10 +64,7 @@ function endNodeResponse(nodeRes: NodeServerResponse) {
   return new Promise<void>((resolve) => nodeRes.end(resolve));
 }
 
-function pipeBody(
-  stream: NodeReadable,
-  nodeRes: NodeServerResponse,
-): Promise<void> | void {
+function pipeBody(stream: NodeReadable, nodeRes: NodeServerResponse): Promise<void> | void {
   if (nodeRes.destroyed) {
     stream.destroy();
     return;
