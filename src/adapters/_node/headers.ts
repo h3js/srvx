@@ -63,20 +63,8 @@ export const NodeRequestHeaders: {
       return Array.isArray(value) ? value : value ? [value] : [];
     }
 
-    *_entries(): HeadersIterator<[string, string]> {
-      const rawHeaders = this.#req.rawHeaders;
-      const len = rawHeaders.length;
-      for (let i = 0; i < len; i += 2) {
-        const key = rawHeaders[i];
-        if (key.charCodeAt(0) === 58 /* : */) {
-          continue;
-        }
-        yield [key.toLowerCase(), rawHeaders[i + 1]];
-      }
-    }
-
     entries(): HeadersIterator<[string, string]> {
-      return this.#headers ? this.#headers.entries() : this._entries();
+      return this._headers.entries();
     }
 
     [Symbol.iterator](): HeadersIterator<[string, string]> {
