@@ -146,6 +146,105 @@ describe("node response stream error handling", () => {
     await server.close(true);
   });
 
+  test("FastResponse: node stream early error returns 500", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        // Stream that errors before producing any data
+        const stream = new Readable({
+          read() {
+            process.nextTick(() => this.destroy(new Error("init error")));
+          },
+        });
+        stream.on("error", () => {});
+        return new FastResponse(stream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    await server.close(true);
+  });
+
+  test("FastResponse: node stream with data pipes correctly", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new Readable({
+          read() {
+            this.push(Buffer.from("hello stream"));
+            this.push(null);
+          },
+        });
+        return new FastResponse(stream as unknown as BodyInit, {
+          status: 201,
+          headers: { "x-custom": "test" },
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(201);
+    expect(res.headers.get("x-custom")).toBe("test");
+    expect(await res.text()).toBe("hello stream");
+    await server.close(true);
+  });
+
+  test("FastResponse: node stream mid-stream error terminates response", async () => {
+    let chunkCount = 0;
+
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new Readable({
+          read() {
+            chunkCount++;
+            if (chunkCount <= 2) {
+              this.push(Buffer.from("x".repeat(1024)));
+            } else {
+              process.nextTick(() => this.destroy(new Error("mid error")));
+            }
+          },
+        });
+        stream.on("error", () => {});
+        return new FastResponse(stream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const result = await Promise.race([
+      fetch(server.url!)
+        .then((res) => res.text())
+        .then(
+          () => "completed",
+          () => "errored",
+        ),
+      new Promise<string>((r) => setTimeout(() => r("hung"), 3000)),
+    ]);
+
+    expect(result).not.toBe("hung");
+    await server.close(true);
+  });
+
+  test("FastResponse: pre-destroyed node stream returns 500", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new Readable({ read() {} });
+        stream.destroy(new Error("already broken"));
+        stream.on("error", () => {});
+        return new FastResponse(stream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    await server.close(true);
+  });
+
   test("duck-typed pipe object (e.g. React PipeableStream) works", async () => {
     const server = serve({
       port: 0,
