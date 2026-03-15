@@ -1,4 +1,5 @@
 import type { Readable as NodeReadable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
 import type { NodeResponse } from "./response.ts";
@@ -20,8 +21,7 @@ export async function sendNodeResponse(
       if (res.body instanceof ReadableStream) {
         return streamBody(res.body, nodeRes);
       } else if (typeof (res.body as NodeReadable)?.pipe === "function") {
-        (res.body as NodeReadable).pipe(nodeRes);
-        return new Promise((resolve) => nodeRes.on("close", resolve));
+        return pipeBody(res.body as NodeReadable, nodeRes);
       }
       // Note: NodeHttp2ServerResponse.write() body type declared as string | Uint8Array
       // We explicitly test other types in runtime.
@@ -62,6 +62,17 @@ function writeHead(
 
 function endNodeResponse(nodeRes: NodeServerResponse) {
   return new Promise<void>((resolve) => nodeRes.end(resolve));
+}
+
+function pipeBody(
+  stream: NodeReadable,
+  nodeRes: NodeServerResponse,
+): Promise<void> | void {
+  if (nodeRes.destroyed) {
+    stream.destroy();
+    return;
+  }
+  return pipeline(stream, nodeRes as NodeHttp.ServerResponse).catch(() => {});
 }
 
 export function streamBody(
