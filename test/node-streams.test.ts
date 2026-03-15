@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import { describe, expect, test } from "vitest";
-import { serve } from "../src/adapters/node.ts";
+import { serve, FastResponse } from "../src/adapters/node.ts";
 
 describe("node response stream error handling", () => {
   test("client abort propagates to node readable stream", async () => {
@@ -143,6 +143,30 @@ describe("node response stream error handling", () => {
       );
 
     expect(["completed", "errored"]).toContain(result);
+    await server.close(true);
+  });
+
+  test("duck-typed pipe object (e.g. React PipeableStream) works", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        // Simulate React's renderToPipeableStream which returns { pipe, abort }
+        const pipeableStream = {
+          pipe(writable: NodeJS.WritableStream) {
+            writable.write("hello from pipeable");
+            writable.end();
+            return writable;
+          },
+          abort() {},
+        };
+        return new FastResponse(pipeableStream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("hello from pipeable");
     await server.close(true);
   });
 });
