@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.11.11
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.10...v0.11.11)
+
+### 🩹 Fixes
+
+- **node:** Handle duck-typed pipe objects in `pipeBody` ([5e731ef](https://github.com/h3js/srvx/commit/5e731ef))
+
+### ✅ Tests
+
+- **node:** Add duck-typed pipe object test for `pipeBody` ([f746e79](https://github.com/h3js/srvx/commit/f746e79))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.10
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.9...v0.11.10)
