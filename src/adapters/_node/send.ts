@@ -66,10 +66,17 @@ function endNodeResponse(nodeRes: NodeServerResponse) {
 
 function pipeBody(stream: NodeReadable, nodeRes: NodeServerResponse): Promise<void> | void {
   if (nodeRes.destroyed) {
-    stream.destroy();
+    stream.destroy?.();
     return;
   }
-  return pipeline(stream, nodeRes as NodeHttp.ServerResponse).catch(() => {});
+  // Real Node.js streams (with .on/.destroy) support pipeline() for proper
+  // error/abort propagation. Duck-typed pipe objects (e.g. React's
+  // PipeableStream) only have .pipe() and must use the raw path.
+  if (typeof stream.on === "function" && typeof stream.destroy === "function") {
+    return pipeline(stream, nodeRes as NodeHttp.ServerResponse).catch(() => {});
+  }
+  stream.pipe(nodeRes as unknown as NodeJS.WritableStream);
+  return new Promise<void>((resolve) => nodeRes.on("close", resolve));
 }
 
 export function streamBody(
