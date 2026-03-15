@@ -17,10 +17,10 @@ function mockReq(rawHeaders: string[], headers: Record<string, string | string[]
 describe("NodeRequestHeaders", () => {
   test("entries() combines duplicate headers (#188)", () => {
     // Simulate HTTP/2 splitting cookies into separate rawHeaders entries
-    const req = mockReq(
-      ["cookie", "a=1", "cookie", "b=2", "host", "localhost"],
-      { cookie: ["a=1", "b=2"], host: "localhost" },
-    );
+    const req = mockReq(["cookie", "a=1", "cookie", "b=2", "host", "localhost"], {
+      cookie: ["a=1", "b=2"],
+      host: "localhost",
+    });
     const headers = new NodeRequestHeaders(req);
 
     const entries = Object.fromEntries(headers.entries());
@@ -31,10 +31,9 @@ describe("NodeRequestHeaders", () => {
   });
 
   test("[Symbol.iterator] combines duplicate headers (#188)", () => {
-    const req = mockReq(
-      ["cookie", "first=1", "cookie", "second=2"],
-      { cookie: ["first=1", "second=2"] },
-    );
+    const req = mockReq(["cookie", "first=1", "cookie", "second=2"], {
+      cookie: ["first=1", "second=2"],
+    });
     const headers = new NodeRequestHeaders(req);
 
     const entries = Object.fromEntries(headers);
@@ -43,10 +42,7 @@ describe("NodeRequestHeaders", () => {
   });
 
   test("get() combines duplicate headers", () => {
-    const req = mockReq(
-      ["cookie", "a=1", "cookie", "b=2"],
-      { cookie: ["a=1", "b=2"] },
-    );
+    const req = mockReq(["cookie", "a=1", "cookie", "b=2"], { cookie: ["a=1", "b=2"] });
     const headers = new NodeRequestHeaders(req);
 
     const cookie = headers.get("cookie");
