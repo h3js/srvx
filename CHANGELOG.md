@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.12
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.11...v0.11.12)
+
+### 🩹 Fixes
+
+- **node:** Improve `pipeBody` stability and performance ([4051f22](https://github.com/h3js/srvx/commit/4051f22))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.11
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.10...v0.11.11)
