@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260317.1",
-    "@hono/node-server": "^1.19.11",
+    "@hono/node-server": "^2.0.0-rc.1",
     "@mitata/counters": "^0.0.8",
     "@mjackson/node-fetch-server": "^0.7.0",
     "@types/aws-lambda": "^8.10.161",

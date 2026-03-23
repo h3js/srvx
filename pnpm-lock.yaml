@@ -15,8 +15,8 @@ importers:
         specifier: ^4.20260317.1
         version: 4.20260317.1
       '@hono/node-server':
-        specifier: ^1.19.11
-        version: 1.19.11(hono@4.11.7)
+        specifier: ^2.0.0-rc.1
+        version: 2.0.0-rc.1(hono@4.11.7)
       '@mitata/counters':
         specifier: ^0.0.8
         version: 0.0.8
@@ -884,9 +884,9 @@ packages:
   '@hapi/wreck@18.1.0':
     resolution: {integrity: sha512-0z6ZRCmFEfV/MQqkQomJ7sl/hyxvcZM7LtuVqN3vdAO4vM9eBbowl0kaqQj9EJJQab+3Uuh1GxbGIBFy4NfJ4w==}
 
-  '@hono/node-server@1.19.11':
-    resolution: {integrity: sha512-dr8/3zEaB+p0D2n/IUrlPF1HZm586qgJNXK1a9fhg/PzdtkK7Ksd5l312tJX2yBuALqDYBlG20QEbayqPyxn+g==}
-    engines: {node: '>=18.14.1'}
+  '@hono/node-server@2.0.0-rc.1':
+    resolution: {integrity: sha512-yQBFoOwkUmcy5itELU3cYRW/lgpBmns+Y4YIOzq13xVeZIDBFCr6qKIUNuHWpEv1Wkonk9ybrHGh1dVxxIJ8nQ==}
+    engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
 
@@ -4934,7 +4934,7 @@ snapshots:
       '@hapi/bourne': 3.0.0
       '@hapi/hoek': 11.0.7
 
-  '@hono/node-server@1.19.11(hono@4.11.7)':
+  '@hono/node-server@2.0.0-rc.1(hono@4.11.7)':
     dependencies:
       hono: 4.11.7
 
