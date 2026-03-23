@@ -27,7 +27,9 @@ export function sendNodeResponse(
       }
       // String/Buffer body — write and end in one call (avoids separate end Promise)
       writeHead(nodeRes, res.status, res.statusText, res.headers);
-      nodeRes.end(res.body);
+      // At this point body is string | Buffer | Uint8Array | DataView (streams filtered above)
+      (nodeRes as NodeHttp.ServerResponse).write(res.body);
+      nodeRes.end();
       return;
     }
     writeHead(nodeRes, res.status, res.statusText, res.headers);
