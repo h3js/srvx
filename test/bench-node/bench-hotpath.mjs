@@ -74,15 +74,11 @@ async function benchSrvx() {
   return result;
 }
 
-console.log(
-  `\nsrvx hot-path benchmark — ${REQUESTS} sequential requests (${WARMUP} warmup)\n`,
-);
+console.log(`\nsrvx hot-path benchmark — ${REQUESTS} sequential requests (${WARMUP} warmup)\n`);
 console.log(`Node.js ${process.version} | ${process.platform} ${process.arch}\n`);
 
 const r = await benchSrvx();
 console.log(`| avg    | p50    | p95    | p99    | req/s   |`);
 console.log(`|--------|--------|--------|--------|---------|`);
-console.log(
-  `| ${r.avg}µs | ${r.p50}µs | ${r.p95}µs | ${r.p99}µs | ${r.rps.toLocaleString()}/s |`,
-);
+console.log(`| ${r.avg}µs | ${r.p50}µs | ${r.p95}µs | ${r.p99}µs | ${r.rps.toLocaleString()}/s |`);
 console.log();
