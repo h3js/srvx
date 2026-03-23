@@ -4,13 +4,14 @@ import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
 import type { NodeResponse } from "./response.ts";
 
-export async function sendNodeResponse(
+export function sendNodeResponse(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
-): Promise<void> {
+): Promise<void> | void {
   if (!webRes) {
     nodeRes.statusCode = 500;
-    return endNodeResponse(nodeRes);
+    nodeRes.end();
+    return;
   }
 
   // Fast path for NodeResponse
@@ -24,20 +25,23 @@ export async function sendNodeResponse(
         // Defer writeHead so pipeBody can detect early stream errors
         return pipeBody(res.body as NodeReadable, nodeRes, res.status, res.statusText, res.headers);
       }
+      // String/Buffer body — write and end in one call (avoids separate end Promise)
       writeHead(nodeRes, res.status, res.statusText, res.headers);
-      // Note: NodeHttp2ServerResponse.write() body type declared as string | Uint8Array
-      // We explicitly test other types in runtime.
-      (nodeRes as NodeHttp.ServerResponse).write(res.body);
-    } else {
-      writeHead(nodeRes, res.status, res.statusText, res.headers);
+      nodeRes.end(res.body);
+      return;
     }
-    return endNodeResponse(nodeRes);
+    writeHead(nodeRes, res.status, res.statusText, res.headers);
+    nodeRes.end();
+    return;
   }
 
   const rawHeaders = [...webRes.headers];
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
-  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
+  if (webRes.body) {
+    return streamBody(webRes.body, nodeRes);
+  }
+  nodeRes.end();
 }
 
 function writeHead(
@@ -46,21 +50,37 @@ function writeHead(
   statusText: string,
   rawHeaders: [string, string][],
 ): void {
+  if (nodeRes.headersSent) {
+    return;
+  }
   // Node.js writeHead accepts a raw array of [key, value, key, value] or [[key, value], [key, value]]
   // https://github.com/nodejs/node/blob/v22.14.0/lib/_http_server.js#L376
   // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
   // But it has an inconsistency in slow-path that does not unflattens!!
   // https://github.com/h3js/srvx/pull/40
   // Deno does not support flatten in both cases.
-  const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
-  if (!nodeRes.headersSent) {
-    if (nodeRes.req?.httpVersion === "2.0") {
-      // @ts-expect-error
-      nodeRes.writeHead(status, writeHeaders);
+  let writeHeaders: any;
+  if (globalThis.Deno) {
+    writeHeaders = rawHeaders;
+  } else {
+    // Inline flatten for small arrays — avoids Array.flat() allocation
+    const len = rawHeaders.length;
+    if (len <= 4) {
+      writeHeaders = new Array(len * 2);
+      for (let i = 0; i < len; i++) {
+        writeHeaders[i * 2] = rawHeaders[i][0];
+        writeHeaders[i * 2 + 1] = rawHeaders[i][1];
+      }
     } else {
-      // @ts-expect-error
-      nodeRes.writeHead(status, statusText, writeHeaders);
+      writeHeaders = rawHeaders.flat();
     }
+  }
+  if (nodeRes.req?.httpVersion === "2.0") {
+    // @ts-expect-error
+    nodeRes.writeHead(status, writeHeaders);
+  } else {
+    // @ts-expect-error
+    nodeRes.writeHead(status, statusText, writeHeaders);
   }
 }
 

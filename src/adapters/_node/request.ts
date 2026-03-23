@@ -9,6 +9,9 @@ export type NodeRequestContext = {
   res?: NodeServerResponse;
 };
 
+// Pre-allocated runtime descriptor — avoids per-request object creation
+const NODE_RUNTIME_NAME = "node" as const;
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
@@ -18,6 +21,7 @@ export const NodeRequest: {
     runtime: ServerRequest["runtime"];
 
     #req: NodeServerRequest;
+    #urlHref?: string;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
     #request?: globalThis.Request;
@@ -27,7 +31,7 @@ export const NodeRequest: {
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
       this.runtime = {
-        name: "node",
+        name: NODE_RUNTIME_NAME,
         node: ctx,
       };
     }
@@ -53,13 +57,15 @@ export const NodeRequest: {
 
     set _url(url: URL) {
       this.#url = url;
+      this.#urlHref = undefined;
     }
 
     get url(): string {
       if (this.#request) {
         return this.#request.url;
       }
-      return this._url.href;
+      // Cache the href string — avoids repeated FastURL.href getter chain
+      return (this.#urlHref ??= this._url.href);
     }
 
     get headers(): Headers {
@@ -121,14 +127,21 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req).then((buf) => buf.toString());
+      return readBody(this.#req).then(bufToString);
     }
 
     json() {
       if (this.#request) {
         return this.#request.json();
       }
-      return this.text().then((text) => JSON.parse(text));
+      // Fast path: read body buffer directly, parse in one step
+      // Saves one Promise chain link vs text().then(JSON.parse)
+      if (this.#bodyStream !== undefined) {
+        return this.#bodyStream
+          ? new Response(this.#bodyStream).json()
+          : Promise.resolve(undefined);
+      }
+      return readBody(this.#req).then(bufToJSON);
     }
 
     get _request(): globalThis.Request {
@@ -191,7 +204,16 @@ export function patchGlobalRequest(): typeof Request {
   return PatchedRequest;
 }
 
-function readBody(req: NodeServerRequest): Promise<any> {
+// Shared helpers — avoid per-request closure allocation
+function bufToString(buf: Buffer): string {
+  return buf.toString();
+}
+
+function bufToJSON(buf: Buffer): unknown {
+  return JSON.parse(buf.toString());
+}
+
+function readBody(req: NodeServerRequest): Promise<Buffer> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
     return Promise.resolve(req.rawBody);
@@ -208,7 +230,8 @@ function readBody(req: NodeServerRequest): Promise<any> {
     const onEnd = () => {
       req.off("error", onError);
       req.off("data", onData);
-      resolve(Buffer.concat(chunks));
+      // Single-chunk fast path: avoid Buffer.concat overhead for small payloads
+      resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });
