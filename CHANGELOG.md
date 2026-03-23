@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.11.13
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.12...v0.11.13)
+
+### 🩹 Fixes
+
+- **url:** Deopt absolute URIs in FastURL ([de0d699](https://github.com/h3js/srvx/commit/de0d699))
+
+### 🏡 Chore
+
+- Update deps ([4e6ace6](https://github.com/h3js/srvx/commit/4e6ace6))
+- Update deps ([6a72a00](https://github.com/h3js/srvx/commit/6a72a00))
+- Fix type issue ([ed8cc2b](https://github.com/h3js/srvx/commit/ed8cc2b))
+- Apply automated updates ([7375fed](https://github.com/h3js/srvx/commit/7375fed))
+- Update deps ([8f4bc4f](https://github.com/h3js/srvx/commit/8f4bc4f))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.12
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.11...v0.11.12)
