@@ -5,9 +5,7 @@ export interface LogOptions {}
 
 const statusColors = { 1: c.blue, 2: c.green, 3: c.yellow } as const;
 
-export const log: (options?: LogOptions) => ServerMiddleware = (
-  _options = {},
-) => {
+export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) => {
   return async (req, next) => {
     const start = performance.now();
     const res = await next();
