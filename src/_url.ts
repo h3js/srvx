@@ -43,7 +43,11 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
 
       constructor(url: string | URLInit) {
         if (typeof url === "string") {
-          this.#href = url;
+          if (url[0] === "/") {
+            this.#href = url;
+          } else {
+            this.#url = new NativeURL(url);
+          }
         } else if (_needsNormRE.test(url.pathname)) {
           this.#url = new NativeURL(
             `${url.protocol || "http:"}//${url.host || "localhost"}${url.pathname}${url.search || ""}`,

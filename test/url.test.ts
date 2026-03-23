@@ -125,6 +125,35 @@ describe("FastURL", () => {
     }
   });
 
+  describe("absolute URI in request line", () => {
+    const cases = [
+      ["http://example.com/path", "/path"],
+      ["http://example.com/path?q=1", "/path"],
+      ["file://hehe?/internal/run", "/"],
+      ["file://hehe/abc", "/abc"],
+      ["http://evil.com?/secret", "/"],
+      ["https://host/a/b/c?x=1", "/a/b/c"],
+    ] as const;
+
+    for (const [input, expected] of cases) {
+      test(`"${input}" => pathname "${expected}"`, () => {
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(url.pathname).toBe(expected);
+      });
+
+      test(`"${input}" => pathname "${expected}" (after deopt)`, () => {
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        // Access hostname to trigger _url deopt
+        void url.hostname;
+        expect(url.pathname).toBe(expected);
+      });
+    }
+  });
+
   describe("pathname normalization", () => {
     const cases = [
       // Literal dot segments
