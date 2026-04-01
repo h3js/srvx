@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
@@ -255,5 +257,47 @@ describe("request signal", () => {
     ]);
 
     await server.close(true); // Force close all connections
+  });
+});
+
+describe("node server startup", () => {
+  async function withBlockedPort(fn: (port: number) => Promise<void>) {
+    const blocker = createServer((_req, res) => res.end("blocked"));
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.once("listening", () => resolve());
+      blocker.listen(0, "127.0.0.1");
+    });
+    const { port } = blocker.address() as AddressInfo;
+    try {
+      await fn(port);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  }
+
+  test("port conflict rejects with EADDRINUSE", async () => {
+    await withBlockedPort(async (port) => {
+      const server = serve({
+        port,
+        hostname: "127.0.0.1",
+        manual: true,
+        fetch: () => new Response(""),
+      });
+      await expect(server.serve()).rejects.toMatchObject({ code: "EADDRINUSE" });
+      await server.close();
+    });
+  });
+
+  test("auto-serve port conflict surfaces via ready()", async () => {
+    await withBlockedPort(async (port) => {
+      const server = serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(""),
+      });
+      await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
+      await server.close();
+    });
   });
 });
