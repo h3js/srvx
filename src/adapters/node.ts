@@ -119,7 +119,7 @@ class NodeServer implements Server {
     this.node.server = server;
 
     if (!options.manual) {
-      this.serve();
+      this.serve().catch(() => {});
     }
   }
 
@@ -135,7 +135,6 @@ class NodeServer implements Server {
     this.#listeningPromise = new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server.off("listening", onListening);
-        this.#listeningPromise = undefined;
         reject(error);
       };
 

@@ -279,4 +279,22 @@ describe("node server startup", () => {
       await new Promise<void>((resolve) => blocker.close(() => resolve()));
     }
   });
+
+  test("auto-serve port conflict surfaces via ready()", async () => {
+    const port = await getRandomPort("localhost");
+    const blocker = createServer((_req, res) => res.end("blocked"));
+
+    await new Promise<void>((resolve) => blocker.listen(port, "127.0.0.1", () => resolve()));
+
+    try {
+      const server = serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(""),
+      });
+      await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
 });
