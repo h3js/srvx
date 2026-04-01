@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.11.14
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.13...v0.11.14)
+
+### 🩹 Fixes
+
+- **node:** Handle EADDRINUSE port conflict on serve ([#197](https://github.com/h3js/srvx/pull/197))
+
+### 🏡 Chore
+
+- Update deps ([645b261](https://github.com/h3js/srvx/commit/645b261))
+
+### ❤️ Contributors
+
+- Neko ([@nekomeowww](https://github.com/nekomeowww))
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.13
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.12...v0.11.13)
