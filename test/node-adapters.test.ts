@@ -285,6 +285,7 @@ describe("node server startup", () => {
         fetch: () => new Response(""),
       });
       await expect(server.serve()).rejects.toMatchObject({ code: "EADDRINUSE" });
+      await server.close();
     });
   });
 
@@ -296,6 +297,7 @@ describe("node server startup", () => {
         fetch: () => new Response(""),
       });
       await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
+      await server.close();
     });
   });
 });

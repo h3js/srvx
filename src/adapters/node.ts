@@ -63,6 +63,7 @@ class NodeServer implements Server {
     errorPlugin(this);
 
     const fetchHandler = (this.fetch = wrapFetch(this));
+
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait?.waitUntil;
