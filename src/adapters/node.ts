@@ -124,16 +124,31 @@ class NodeServer implements Server {
     }
   }
 
-  serve() {
+  serve(): Promise<this> {
     if (this.#listeningPromise) {
-      return Promise.resolve(this.#listeningPromise).then(() => this);
+      return this.#listeningPromise.then(() => this);
     }
-    this.#listeningPromise = new Promise<void>((resolve) => {
-      this.node!.server!.listen(this.serveOptions, () => {
+
+    const server = this.node?.server!;
+    this.#listeningPromise = new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        this.#listeningPromise = undefined;
+        reject(error);
+      };
+
+      const onListening = () => {
+        server.off("error", onError);
         printListening(this.options, this.url);
         resolve();
-      });
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(this.serveOptions);
     });
+
+    return this.#listeningPromise.then(() => this);
   }
 
   get url() {

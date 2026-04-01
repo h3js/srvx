@@ -1,7 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { createServer } from "node:http";
+import { afterAll, describe, expect, test } from "vitest";
+import { getRandomPort } from "get-port-please";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import { fetchNodeHandler, serve, toNodeHandler, toFetchHandler } from "../src/adapters/node.ts";
+import { TypeScriptWorker } from "./fixtures/node-port-conflict/src/worker-helper.ts";
 
 import express from "express";
 import fastify from "fastify";
@@ -255,5 +258,69 @@ describe("request signal", () => {
     ]);
 
     await server.close(true); // Force close all connections
+  });
+});
+
+const blockerServers = new Set<ReturnType<typeof createServer>>();
+
+afterAll(async () => {
+  await Promise.all(
+    [...blockerServers].map(
+      (server) =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        }),
+    ),
+  );
+});
+
+describe("node server startup", () => {
+  test("port conflicts reject startup in a worker", async () => {
+    const port = await getRandomPort("localhost");
+    const blocker = createServer((_req, res) => res.end("blocked"));
+    blockerServers.add(blocker);
+
+    await new Promise<void>((resolve, reject) => {
+      blocker.listen(port, "127.0.0.1", (error?: Error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+
+    const message = await new Promise<{ type: string; code?: string }>((resolve, reject) => {
+      const worker = new TypeScriptWorker(
+        new URL("./fixtures/node-port-conflict/src/worker.ts", import.meta.url),
+        { workerData: { host: "127.0.0.1", port } },
+      );
+
+      const timeout = setTimeout(() => {
+        worker.terminate().catch(() => {});
+        reject(new Error("worker timed out"));
+      }, 2000);
+
+      worker.once("message", (value) => {
+        clearTimeout(timeout);
+        void worker.terminate();
+        resolve(value as { type: string; code?: string });
+      });
+
+      worker.once("error", (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      worker.once("exit", (code) => {
+        if (code !== 0) {
+          clearTimeout(timeout);
+          reject(new Error(`worker exited with code ${code}`));
+        }
+      });
+    });
+
+    expect(message).toEqual({ type: "error", code: "EADDRINUSE" });
   });
 });
