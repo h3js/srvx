@@ -146,7 +146,6 @@ class NodeServer implements Server {
 
       const onListening = () => {
         server.off("error", onError);
-        this.#listenError = undefined;
         printListening(this.options, this.url);
         resolve();
       };
