@@ -52,6 +52,7 @@ class NodeServer implements Server {
   readonly #isSecure?: boolean;
 
   #listeningPromise?: Promise<void>;
+  #listenError?: Error;
 
   #wait?: ReturnType<typeof createWaitUntil>;
 
@@ -128,18 +129,23 @@ class NodeServer implements Server {
       return this.#listeningPromise.then(() => this);
     }
 
-    const server = this.node?.server as
-      | NodeHttp.Server
-      | NodeHttps.Server
-      | NodeHttp2.Http2SecureServer;
+    const server = this.node?.server;
+    if (!server) {
+      return Promise.reject(new Error("Server not initialized"));
+    }
+
+    this.#listenError = undefined;
     this.#listeningPromise = new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server.off("listening", onListening);
+        this.#listenError = error;
+        this.#listeningPromise = undefined;
         reject(error);
       };
 
       const onListening = () => {
         server.off("error", onError);
+        this.#listenError = undefined;
         printListening(this.options, this.url);
         resolve();
       };
@@ -164,6 +170,9 @@ class NodeServer implements Server {
   }
 
   ready(): Promise<Server> {
+    if (this.#listenError) {
+      return Promise.reject(this.#listenError);
+    }
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
