@@ -62,7 +62,6 @@ class NodeServer implements Server {
     errorPlugin(this);
 
     const fetchHandler = (this.fetch = wrapFetch(this));
-
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait?.waitUntil;
@@ -129,7 +128,10 @@ class NodeServer implements Server {
       return this.#listeningPromise.then(() => this);
     }
 
-    const server = this.node?.server!;
+    const server = this.node?.server as
+      | NodeHttp.Server
+      | NodeHttps.Server
+      | NodeHttp2.Http2SecureServer;
     this.#listeningPromise = new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server.off("listening", onListening);
