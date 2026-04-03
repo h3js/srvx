@@ -99,10 +99,18 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     return { address: "", family: "", port: 0 };
   }
 
+  private bodyReader() {
+    try {
+      return this.#request.body?.getReader();
+    } catch (error) {
+      this.emit("error", error);
+    }
+  }
+
   // ---------- Duplex Internals ----------
 
   override _read(_size: number): void {
-    const reader = (this.#reqReader ??= this.#request.body?.getReader());
+    const reader = (this.#reqReader ??= this.bodyReader());
     if (!reader) {
       this.push(null);
       return;
