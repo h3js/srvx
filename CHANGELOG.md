@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.15
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.14...v0.11.15)
+
+### 🩹 Fixes
+
+- **node/web:** Do not swallow `getReader` errors ([#199](https://github.com/h3js/srvx/pull/199))
+
+### ❤️ Contributors
+
+- Joël Charles ([@magne4000](https://github.com/magne4000))
+
 ## v0.11.14
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.13...v0.11.14)
