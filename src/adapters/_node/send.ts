@@ -52,16 +52,65 @@ function writeHead(
   // But it has an inconsistency in slow-path that does not unflattens!!
   // https://github.com/h3js/srvx/pull/40
   // Deno does not support flatten in both cases.
-  const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
-  if (!nodeRes.headersSent) {
-    if (nodeRes.req?.httpVersion === "2.0") {
-      // @ts-expect-error
-      nodeRes.writeHead(status, writeHeaders);
-    } else {
-      // @ts-expect-error
-      nodeRes.writeHead(status, statusText, writeHeaders);
-    }
+  if (nodeRes.headersSent) {
+    return;
   }
+  // Merge any headers that were already set on nodeRes via setHeader
+  // before sendNodeResponse ran. writeHead otherwise REPLACES existing
+  // headers with the same name, which silently dropped Set-Cookie
+  // lines that callers (e.g. TanStack Start's dev plugin, auth
+  // middleware) had appended earlier. See h3js/srvx#144.
+  const merged = mergeExistingHeaders(nodeRes, rawHeaders);
+  const writeHeaders: any = globalThis.Deno ? merged : merged.flat();
+  if (nodeRes.req?.httpVersion === "2.0") {
+    // @ts-expect-error
+    nodeRes.writeHead(status, writeHeaders);
+  } else {
+    // @ts-expect-error
+    nodeRes.writeHead(status, statusText, writeHeaders);
+  }
+}
+
+function mergeExistingHeaders(
+  nodeRes: NodeServerResponse,
+  incoming: [string, string][],
+): [string, string][] {
+  const existingNames =
+    typeof nodeRes.getHeaderNames === "function"
+      ? nodeRes.getHeaderNames()
+      : [];
+  if (existingNames.length === 0) {
+    return incoming;
+  }
+
+  // For every Set-Cookie line set via setHeader, keep it and
+  // concatenate with the incoming ones so all cookies survive. For
+  // other single-valued headers, let the incoming Response value win
+  // if both sides specify the same name (preserves prior behaviour),
+  // otherwise preserve the pre-existing header.
+  const incomingNonSetCookieNames = new Set(
+    incoming.map(([k]) => k.toLowerCase()).filter((k) => k !== "set-cookie"),
+  );
+  const preserved: [string, string][] = [];
+  for (const name of existingNames) {
+    const lower = name.toLowerCase();
+    if (lower !== "set-cookie" && incomingNonSetCookieNames.has(lower)) {
+      continue;
+    }
+    const value = nodeRes.getHeader?.(name);
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        preserved.push([name, String(v)]);
+      }
+    } else if (value !== undefined) {
+      preserved.push([name, String(value)]);
+    }
+    // Drop from nodeRes so writeHead doesn't also emit the header
+    // through its own pending-headers channel and duplicate it.
+    nodeRes.removeHeader?.(name);
+  }
+
+  return preserved.length > 0 ? [...preserved, ...incoming] : incoming;
 }
 
 function endNodeResponse(nodeRes: NodeServerResponse) {
