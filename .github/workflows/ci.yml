@@ -27,6 +27,8 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: "${{ matrix.node-version }}", cache: pnpm }
       - run: pnpm install
+      - if: matrix.node-version == '20'
+        run: pnpm add -D undici@^7.25.0
       - run: pnpm vitest --coverage test/node.test.ts test/node-adapters.test.ts test/url.test.ts
       - uses: codecov/codecov-action@v3
         if: matrix.node-version == 24
