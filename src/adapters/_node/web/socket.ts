@@ -36,6 +36,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
   #headersWritten?: boolean;
   #_writeBody!: (chunk: Uint8Array) => void;
   _webResBody: ReadableStream;
+  #tos: number = 0;
 
   constructor(request: Request) {
     super({
@@ -105,6 +106,15 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     } catch (error) {
       this.emit("error", error);
     }
+  }
+
+  getTypeOfService(): number {
+    return this.#tos;
+  }
+
+  setTypeOfService(tos: number): this {
+    this.#tos = tos;
+    return this;
   }
 
   // ---------- Duplex Internals ----------
