@@ -4,7 +4,8 @@ import { serve, FastResponse } from "../src/adapters/node.ts";
 
 describe("node response stream error handling", () => {
   test("client abort propagates to node readable stream", async () => {
-    const { promise: destroyed, resolve: onDestroyed } = Promise.withResolvers<boolean>();
+    let onDestroyed!: (v: boolean) => void;
+    const destroyed = new Promise<boolean>((r) => (onDestroyed = r));
 
     const server = serve({
       port: 0,
@@ -77,7 +78,8 @@ describe("node response stream error handling", () => {
   });
 
   test("web readable stream client abort propagates to cancel", async () => {
-    const { promise: cancelled, resolve: onCancelled } = Promise.withResolvers<boolean>();
+    let onCancelled!: (v: boolean) => void;
+    const cancelled = new Promise<boolean>((r) => (onCancelled = r));
 
     const server = serve({
       port: 0,
