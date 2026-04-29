@@ -51,8 +51,7 @@ function writeHead(
   // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
   // But it has an inconsistency in slow-path that does not unflattens!!
   // https://github.com/h3js/srvx/pull/40
-  // Deno does not support flatten in both cases.
-  const writeHeaders: any = globalThis.Deno ? rawHeaders : rawHeaders.flat();
+  const writeHeaders = rawHeaders.flat();
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
       // @ts-expect-error
