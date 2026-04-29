@@ -42,6 +42,7 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: lts/*, cache: pnpm }
       - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.7.14 }
       - run: pnpm install
       - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts
       - run: pnpm add -D undici@^7.25.0
