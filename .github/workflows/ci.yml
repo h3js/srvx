@@ -41,9 +41,10 @@ jobs:
       - run: npm i -g --force corepack && corepack enable
       - uses: actions/setup-node@v5
         with: { node-version: lts/*, cache: pnpm }
-      # TODO: setup-deno@v2 lags behind latest releases — install directly.
+      # TODO: 2.7.13 broke writeHead headers; 2.7.14 broke fetch body reads.
+      # Pinned to last known-good (2.7.12) until upstream stabilises.
       # - uses: denoland/setup-deno@v2
-      - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+      - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/download/v2.7.12/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
       - run: pnpm install
       - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts
       - run: pnpm add -D undici@^7.25.0
