@@ -953,8 +953,9 @@ describe("[AWS Lambda] Request Utils", () => {
 
       await awsStreamResponse(response, mockStream);
 
-      expect(getChunks().length).toBe(0);
+      expect(getChunks()).toEqual([""]);
       expect(isEndCalled()).toBe(true);
+      expect(mockWriter.write).toHaveBeenCalledWith("");
       expect(mockWriter.end).toHaveBeenCalled();
     });
 
@@ -1175,6 +1176,42 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.url).toContain("/api/v2");
       expect(request.url).toContain("foo=bar");
       expect((getMetadata() as any).statusCode).toBe(200);
+    });
+
+    test("should close the stream for redirects without a response body", async () => {
+      const { mockStream, mockWriter, getChunks, getMetadata } = createMockResponseStream();
+
+      const fetchHandler = vi.fn().mockResolvedValue(
+        new Response(null, {
+          status: 302,
+          headers: {
+            location: "/",
+          },
+        }),
+      );
+
+      const event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/redirect",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      await handleLambdaEventWithStream(fetchHandler, event, mockStream, createMockContext());
+
+      expect((getMetadata() as any).statusCode).toBe(302);
+      expect((getMetadata() as any).headers.location).toBe("/");
+      expect(getChunks()).toEqual([""]);
+      expect(mockWriter.write).toHaveBeenCalledWith("");
+      expect(mockWriter.end).toHaveBeenCalled();
     });
 
     test("should handle fetch handler errors", async () => {
