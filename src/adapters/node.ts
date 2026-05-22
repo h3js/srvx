@@ -65,6 +65,16 @@ class NodeServer implements Server {
     const fetchHandler = (this.fetch = wrapFetch(this));
 
     const handler = (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
+      // Reject request-targets llhttp admits but that aren't valid Fetch URLs:
+      // anything that isn't origin-form (/...), absolute-form, or the RFC 9110
+      // §7.1 asterisk-form (`*`). Bun/Deno reject these at the parser layer;
+      // Node leaves it to us. (Hot path is a single char compare.)
+      const reqUrl = nodeReq.url;
+      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !URL.canParse(reqUrl)) {
+        nodeRes.statusCode = 400;
+        nodeRes.end();
+        return;
+      }
       const request = new NodeRequest({ req: nodeReq, res: nodeRes });
       request.waitUntil = this.#wait?.waitUntil;
       const res = fetchHandler(request);
