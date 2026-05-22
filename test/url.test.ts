@@ -1,5 +1,7 @@
+import net from "node:net";
 import { describe, test, expect } from "vitest";
 import { FastURL } from "../src/_url.ts";
+import { serve } from "../src/adapters/node.ts";
 import { NodeRequestURL } from "../src/adapters/_node/url.ts";
 
 const urlTests = await import("./wpt/url_tests.json", {
@@ -152,6 +154,86 @@ describe("FastURL", () => {
         expect(url.pathname).toBe(expected);
       });
     }
+  });
+
+  describe("non-URL request targets (asterisk-form & friends)", () => {
+    // RFC 9110 §7.1: the asterisk-form `*` is used for a server-wide
+    // OPTIONS request. Node's HTTP parser also admits `*`-prefixed
+    // targets like `**` and `*foo`. None of these have a Fetch URL
+    // representation — accessing url props must not crash the process.
+    const cases = [
+      { input: "*", pathname: "/*", search: "" },
+      { input: "**", pathname: "/**", search: "" },
+      { input: "*foo", pathname: "/*foo", search: "" },
+      { input: "*?q=1", pathname: "/*", search: "?q=1" },
+    ] as const;
+
+    for (const { input, pathname, search } of cases) {
+      test(`"${input}" does not throw and synthesizes a stable URL`, () => {
+        const fast = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(fast.pathname).toBe(pathname);
+        expect(fast.search).toBe(search);
+        expect(fast.href).toBe(`http://localhost${pathname}${search}`);
+      });
+
+      test(`"${input}" stays consistent after deopt`, () => {
+        const slow = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        void slow.hostname; // force deopt to native URL
+        expect(slow.hostname).toBe("localhost");
+        expect(slow.pathname).toBe(pathname);
+        expect(slow.search).toBe(search);
+      });
+    }
+
+    test.each([
+      "OPTIONS * HTTP/1.1",
+      "GET ** HTTP/1.1",
+      "GET *foo HTTP/1.1",
+    ])("%s over the wire does not crash the server", async (requestLine) => {
+      const server = serve({
+        port: 0,
+        // request.url access is what triggers the original crash
+        fetch: (request) => new Response(request.url),
+      });
+      await server.ready();
+      const addr = server.node?.server?.address();
+      if (!addr || typeof addr !== "object") throw new Error("no address");
+      const port = addr.port;
+
+      try {
+        const result = await new Promise<{ statusLine: string; body: string }>(
+          (resolve, reject) => {
+            const socket = new net.Socket();
+            socket.connect(port, "127.0.0.1", () => {
+              socket.write(`${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+            });
+            let data = "";
+            socket.on("data", (chunk) => {
+              data += chunk.toString();
+            });
+            socket.on("end", () => {
+              const statusLine = data.split("\r\n")[0] || "";
+              const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+              resolve({ statusLine, body });
+            });
+            socket.on("error", reject);
+            socket.setTimeout(2000, () => {
+              socket.destroy();
+              reject(new Error("socket timed out"));
+            });
+          },
+        );
+
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 \d{3}/);
+        expect(result.statusLine).not.toMatch(/^HTTP\/1\.1 5\d\d/);
+      } finally {
+        await server.close(true);
+      }
+    });
   });
 
   describe("pathname normalization", () => {
