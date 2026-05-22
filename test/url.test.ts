@@ -189,51 +189,50 @@ describe("FastURL", () => {
       });
     }
 
-    test.each([
-      "OPTIONS * HTTP/1.1",
-      "GET ** HTTP/1.1",
-      "GET *foo HTTP/1.1",
-    ])("%s over the wire does not crash the server", async (requestLine) => {
-      const server = serve({
-        port: 0,
-        // request.url access is what triggers the original crash
-        fetch: (request) => new Response(request.url),
-      });
-      await server.ready();
-      const addr = server.node?.server?.address();
-      if (!addr || typeof addr !== "object") throw new Error("no address");
-      const port = addr.port;
+    test.each(["OPTIONS * HTTP/1.1", "GET ** HTTP/1.1", "GET *foo HTTP/1.1"])(
+      "%s over the wire does not crash the server",
+      async (requestLine) => {
+        const server = serve({
+          port: 0,
+          // request.url access is what triggers the original crash
+          fetch: (request) => new Response(request.url),
+        });
+        await server.ready();
+        const addr = server.node?.server?.address();
+        if (!addr || typeof addr !== "object") throw new Error("no address");
+        const port = addr.port;
 
-      try {
-        const result = await new Promise<{ statusLine: string; body: string }>(
-          (resolve, reject) => {
-            const socket = new net.Socket();
-            socket.connect(port, "127.0.0.1", () => {
-              socket.write(`${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
-            });
-            let data = "";
-            socket.on("data", (chunk) => {
-              data += chunk.toString();
-            });
-            socket.on("end", () => {
-              const statusLine = data.split("\r\n")[0] || "";
-              const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
-              resolve({ statusLine, body });
-            });
-            socket.on("error", reject);
-            socket.setTimeout(2000, () => {
-              socket.destroy();
-              reject(new Error("socket timed out"));
-            });
-          },
-        );
+        try {
+          const result = await new Promise<{ statusLine: string; body: string }>(
+            (resolve, reject) => {
+              const socket = new net.Socket();
+              socket.connect(port, "127.0.0.1", () => {
+                socket.write(`${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+              });
+              let data = "";
+              socket.on("data", (chunk) => {
+                data += chunk.toString();
+              });
+              socket.on("end", () => {
+                const statusLine = data.split("\r\n")[0] || "";
+                const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+                resolve({ statusLine, body });
+              });
+              socket.on("error", reject);
+              socket.setTimeout(2000, () => {
+                socket.destroy();
+                reject(new Error("socket timed out"));
+              });
+            },
+          );
 
-        expect(result.statusLine).toMatch(/^HTTP\/1\.1 \d{3}/);
-        expect(result.statusLine).not.toMatch(/^HTTP\/1\.1 5\d\d/);
-      } finally {
-        await server.close(true);
-      }
-    });
+          expect(result.statusLine).toMatch(/^HTTP\/1\.1 \d{3}/);
+          expect(result.statusLine).not.toMatch(/^HTTP\/1\.1 5\d\d/);
+        } finally {
+          await server.close(true);
+        }
+      },
+    );
   });
 
   describe("pathname normalization", () => {
