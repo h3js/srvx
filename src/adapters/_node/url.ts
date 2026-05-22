@@ -41,29 +41,13 @@ export class NodeRequestURL extends FastURL {
         pathname: qIndex === -1 ? path : path.slice(0, qIndex) || "/",
         search: qIndex === -1 ? "" : path.slice(qIndex) || "",
       });
-    } else if (URL.canParse(path)) {
+    } else if (path === "*") {
+      // RFC 9110 §7.1 asterisk-form (`OPTIONS *`): surface as `/*`, matching
+      // Deno. Other non-conforming targets are rejected by the adapter.
+      super({ protocol, host, pathname: "/*", search: "" });
+    } else {
       // absolute-form (e.g. proxy request)
       super(path);
-    } else {
-      // Anything else llhttp admits but URL cannot parse — notably the
-      // asterisk-form request-target (RFC 9110 §7.1, `OPTIONS *`) and
-      // similar non-conforming targets like `**` or `*foo`. These have
-      // no Fetch URL representation. Preserve the literal as a pathname
-      // (prefixed with "/") so handlers can still observe it, falling
-      // back to "/" if even that won't parse — never crash the process.
-      const qIndex = path.indexOf("?");
-      const rawPath = qIndex === -1 ? path : path.slice(0, qIndex);
-      const rawQuery = qIndex === -1 ? "" : path.slice(qIndex);
-      const candidate = "/" + rawPath;
-      const synthesized = URL.canParse(`${protocol}//${host}${candidate}${rawQuery}`)
-        ? candidate
-        : "/";
-      super({
-        protocol,
-        host,
-        pathname: synthesized,
-        search: synthesized === candidate ? rawQuery : "",
-      });
     }
     this.#req = req;
   }
