@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.11.16
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.15...v0.11.16)
+
+### 🩹 Fixes
+
+- **node:** Flatten writeHead headers on Deno ([#203](https://github.com/h3js/srvx/pull/203))
+- **aws-lambda-streaming:** Handle empty body ([#205](https://github.com/h3js/srvx/pull/205))
+- **node:** Do not crash on asterisk-form request targets ([#206](https://github.com/h3js/srvx/pull/206))
+
+### 💅 Refactors
+
+- **node/web:** Add new `TypeOfService` utils to socker impl ([945fc17](https://github.com/h3js/srvx/commit/945fc17))
+
+### 🏡 Chore
+
+- Update deps ([4a6fcd3](https://github.com/h3js/srvx/commit/4a6fcd3))
+- Update deps ([c0acb0f](https://github.com/h3js/srvx/commit/c0acb0f))
+- Bump deps ([c853aa9](https://github.com/h3js/srvx/commit/c853aa9))
+- Update deps ([961d756](https://github.com/h3js/srvx/commit/961d756))
+
+### ✅ Tests
+
+- Node 20 compat ([7771820](https://github.com/h3js/srvx/commit/7771820))
+
+### 🤖 CI
+
+- Downgrade undici for node 20 only ([05efca4](https://github.com/h3js/srvx/commit/05efca4))
+- Downgrade undici for deno node-compat test ([e501480](https://github.com/h3js/srvx/commit/e501480))
+- Force latest deno version ([6f17e2e](https://github.com/h3js/srvx/commit/6f17e2e))
+- Directly install latest deno ([59ba353](https://github.com/h3js/srvx/commit/59ba353))
+- Fix deno install ([f6efb77](https://github.com/h3js/srvx/commit/f6efb77))
+- Pin deno ([7249b63](https://github.com/h3js/srvx/commit/7249b63))
+- Test node 22, 24, 26 ([a745b47](https://github.com/h3js/srvx/commit/a745b47))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+- Taylor Steele ([@taylorfsteele](https://github.com/taylorfsteele))
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- KT ([@ktKongTong](https://github.com/ktKongTong))
+
 ## v0.11.15
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.14...v0.11.15)
