@@ -183,28 +183,26 @@ describe("FastURL", () => {
     });
 
     async function sendRaw(port: number, requestLine: string) {
-      return await new Promise<{ statusLine: string; body: string }>(
-        (resolve, reject) => {
-          const socket = new net.Socket();
-          socket.connect(port, "127.0.0.1", () => {
-            socket.write(`${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
-          });
-          let data = "";
-          socket.on("data", (chunk) => {
-            data += chunk.toString();
-          });
-          socket.on("end", () => {
-            const statusLine = data.split("\r\n")[0] || "";
-            const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
-            resolve({ statusLine, body });
-          });
-          socket.on("error", reject);
-          socket.setTimeout(2000, () => {
-            socket.destroy();
-            reject(new Error("socket timed out"));
-          });
-        },
-      );
+      return await new Promise<{ statusLine: string; body: string }>((resolve, reject) => {
+        const socket = new net.Socket();
+        socket.connect(port, "127.0.0.1", () => {
+          socket.write(`${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+        });
+        let data = "";
+        socket.on("data", (chunk) => {
+          data += chunk.toString();
+        });
+        socket.on("end", () => {
+          const statusLine = data.split("\r\n")[0] || "";
+          const body = data.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+          resolve({ statusLine, body });
+        });
+        socket.on("error", reject);
+        socket.setTimeout(2000, () => {
+          socket.destroy();
+          reject(new Error("socket timed out"));
+        });
+      });
     }
 
     async function withServer<T>(fn: (port: number) => Promise<T>): Promise<T> {

@@ -70,12 +70,7 @@ class NodeServer implements Server {
       // §7.1 asterisk-form (`*`). Bun/Deno reject these at the parser layer;
       // Node leaves it to us. (Hot path is a single char compare.)
       const reqUrl = nodeReq.url;
-      if (
-        reqUrl &&
-        reqUrl[0] !== "/" &&
-        reqUrl !== "*" &&
-        !URL.canParse(reqUrl)
-      ) {
+      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !URL.canParse(reqUrl)) {
         nodeRes.statusCode = 400;
         nodeRes.end();
         return;
