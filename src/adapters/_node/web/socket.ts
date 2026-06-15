@@ -2,7 +2,7 @@ import type { AddressInfo, Socket as NodeSocket } from "node:net";
 import type { SocketReadyState } from "node:net";
 import type { WebServerResponse } from "./response.ts";
 
-import { Duplex } from "node:stream";
+import { addAbortSignal, Duplex } from "node:stream";
 
 // https://github.com/nodejs/node/blob/main/lib/internal/streams/duplex.js
 // https://github.com/nodejs/node/blob/main/lib/internal/webstreams/adapters.js
@@ -35,12 +35,13 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
 
   #headersWritten?: boolean;
   #_writeBody!: (chunk: Uint8Array) => void;
+  #resBodyController?: ReadableStreamDefaultController<Uint8Array>;
+  #resBodyClosed?: boolean;
   _webResBody: ReadableStream;
   #tos: number = 0;
 
   constructor(request: Request) {
     super({
-      signal: request.signal,
       allowHalfOpen: true,
     });
 
@@ -48,13 +49,22 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
 
     this._webResBody = new ReadableStream({
       start: (controller) => {
+        this.#resBodyController = controller;
         this.#_writeBody = controller.enqueue.bind(controller);
         this.once("finish", () => {
           this.readyState = "closed";
+          this.#resBodyClosed = true;
           controller.close();
         });
       },
     });
+
+    // Wire request abort handling *after* `super()` so the subclass private
+    // fields are initialized before any synchronous `destroy()`. Passing the
+    // signal into the `Duplex` constructor instead would destroy the stream
+    // mid-construction for an already-aborted signal, making `_destroy()` throw
+    // while accessing not-yet-initialized private fields.
+    addAbortSignal(request.signal, this);
   }
 
   setTimeout(ms?: number, cb?: () => void): this {
@@ -179,6 +189,19 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
       this.#reqReader.cancel().catch((error) => {
         console.error(error);
       });
+    }
+    // If the socket is torn down before the response finished (e.g. the client
+    // aborted), close the response body stream so consumers reading it don't
+    // hang waiting for chunks that will never arrive.
+    if (!this.#resBodyClosed) {
+      this.#resBodyClosed = true;
+      try {
+        this.#resBodyController?.error(
+          err ?? new Error("Connection closed before response was finished"),
+        );
+      } catch {
+        // controller may already be closed/errored
+      }
     }
     this.readyState = "closed";
     cb(err ?? undefined);

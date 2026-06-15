@@ -2,8 +2,29 @@ import { ServerResponse } from "node:http";
 import { WebRequestSocket } from "./socket.ts";
 import type { WebIncomingMessage } from "./incoming.ts";
 
+// Node's OutgoingMessage sets an internal `kNeedDrain` symbol to true when a
+// write returns false, and clears it (emitting "drain") from the HTTP server's
+// socketOnDrain handler. We don't have access to that symbol publicly, so we
+// resolve it from the instance once and cache it. Resolving may fail across
+// Node versions; in that case we fall back to always re-emitting "drain".
+let needDrainSymbol: symbol | null | undefined;
+function getNeedDrainSymbol(res: ServerResponse): symbol | null {
+  if (needDrainSymbol === undefined) {
+    needDrainSymbol =
+      Object.getOwnPropertySymbols(res).find((s) => s.description === "kNeedDrain") ?? null;
+  }
+  return needDrainSymbol;
+}
+
+function prematureCloseError(): Error {
+  return Object.assign(new Error("Connection closed before response was finished"), {
+    code: "ERR_STREAM_PREMATURE_CLOSE",
+  });
+}
+
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
+  #socketError?: Error;
 
   constructor(req: WebIncomingMessage, socket: WebRequestSocket) {
     super(req);
@@ -15,18 +36,61 @@ export class WebServerResponse extends ServerResponse {
 
     this.#socket = socket;
 
+    // When the client disconnects, the assigned socket is destroyed (e.g. with
+    // an AbortError) and emits "error"/"close" without the ServerResponse ever
+    // emitting "finish" or "error". Attach this listener synchronously so the
+    // socket error is consumed (instead of crashing the process as an unhandled
+    // "error" event) and recorded for waitToFinish() to settle on.
+    socket.once("error", (err) => {
+      this.#socketError ??= err;
+    });
+
+    // Forward socket "drain" events to the response. Node's HTTP server does
+    // this internally (socketOnDrain), but the manual assignSocket() path here
+    // does not, so a handler awaiting res.once("drain") after a backpressured
+    // write() would deadlock. See https://github.com/h3js/srvx/issues/208
+    socket.on("drain", () => {
+      const kNeedDrain = getNeedDrainSymbol(this);
+      if (kNeedDrain && !(this as any)[kNeedDrain]) {
+        return;
+      }
+      if (this.destroyed || this.writableFinished) {
+        return;
+      }
+      if (kNeedDrain) {
+        (this as any)[kNeedDrain] = false;
+      }
+      this.emit("drain");
+    });
+
     // Express can override prototype so we have to bind methods
     this.waitToFinish = this.waitToFinish.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);
   }
 
   waitToFinish(): Promise<void> {
+    if (this.writableFinished) {
+      return Promise.resolve();
+    }
+    // The socket is destroyed before the response finished flushing (e.g. the
+    // client aborted). `writableEnded` may still be true (end() was called) but
+    // the response will never emit "finish", so resolving here would hand back a
+    // body stream that never closes. Reject instead.
+    if (this.#socketError || this.#socket.destroyed) {
+      return Promise.reject(this.#socketError ?? prematureCloseError());
+    }
     if (this.writableEnded) {
       return Promise.resolve();
     }
     return new Promise<void>((resolve, reject) => {
       this.on("finish", () => resolve());
       this.on("error", (err) => reject(err));
+      this.#socket.on("error", (err) => reject(err));
+      this.#socket.on("close", () => {
+        if (!this.writableFinished) {
+          reject(this.#socketError ?? prematureCloseError());
+        }
+      });
     });
   }
 
