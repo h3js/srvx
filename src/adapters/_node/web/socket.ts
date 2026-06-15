@@ -7,6 +7,12 @@ import { addAbortSignal, Duplex } from "node:stream";
 // https://github.com/nodejs/node/blob/main/lib/internal/streams/duplex.js
 // https://github.com/nodejs/node/blob/main/lib/internal/webstreams/adapters.js
 
+export function prematureCloseError(): Error {
+  return Object.assign(new Error("Connection closed before response was finished"), {
+    code: "ERR_STREAM_PREMATURE_CLOSE",
+  });
+}
+
 /**
  * Events:
  * - Readable (req from client): readable => data => end (push(null)) => error => close
@@ -196,9 +202,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     if (!this.#resBodyClosed) {
       this.#resBodyClosed = true;
       try {
-        this.#resBodyController?.error(
-          err ?? new Error("Connection closed before response was finished"),
-        );
+        this.#resBodyController?.error(err ?? prematureCloseError());
       } catch {
         // controller may already be closed/errored
       }

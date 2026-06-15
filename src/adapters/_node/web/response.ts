@@ -1,5 +1,5 @@
 import { ServerResponse } from "node:http";
-import { WebRequestSocket } from "./socket.ts";
+import { WebRequestSocket, prematureCloseError } from "./socket.ts";
 import type { WebIncomingMessage } from "./incoming.ts";
 
 // Node's OutgoingMessage sets an internal `kNeedDrain` symbol to true when a
@@ -14,12 +14,6 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | null {
       Object.getOwnPropertySymbols(res).find((s) => s.description === "kNeedDrain") ?? null;
   }
   return needDrainSymbol;
-}
-
-function prematureCloseError(): Error {
-  return Object.assign(new Error("Connection closed before response was finished"), {
-    code: "ERR_STREAM_PREMATURE_CLOSE",
-  });
 }
 
 export class WebServerResponse extends ServerResponse {
@@ -83,14 +77,26 @@ export class WebServerResponse extends ServerResponse {
       return Promise.resolve();
     }
     return new Promise<void>((resolve, reject) => {
-      this.on("finish", () => resolve());
-      this.on("error", (err) => reject(err));
-      this.#socket.on("error", (err) => reject(err));
-      this.#socket.on("close", () => {
+      const socket = this.#socket;
+      const settle = (err?: Error) => {
+        this.removeListener("finish", onFinish);
+        this.removeListener("error", onError);
+        socket.removeListener("error", onError);
+        socket.removeListener("close", onClose);
+        if (err) reject(err);
+        else resolve();
+      };
+      const onFinish = () => settle();
+      const onError = (err: Error) => settle(err);
+      const onClose = () => {
         if (!this.writableFinished) {
-          reject(this.#socketError ?? prematureCloseError());
+          settle(this.#socketError ?? prematureCloseError());
         }
-      });
+      };
+      this.on("finish", onFinish);
+      this.on("error", onError);
+      socket.on("error", onError);
+      socket.on("close", onClose);
     });
   }
 
