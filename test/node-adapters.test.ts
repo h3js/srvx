@@ -147,6 +147,92 @@ describe("adapters", () => {
   test("toNodeHandler(toFetchHandler())", async () => {
     expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(simpleNodeHandler);
   });
+
+  // https://github.com/h3js/srvx/issues/208
+  test("backpressure-aware handler does not deadlock", async () => {
+    const backpressureHandler: NodeHttp1Handler = (_req, res) => {
+      return (async () => {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/html");
+        // Write well past the socket highWaterMark so write() returns false and
+        // the handler has to wait for a "drain" event to resume.
+        for (let i = 0; i < 20; i++) {
+          if (!res.write("x".repeat(5000))) {
+            await new Promise<void>((resolve) => res.once("drain", () => resolve()));
+          }
+        }
+        res.end();
+      })();
+    };
+    const webHandler = toFetchHandler(backpressureHandler);
+
+    const body = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => r.text()),
+      new Promise<string>((_, reject) =>
+        setTimeout(() => reject(new Error("deadlocked waiting for response")), 3000),
+      ),
+    ]);
+
+    expect(body.length).toBe(20 * 5000);
+  });
+
+  // https://github.com/h3js/srvx/issues/208
+  test("already-aborted request signal does not crash or hang", async () => {
+    const webHandler = toFetchHandler(simpleNodeHandler);
+
+    const controller = new AbortController();
+    controller.abort();
+
+    // Must not throw an unhandled error / crash the process, must settle, and
+    // reading the body must not hang on a stream that never closes.
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/", { signal: controller.signal })))
+        .then((res) => res.text())
+        .then(
+          () => "completed",
+          () => "errored",
+        ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 3000)),
+    ]);
+
+    expect(settled).not.toBe("hung");
+  });
+
+  // https://github.com/h3js/srvx/issues/208
+  test("client abort mid-stream does not crash or hang", async () => {
+    const controller = new AbortController();
+
+    // Streams a chunk, then drops the client while the response is still open.
+    // Exercises the asynchronous abort path (addAbortSignal -> socket.destroy
+    // after construction) and the _destroy() teardown erroring an already-open
+    // response body controller that has enqueued data.
+    const abortHandler: NodeHttp1Handler = (_req, res) => {
+      return new Promise<void>((resolve) => {
+        const done = () => resolve();
+        res.on("close", done);
+        res.on("error", done);
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/html");
+        res.write("partial");
+        controller.abort();
+      });
+    };
+    const webHandler = toFetchHandler(abortHandler);
+
+    // Must settle (not hang) and must not crash the process with an unhandled
+    // socket "error" event.
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/", { signal: controller.signal })))
+        .then((res) => res.text())
+        .then(
+          () => "completed",
+          () => "errored",
+        ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("hung"), 3000)),
+    ]);
+
+    expect(settled).not.toBe("hung");
+  });
 });
 
 describe("request signal", () => {

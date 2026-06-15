@@ -39,8 +39,16 @@ export async function fetchNodeHandler(
   try {
     await handler(nodeReq as any, nodeRes as any);
     return await nodeRes.toWebResponse();
-  } catch (error) {
-    console.error(error, { cause: { req, handler } });
+  } catch (error: any) {
+    // Client aborts / premature socket closes are routine (the client is already
+    // gone), so don't log them as errors. See https://github.com/h3js/srvx/issues/208
+    const aborted =
+      req.signal?.aborted ||
+      error?.name === "AbortError" ||
+      error?.code === "ERR_STREAM_PREMATURE_CLOSE";
+    if (!aborted) {
+      console.error(error, { cause: { req, handler } });
+    }
     return new Response(null, {
       status: 500,
       statusText: "Internal Server Error",
