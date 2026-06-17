@@ -7,11 +7,18 @@ export type URLInit = {
   search: string;
 };
 
-// Matches paths that need native URL normalization:
+// Matches paths that need native URL normalization (i.e. where the verbatim
+// fast path would diverge from `new URL()` for a target Node can actually
+// deliver). Native percent-encodes/rewrites these in the path; the fast path
+// would not:
 // - dot segments (. / .. / %2e variants)
-// - backslashes
+// - backslashes (rewritten to `/` for special schemes)
+// - fragment delimiter (#) which the fast path does not split on
+// - path percent-encode set chars: ^ " < > ` { }
 // - non-ASCII characters
-const _needsNormRE = /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^\x80-\uffff]/i;
+// (Control chars and space are rejected by Node's HTTP parser, so unreachable.)
+const _needsNormRE =
+  /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^#"<>{}`\x80-\uffff]/i;
 
 /**
  * URL wrapper with fast paths to access to the following props:
@@ -23,7 +30,7 @@ const _needsNormRE = /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\
  *
  * **NOTES:**
  *
- * - It is assumed that the input URL is **already encoded** and formatted from an HTTP request and contains no hash.
+ * - It is assumed that the input URL is **already encoded** and formatted from an HTTP request. A fragment (`#`), while not valid in an origin-form request target, is handled via full URL parsing.
  * - Triggering the setters or getters on other props will deoptimize to full URL parsing.
  * - Changes to `searchParams` will be discarded as we don't track them.
  */
@@ -43,12 +50,14 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
 
       constructor(url: string | URLInit) {
         if (typeof url === "string") {
-          if (url[0] === "/") {
+          const isOriginForm = url[0] === "/";
+          if (isOriginForm && !url.includes("#")) {
             this.#href = url;
           } else {
-            this.#url = new NativeURL(url);
+            // Absolute-form or a target with a fragment (#) needs full parsing
+            this.#url = new NativeURL(isOriginForm ? `http://localhost${url}` : url);
           }
-        } else if (_needsNormRE.test(url.pathname)) {
+        } else if (_needsNormRE.test(url.pathname) || url.search?.includes("#")) {
           this.#url = new NativeURL(
             `${url.protocol || "http:"}//${url.host || "localhost"}${url.pathname}${url.search || ""}`,
           );

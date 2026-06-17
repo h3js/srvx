@@ -240,6 +240,78 @@ describe("FastURL", () => {
     );
   });
 
+  describe("fragment (#) in request target", () => {
+    // RFC 9112 origin-form request-targets have no fragment, but a malicious
+    // client can send a raw `#` and Node passes it through verbatim. The fast
+    // path must not fold the fragment into pathname/search/searchParams; it
+    // should match the spec-correct native URL parse instead (CWE-436).
+    const cases = [
+      // [input, pathname, search, id searchParams]
+      ["/admin/users#frag", "/admin/users", "", []],
+      ["/admin#x", "/admin", "", []],
+      ["/api/item?id=1#&id=2", "/api/item", "?id=1", ["1"]],
+      ["/p#a?b=c", "/p", "", []],
+      ["/p?q=1#frag", "/p", "?q=1", []],
+      ["/items?id=1#x", "/items", "?id=1", ["1"]],
+    ] as const;
+
+    for (const [input, pathname, search, ids] of cases) {
+      test(`FastURL "${input}" matches native URL`, () => {
+        const std = new URL(`http://localhost${input}`);
+        // sanity: our expectations track the spec parser
+        expect(std.pathname).toBe(pathname);
+        expect(std.search).toBe(search);
+        expect(std.searchParams.getAll("id")).toEqual([...ids]);
+
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(url.pathname, ".pathname").toBe(pathname);
+        expect(url.search, ".search").toBe(search);
+        expect(url.searchParams.getAll("id"), ".searchParams id").toEqual([...ids]);
+      });
+
+      test(`FastURL "${input}" stays consistent after deopt`, () => {
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        void url.hostname; // force deopt to native URL
+        expect(url.pathname, ".pathname").toBe(pathname);
+        expect(url.search, ".search").toBe(search);
+      });
+    }
+
+    test(`bare FastURL("/p#frag") strips the fragment`, () => {
+      const url = new FastURL("/p#frag");
+      expect(url.pathname).toBe("/p");
+      expect(url.search).toBe("");
+    });
+  });
+
+  describe("path percent-encode set in request target", () => {
+    // Characters Node's HTTP parser delivers verbatim but the WHATWG URL
+    // parser percent-encodes in the path (" < > ` { }). The fast path must
+    // match native so `url.pathname` stays consistent with
+    // `new URL(url.href).pathname` (what `new Request(req)` / patchGlobalRequest
+    // compute). Same interpretation-conflict class as the fragment case
+    // (CWE-436) but encoding-only — no truncation, and searchParams is
+    // unaffected — so this is consistency hardening, not a demonstrated bypass.
+    // (Control chars and space are rejected by Node with 400, so excluded.)
+    const chars = ['"', "<", ">", "`", "{", "}"];
+
+    for (const ch of chars) {
+      const input = `/a${ch}b`;
+      test(`FastURL "${input}" matches native pathname`, () => {
+        const expected = new URL(`http://localhost${input}`).pathname;
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(url.pathname).toBe(expected);
+        expect(url.pathname).not.toBe(input); // sanity: native did encode it
+      });
+    }
+  });
+
   describe("pathname normalization", () => {
     const cases = [
       // Literal dot segments
