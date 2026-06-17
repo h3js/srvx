@@ -19,6 +19,7 @@ ${c.gray("$")} ${c.cyan(command)} serve --entry ${c.gray("./server.ts")}    ${c.
 ${c.gray("$")} ${c.cyan(command)} serve --prod                 ${c.gray("# Start production  server")}
 ${c.gray("$")} ${c.cyan(command)} serve --port=8080            ${c.gray("# Listen on port 8080")}
 ${c.gray("$")} ${c.cyan(command)} serve --host=localhost       ${c.gray("# Bind to localhost only")}
+${c.gray("$")} ${c.cyan(command)} serve --static=./dist        ${c.gray("# Serve static files (no entry needed)")}
 ${c.gray("$")} ${c.cyan(command)} serve --import=jiti/register ${c.gray(`# Enable ${c.url("jiti", "https://github.com/unjs/jiti")} loader`)}
 ${c.gray("$")} ${c.cyan(command)} serve --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
