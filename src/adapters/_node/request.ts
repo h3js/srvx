@@ -215,7 +215,6 @@ function readBody(req: NodeServerRequest): Promise<any> {
   });
 }
 
-
 /**
  * Resolve the genuine native `Request` and cache it globally.
  *
