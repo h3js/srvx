@@ -9,10 +9,12 @@ export type NodeRequestContext = {
   res?: NodeServerResponse;
 };
 
+const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const NativeRequest = globalThis.Request;
+  const NativeRequest = getNativeRequest();
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
@@ -165,8 +167,7 @@ export const NodeRequest: {
  * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
  */
 export function patchGlobalRequest(): typeof Request {
-  const NativeRequest = ((globalThis as any)[Symbol.for("srvx.nativeRequest")] ??=
-    globalThis.Request) as typeof globalThis.Request;
+  const NativeRequest = getNativeRequest();
 
   const PatchedRequest = class Request extends NativeRequest {
     static _srvx = true;
@@ -212,4 +213,25 @@ function readBody(req: NodeServerRequest): Promise<any> {
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });
+}
+
+
+/**
+ * Resolve the genuine native `Request` and cache it globally.
+ *
+ * `patchGlobalRequest()` replaces `globalThis.Request` with a srvx subclass
+ * (its prototype has no own body methods). If that patched global is captured
+ * as the "native" Request — e.g. when a second srvx instance evaluates after
+ * the global was patched, as happens in a bundled build — then `lazyInherit`
+ * copies no body methods and `formData()`/`blob()`/`arrayBuffer()`/`bytes()`
+ * fall through to undici with the wrong receiver and throw. Reading the shared
+ * cache (and unwrapping any srvx-patched subclass) keeps us on the real native
+ * Request regardless of patch ordering.
+ */
+function getNativeRequest(): typeof globalThis.Request {
+  let R: any = (globalThis as any)[kNativeRequest] || globalThis.Request;
+  while (R?._srvx) {
+    R = Object.getPrototypeOf(R);
+  }
+  return ((globalThis as any)[kNativeRequest] ??= R);
 }
