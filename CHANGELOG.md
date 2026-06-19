@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.11.17
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.16...v0.11.17)
+
+### 🩹 Fixes
+
+- **node/web:** Forward socket drain and handle aborted signals ([#209](https://github.com/h3js/srvx/pull/209))
+- **node:** Keep body methods working when globalThis.Request is patched ([8d91ebe](https://github.com/h3js/srvx/commit/8d91ebe))
+- **node:** Deopt FastURL to native parser for fragments and path encode-set chars ([d384e41](https://github.com/h3js/srvx/commit/d384e41))
+
+### 📖 Documentation
+
+- **cli:** Document static file serving ([#210](https://github.com/h3js/srvx/pull/210))
+
+### 🏡 Chore
+
+- **release:** V0.11.16 ([f6b6678](https://github.com/h3js/srvx/commit/f6b6678))
+- Apply automated updates ([0a52dab](https://github.com/h3js/srvx/commit/0a52dab))
+- Update deps ([6ffee51](https://github.com/h3js/srvx/commit/6ffee51))
+- Pin undici to 8.3 ([e7d7417](https://github.com/h3js/srvx/commit/e7d7417))
+
+### ✅ Tests
+
+- Reduce flakiness ([9db5d30](https://github.com/h3js/srvx/commit/9db5d30))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Sébastien Chopin <seb@nuxtlabs.com>
+- Pi0x <x@pi0.io>
+
 ## v0.11.16
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.15...v0.11.16)
