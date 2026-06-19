@@ -66,7 +66,18 @@ for (const config of testConfigs) {
     });
 
     addTests({
-      url: (path) => server!.url! + path.slice(1),
+      // For http2 (TLS), connect via the `localhost` hostname so the
+      // certificate's DNS altname is used. Newer Node versions (>=26) no longer
+      // match a bare IPv6 literal (`::1`) from `server.url` against the cert's
+      // IP altnames, which breaks the IP-literal TLS check.
+      url: (path) => {
+        if (config.http2) {
+          const u = new URL(server!.url!);
+          u.hostname = "localhost";
+          return u.href + path.slice(1);
+        }
+        return server!.url! + path.slice(1);
+      },
       runtime,
       http2: config.http2,
       fetch: client.fetch,
