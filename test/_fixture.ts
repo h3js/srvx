@@ -1,6 +1,11 @@
 import { inspect } from "node:util";
 import type { ServerOptions } from "../src/types.ts";
 
+// Small real-time delay used to create timing windows in streaming/cancel
+// tests. Kept short to minimize suite overhead while staying large enough to
+// reliably interleave operations across the event loop.
+const TEST_DELAY = 20;
+
 // prettier-ignore
 const runtime = (globalThis as any).Deno ? "deno" : (globalThis.Bun ? "bun" : "node");
 const { serve } = (await import(
@@ -206,7 +211,7 @@ export const fixture: (
               async start(controller) {
                 while (!req.signal.aborted) {
                   controller.enqueue(new TextEncoder().encode(new Date().toISOString() + "\n"));
-                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  await new Promise((resolve) => setTimeout(resolve, TEST_DELAY));
                 }
                 controller.close();
               },
@@ -223,7 +228,7 @@ export const fixture: (
           await reader.read();
           await reader.cancel();
           const abortedAfterCancel = false; // req.signal.aborted;
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, TEST_DELAY));
           const abortedAfterTimeout = req.signal.aborted;
           return _Response.json({
             abortedAfterCancel,
@@ -236,9 +241,9 @@ export const fixture: (
             new ReadableStream({
               async start(controller) {
                 controller.enqueue(encoder.encode("chunk1\n"));
-                await new Promise((resolve) => setTimeout(resolve, 100));
+                await new Promise((resolve) => setTimeout(resolve, TEST_DELAY));
                 controller.enqueue(encoder.encode("chunk2\n"));
-                await new Promise((resolve) => setTimeout(resolve, 100));
+                await new Promise((resolve) => setTimeout(resolve, TEST_DELAY));
                 throw new Error("stream error!");
               },
             }),

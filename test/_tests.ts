@@ -166,7 +166,7 @@ export function addTests(opts: {
       duplex: "half",
       body: new ReadableStream({
         async pull(controller) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 20));
           controller.enqueue(new TextEncoder().encode("hello"));
         },
       }),
