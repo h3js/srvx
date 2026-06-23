@@ -39,9 +39,13 @@ class DenoServer implements Server<DenoFetchHandler> {
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
 
-    if (options.tls?.requestCert) {
+    for (const plugin of options.plugins || []) plugin(this);
+
+    gracefulShutdownPlugin(this);
+
+    if (this.options.tls?.requestCert) {
       /**
-       * Native `Deno.serve` cannot request or inspect client certificates (its TLS options have no `requestCert`/`ca`).
+       * Native `Deno.serve` cannot request or inspect client certificates (its TLS options have no `requestCert`/`ca`), checked after plugins run.
        *
        * Rather than silently ignore mutual-TLS config, fail loudly: Deno's `node:https` server (supported since Deno 2.8) does support it.
        */
@@ -49,10 +53,6 @@ class DenoServer implements Server<DenoFetchHandler> {
         'Mutual TLS (`tls.requestCert`) is not supported by the native Deno server. Import the Node adapter instead: `import { serve } from "srvx/node"` (it runs on Deno via `node:https` and exposes `request.tls`).',
       );
     }
-
-    for (const plugin of options.plugins || []) plugin(this);
-
-    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
