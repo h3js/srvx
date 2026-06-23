@@ -48,30 +48,36 @@ describe("mTLS peer certificate (Node adapter)", () => {
   };
 
   test("exposes the client certificate when presented", async () => {
-    const res = await fetch(url("/tls"), {
-      dispatcher: clientAgent({ withClientCert: true }),
-    });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      hasTls: true,
-      subjectCN: "Test Client",
-      issuerCN: "Test CA",
-      authorized: true,
-      protocol: expect.stringMatching(/^TLSv1\./),
-    });
+    const dispatcher = clientAgent({ withClientCert: true });
+    try {
+      const res = await fetch(url("/tls"), { dispatcher });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        hasTls: true,
+        subjectCN: "Test Client",
+        issuerCN: "Test CA",
+        authorized: true,
+        protocol: expect.stringMatching(/^TLSv1\./),
+      });
+    } finally {
+      await dispatcher.close();
+    }
   });
 
   test("request.tls present without a client cert (empty peer cert)", async () => {
-    const res = await fetch(url("/tls"), {
-      dispatcher: clientAgent({ withClientCert: false }),
-    });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
-      hasTls: true,
-      subjectCN: null, // no peer certificate -> empty object
-      authorized: false,
-      protocol: expect.stringMatching(/^TLSv1\./),
-    });
+    const dispatcher = clientAgent({ withClientCert: false });
+    try {
+      const res = await fetch(url("/tls"), { dispatcher });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        hasTls: true,
+        subjectCN: null, // no peer certificate -> empty object
+        authorized: false,
+        protocol: expect.stringMatching(/^TLSv1\./),
+      });
+    } finally {
+      await dispatcher.close();
+    }
   });
 });
 
