@@ -78,6 +78,19 @@ class BunServer implements Server<BunFetchHandler> {
         cert: tls?.cert,
         key: tls?.key,
         passphrase: tls?.passphrase,
+        /**
+         * Mutual TLS: Bun enforces `requestCert` / `rejectUnauthorized` at the handshake,
+         * but does not expose the peer certificate to the handler, so `request.tls` is
+         * unavailable on Bun. This is Bun-wide, not `Bun.serve`-specific: Bun's `node:http(s)`
+         * server also hands the handler a plain socket (no `getPeerCertificate`), so — unlike
+         * Deno — importing `srvx/node` is not a workaround. (Bun's `node:tls` itself works; the
+         * gap is the node:http↔node:tls bridge.) Tracked by https://github.com/oven-sh/bun/issues/16254
+         */
+        ...(tls?.ca ? { ca: tls.ca } : {}),
+        ...(tls?.requestCert === undefined ? {} : { requestCert: tls.requestCert }),
+        ...(tls?.rejectUnauthorized === undefined
+          ? {}
+          : { rejectUnauthorized: tls.rejectUnauthorized }),
         ...(this.options.bun as bun.Serve.Options<any>)?.tls,
       },
       fetch: this.fetch,

@@ -64,6 +64,9 @@ export function resolveTLSOptions(opts: ServerOptions):
       cert: string;
       key: string;
       passphrase: any;
+      ca?: string[];
+      requestCert?: boolean;
+      rejectUnauthorized?: boolean;
     }
   | undefined {
   if (!opts.tls || opts.protocol === "http") {
@@ -80,10 +83,16 @@ export function resolveTLSOptions(opts: ServerOptions):
   if (!cert || !key) {
     throw new TypeError("TLS `cert` and `key` must be provided together.");
   }
+  const ca = opts.tls.ca
+    ? (Array.isArray(opts.tls.ca) ? opts.tls.ca : [opts.tls.ca]).map((c) => resolveCertOrKey(c)!)
+    : undefined;
   return {
     cert,
     key,
     passphrase: opts.tls.passphrase,
+    ca,
+    requestCert: opts.tls.requestCert,
+    rejectUnauthorized: opts.tls.rejectUnauthorized,
   };
 }
 

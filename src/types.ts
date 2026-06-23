@@ -2,6 +2,7 @@ import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
+import type * as TLS from "node:tls";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 import type * as AWS from "aws-lambda";
@@ -140,6 +141,29 @@ export interface ServerOptions {
      * Passphrase for the private key (optional).
      */
     passphrase?: string;
+
+    /**
+     * File path(s) or inlined CA certificate(s) in PEM format used to verify client certificates (mutual TLS).
+     *
+     * When set, the well-known Mozilla CAs are replaced by the provided ones.
+     */
+    ca?: string | string[];
+
+    /**
+     * Request a certificate from connecting clients (enables mutual TLS).
+     *
+     * The presented certificate is exposed via `request.tls.peerCertificate`.
+     *
+     * @default false
+     */
+    requestCert?: boolean;
+
+    /**
+     * Reject connections whose client certificate is not signed by one of the trusted `ca` certificates. When `false`, an unverified certificate is still exposed via `request.tls` with `authorized: false`.
+     *
+     * @default true (when `requestCert` is enabled)
+     */
+    rejectUnauthorized?: boolean;
   };
 
   /**
@@ -312,6 +336,42 @@ export interface ServerRequestContext {
   [key: string]: unknown;
 }
 
+/**
+ * TLS connection state for the current request.
+ *
+ * Available when the request was served over TLS. The peer certificate fields are populated only when the server requested a client certificate (`tls.requestCert`) and the client presented one.
+ *
+ * @note On Bun, `peerCertificate` / `authorized` / `authorizationError` are currently unavailable: Bun does not expose the peer certificate to the request handler (neither `Bun.serve` nor the `node:http(s)` server, so importing `srvx/node` is not a workaround). TLS enforcement (`requestCert` / `rejectUnauthorized`) still applies. See https://github.com/oven-sh/bun/issues/16254
+ */
+export interface ServerRequestTLS {
+  /**
+   * The client (peer) certificate, if one was requested and presented.
+   *
+   * Empty object (`{}`) if the peer did not provide a certificate.
+   */
+  peerCertificate?: TLS.PeerCertificate;
+
+  /**
+   * `true` if the peer certificate was signed by one of the trusted CAs.
+   */
+  authorized?: boolean;
+
+  /**
+   * The reason the peer certificate failed verification, if any.
+   */
+  authorizationError?: Error | string;
+
+  /**
+   * The negotiated TLS protocol version, e.g. `"TLSv1.3"`.
+   */
+  protocol?: string | null;
+
+  /**
+   * The negotiated cipher suite.
+   */
+  cipher?: TLS.CipherNameAndProtocol;
+}
+
 export interface ServerRequest extends Request {
   /**
    * Access to Node.js native instance of request.
@@ -334,6 +394,11 @@ export interface ServerRequest extends Request {
    * IP address of the client.
    */
   ip?: string | undefined;
+
+  /**
+   * TLS connection state, including the client (peer) certificate for mutual TLS. `undefined` when the request was not served over TLS.
+   */
+  tls?: ServerRequestTLS | undefined;
 
   /**
    * Arbitrary context related to the request.
