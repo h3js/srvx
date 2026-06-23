@@ -83,9 +83,17 @@ export function resolveTLSOptions(opts: ServerOptions):
   if (!cert || !key) {
     throw new TypeError("TLS `cert` and `key` must be provided together.");
   }
-  const ca = opts.tls.ca
-    ? (Array.isArray(opts.tls.ca) ? opts.tls.ca : [opts.tls.ca]).map((c) => resolveCertOrKey(c)!)
-    : undefined;
+  let ca: string[] | undefined;
+  if (opts.tls.ca !== undefined) {
+    const entries = Array.isArray(opts.tls.ca) ? opts.tls.ca : [opts.tls.ca];
+    ca = entries.map((entry) => {
+      const resolved = resolveCertOrKey(entry);
+      if (!resolved) {
+        throw new TypeError("TLS `ca` entries must be non-empty PEM strings or file paths.");
+      }
+      return resolved;
+    });
+  }
   return {
     cert,
     key,
