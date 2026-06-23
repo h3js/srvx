@@ -57,6 +57,23 @@ export const NodeRequest: {
       return this.#req.socket?.remoteAddress;
     }
 
+    get tls(): ServerRequest["tls"] {
+      const socket = this.#req.socket as
+        | (import("node:tls").TLSSocket & { encrypted?: boolean })
+        | undefined;
+      // Plain (non-TLS) sockets have no `getPeerCertificate`.
+      if (!socket || typeof socket.getPeerCertificate !== "function") {
+        return undefined;
+      }
+      return {
+        peerCertificate: socket.getPeerCertificate(),
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError ?? undefined,
+        protocol: socket.getProtocol?.(),
+        cipher: socket.getCipher?.(),
+      };
+    }
+
     get method(): string {
       if (this.#request) {
         return this.#request.method;

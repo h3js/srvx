@@ -1,5 +1,6 @@
 import { describe, test, expectTypeOf } from "vitest";
-import type { ServerRequest } from "../src/types.ts";
+import type { PeerCertificate } from "node:tls";
+import type { ServerOptions, ServerRequest } from "../src/types.ts";
 
 describe("types", () => {
   describe("ServerRequest", () => {
@@ -10,6 +11,22 @@ describe("types", () => {
           undefined | { TEST: string }
         >();
       });
+    });
+    describe("tls", () => {
+      test("peerCertificate", () => {
+        expectTypeOf(request.tls?.peerCertificate).toEqualTypeOf<undefined | PeerCertificate>();
+      });
+      test("authorized", () => {
+        expectTypeOf(request.tls?.authorized).toEqualTypeOf<undefined | boolean>();
+      });
+    });
+  });
+
+  describe("ServerOptions", () => {
+    test("tls.requestCert / ca", () => {
+      expectTypeOf<ServerOptions["tls"]>().toExtend<
+        undefined | { requestCert?: boolean; ca?: string | string[] }
+      >();
     });
   });
 });

@@ -69,17 +69,29 @@ export async function getTLSCert(): Promise<{
   ca: string;
   cert: string;
   key: string;
+  clientCert: string;
+  clientKey: string;
 }> {
   const certDir = join(testDir, ".tmp/tls");
   const caFile = join(certDir, "ca.crt");
   const certFile = join(certDir, "server.crt");
   const keyFile = join(certDir, "server.key");
+  const clientCertFile = join(certDir, "client.crt");
+  const clientKeyFile = join(certDir, "client.key");
 
-  if (existsSync(caFile) && existsSync(certFile) && existsSync(keyFile)) {
+  if (
+    existsSync(caFile) &&
+    existsSync(certFile) &&
+    existsSync(keyFile) &&
+    existsSync(clientCertFile) &&
+    existsSync(clientKeyFile)
+  ) {
     return {
       ca: await readFile(caFile, "utf8"),
       cert: await readFile(certFile, "utf8"),
       key: await readFile(keyFile, "utf8"),
+      clientCert: await readFile(clientCertFile, "utf8"),
+      clientKey: await readFile(clientKeyFile, "utf8"),
     };
   }
 
@@ -88,6 +100,7 @@ export async function getTLSCert(): Promise<{
   // Generate keys
   const caKeys = pki.rsa.generateKeyPair(2048);
   const serverKeys = pki.rsa.generateKeyPair(2048);
+  const clientKeys = pki.rsa.generateKeyPair(2048);
 
   // Create CA cert
   const caCert = pki.createCertificate();
@@ -127,14 +140,33 @@ export async function getTLSCert(): Promise<{
   ]);
   serverCert.sign(caKeys.privateKey, md.sha256.create());
 
+  // Create client cert (for mutual TLS), signed by the same CA
+  const clientCertObj = pki.createCertificate();
+  clientCertObj.publicKey = clientKeys.publicKey;
+  clientCertObj.serialNumber = "03";
+  clientCertObj.validity.notBefore = new Date();
+  clientCertObj.validity.notAfter = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  clientCertObj.setSubject([{ name: "commonName", value: "Test Client" }]);
+  clientCertObj.setIssuer(caCert.subject.attributes);
+  clientCertObj.setExtensions([
+    { name: "basicConstraints", cA: false },
+    { name: "keyUsage", digitalSignature: true, keyEncipherment: true },
+    { name: "extKeyUsage", clientAuth: true },
+  ]);
+  clientCertObj.sign(caKeys.privateKey, md.sha256.create());
+
   const ca = pki.certificateToPem(caCert);
   const key = pki.privateKeyToPem(serverKeys.privateKey);
   const cert = pki.certificateToPem(serverCert);
+  const clientKey = pki.privateKeyToPem(clientKeys.privateKey);
+  const clientCert = pki.certificateToPem(clientCertObj);
 
   await mkdir(certDir, { recursive: true });
   await writeFile(caFile, ca);
   await writeFile(certFile, cert);
   await writeFile(keyFile, key);
+  await writeFile(clientCertFile, clientCert);
+  await writeFile(clientKeyFile, clientKey);
 
-  return { ca, cert, key };
+  return { ca, cert, key, clientCert, clientKey };
 }
