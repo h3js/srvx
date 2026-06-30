@@ -171,11 +171,15 @@ export const fixture: (
         }
         case "/response/NodeReadable": {
           const { Readable } = process.getBuiltinModule("node:stream");
+          // Yield Uint8Array chunks (the portable form of a Node Readable body):
+          // Deno >=2.9 native Response rejects string chunks from an async
+          // iterable, while node/bun exercise the same Readable->body path.
+          const encoder = new TextEncoder();
           return new _Response(
             new Readable({
               read() {
                 for (let i = 0; i < 3; i++) {
-                  this.push(`chunk${i}\n`);
+                  this.push(encoder.encode(`chunk${i}\n`));
                 }
                 this.push(null /* end stream */);
               },
