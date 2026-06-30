@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.11.18
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.17...v0.11.18)
+
+### 🩹 Fixes
+
+- **bun, deno:** Unwrap `NodeResponse` ([b0dadda](https://github.com/h3js/srvx/commit/b0dadda))
+
+### 🏡 Chore
+
+- **release:** V0.11.17 ([e95ca51](https://github.com/h3js/srvx/commit/e95ca51))
+
+### ✅ Tests
+
+- **node:** Connect http2 tests via localhost for TLS cert match ([#211](https://github.com/h3js/srvx/pull/211))
+- Fix deno incompatibility ([4fd915f](https://github.com/h3js/srvx/commit/4fd915f))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.17
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.16...v0.11.17)
