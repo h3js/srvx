@@ -1,5 +1,9 @@
 import { inspect } from "node:util";
 import type { ServerOptions } from "../src/types.ts";
+// srvx's node-adapter `FastResponse`. Returned by handlers/middleware that
+// resolve srvx's `node` export condition; the bun/deno adapters must normalize
+// it to a native Response (regression for h3js/srvx NodeResponse asymmetry).
+import { NodeResponse } from "../src/adapters/_node/response.ts";
 
 // Small real-time delay used to create timing windows in streaming/cancel
 // tests. Kept short to minimize suite overhead while staying large enough to
@@ -26,6 +30,11 @@ export const fixture: (
     hostname: "localhost",
     middleware: [
       (req, next) => {
+        // A middleware returning a node-adapter NodeResponse must also be
+        // normalized to a native Response by the bun/deno adapters.
+        if (req.headers.has("X-node-response-mw")) {
+          return new NodeResponse("node-response from middleware");
+        }
         if (req.headers.has("X-plugin-req")) {
           return new _Response("response from req plugin");
         }
@@ -184,6 +193,28 @@ export const fixture: (
                 this.push(null /* end stream */);
               },
             }) as any,
+          );
+        }
+        case "/response/NodeResponse": {
+          // A node-adapter NodeResponse must be normalized to a native Response
+          // by the bun/deno adapters before reaching Bun.serve/Deno.serve.
+          return new NodeResponse("node-response-ok", {
+            headers: { "x-node-response": "1" },
+          });
+        }
+        case "/response/NodeResponse/stream": {
+          // Same, but with a streaming body to verify the unwrapped native
+          // Response still streams correctly under bun/deno.
+          return new NodeResponse(
+            new ReadableStream({
+              start(controller) {
+                for (let i = 0; i < 3; i++) {
+                  controller.enqueue(new TextEncoder().encode(`chunk${i}\n`));
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/plain" } },
           );
         }
         case "/clone-response": {

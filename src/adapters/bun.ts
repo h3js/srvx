@@ -6,6 +6,7 @@ import {
   resolvePortAndHost,
   resolveTLSOptions,
   createWaitUntil,
+  toNativeResponse,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
@@ -65,7 +66,9 @@ class BunServer implements Server<BunFetchHandler> {
           },
         },
       });
-      return fetchHandler(request);
+      // Bun.serve strictly requires a native Response; normalize node-adapter
+      // NodeResponse (see toNativeResponse). Cheap no-op for native responses.
+      return toNativeResponse(fetchHandler(request));
     };
 
     const tls = resolveTLSOptions(this.options);

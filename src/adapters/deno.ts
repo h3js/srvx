@@ -5,6 +5,7 @@ import {
   printListening,
   resolvePortAndHost,
   resolveTLSOptions,
+  toNativeResponse,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
@@ -70,7 +71,9 @@ class DenoServer implements Server<DenoFetchHandler> {
           },
         },
       });
-      return fetchHandler(request);
+      // Deno.serve strictly requires a native Response; normalize node-adapter
+      // NodeResponse (see toNativeResponse). Cheap no-op for native responses.
+      return toNativeResponse(fetchHandler(request));
     };
 
     const tls = resolveTLSOptions(this.options);

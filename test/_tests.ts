@@ -245,6 +245,34 @@ export function addTests(opts: {
       expect(res.status).toBe(200);
       expect(await res.text()).toEqual("hello!");
     });
+
+    // Regression: a handler/middleware can return srvx's node-adapter
+    // `NodeResponse` (e.g. when the response is built with the `node` export
+    // condition while the host serves via the bun/deno adapter, as in Nitro
+    // under `bun --bun`). Bun.serve/Deno.serve reject a non-native Response, so
+    // the bun/deno adapters must normalize it. See toNativeResponse().
+    describe("NodeResponse (node-adapter FastResponse)", () => {
+      test("from handler", async () => {
+        const res = await fetch(url("/response/NodeResponse"));
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-node-response")).toBe("1");
+        expect(await res.text()).toBe("node-response-ok");
+      });
+
+      test("from handler (streaming body)", async () => {
+        const res = await fetch(url("/response/NodeResponse/stream"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("chunk0\nchunk1\nchunk2\n");
+      });
+
+      test("from middleware", async () => {
+        const res = await fetch(url("/"), {
+          headers: { "X-node-response-mw": "1" },
+        });
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("node-response from middleware");
+      });
+    });
   });
 
   describe("response cloning", () => {

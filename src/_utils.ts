@@ -101,6 +101,39 @@ function resolveCertOrKey(value?: unknown): undefined | string {
   return readFileSync(value, "utf8");
 }
 
+/**
+ * Normalize srvx's node-adapter `NodeResponse` back to a native `Response`.
+ *
+ * Web-native serve()s (Bun, Deno, ...) strictly require a real `Response`. A
+ * `NodeResponse` (the node adapter's `FastResponse`) can reach them whenever the
+ * code constructing the response resolves srvx's `node` export condition while
+ * the host serves via the bun/deno adapter (e.g. Vite module-runner / Nitro
+ * under `bun --bun`). `NodeResponse` exposes a lazy `_response` getter that
+ * builds the native `Response`, so the unwrap is cheap.
+ *
+ * Kept allocation-free on the hot path: native responses (no `_toNodeResponse`)
+ * are returned as-is, and a sync handler result is not forced into a microtask.
+ */
+export function toNativeResponse(res: Response | Promise<Response>): Response | Promise<Response> {
+  // Detect via the `_toNodeResponse` brand (a plain method, the same
+  // discriminator used in `_node/send.ts`), then unwrap via the `_response`
+  // getter. Triggering `_response` is intentional here: for a NodeResponse we
+  // want the (memoized) native Response built. A native Response has no
+  // `_response`, so the common path never touches the getter.
+  if ((res as NodeResponseLike)?._toNodeResponse) {
+    return (res as NodeResponseLike)._response!;
+  }
+  if (typeof (res as Promise<Response>)?.then === "function") {
+    return (res as Promise<Response>).then(toNativeResponse) as Promise<Response>;
+  }
+  return res;
+}
+
+interface NodeResponseLike {
+  _toNodeResponse?: () => unknown;
+  _response?: Response;
+}
+
 export function createWaitUntil() {
   const promises = new Set<Promise<any> | PromiseLike<any>>();
   return {
