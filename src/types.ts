@@ -130,11 +130,14 @@ export interface ServerOptions {
    * has `statusCode: 413`, `status: 413` and `code: "ERR_BODY_TOO_LARGE"`) so a
    * handler can map it to an HTTP 413 (Payload Too Large) response.
    *
-   * This is enforced for the buffered reads (`request.text()` / `request.json()`)
-   * as well as the streamed body (`request.body`, and therefore the native `Request`
-   * methods `arrayBuffer()` / `blob()` / `bytes()` / `formData()`).
+   * The limit covers the buffered reads (`request.text()` / `request.json()`) as
+   * well as the streamed body (`request.body`, and therefore `arrayBuffer()` /
+   * `blob()` / `bytes()` / `formData()`).
    *
-   * **Note:** Currently only enforced for the Node.js runtime.
+   * Runtime support:
+   * - **Node**: enforced by srvx (body stream is size-limited).
+   * - **Bun**: mapped to Bun's native `maxRequestBodySize` (413 before the handler).
+   * - **Deno**: enforced by srvx (request body stream is size-limited).
    *
    * @default undefined (no limit)
    */

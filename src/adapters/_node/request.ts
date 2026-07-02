@@ -2,6 +2,7 @@ import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../..
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
+import { createBodyTooLargeError, limitBodyStream } from "../../_body-limit.ts";
 import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
@@ -260,50 +261,6 @@ function readBody(req: NodeServerRequest, maxBodySize?: number): Promise<any> {
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });
-}
-
-/**
- * Wraps a body `ReadableStream` so the total number of bytes read cannot exceed
- * `maxBodySize`. Once the limit is passed the wrapped stream errors with a
- * `413`-style error and the upstream (Node request) stream is cancelled. This
- * is pull-based, so it preserves backpressure and stops reading as soon as the
- * limit is hit rather than buffering the whole body first.
- */
-function limitBodyStream(stream: ReadableStream, maxBodySize: number): ReadableStream {
-  const reader = stream.getReader();
-  let size = 0;
-  return new ReadableStream({
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        controller.close();
-        return;
-      }
-      size += (value as Uint8Array).byteLength;
-      if (size > maxBodySize) {
-        const error = createBodyTooLargeError(maxBodySize);
-        reader.cancel(error).catch(() => {});
-        controller.error(error);
-        return;
-      }
-      controller.enqueue(value);
-    },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
-}
-
-/**
- * Creates a `413 Payload Too Large` style error for when a request body exceeds
- * the configured `maxBodySize`. The `statusCode` / `status` properties let a
- * handler map it to an HTTP 413 response.
- */
-function createBodyTooLargeError(maxBodySize: number): Error {
-  return Object.assign(
-    new Error(`Request body exceeds the maximum allowed size of ${maxBodySize} bytes.`),
-    { code: "ERR_BODY_TOO_LARGE", statusCode: 413, status: 413 },
-  );
 }
 
 /**
