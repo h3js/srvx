@@ -123,17 +123,18 @@ export interface ServerOptions {
   gracefulShutdown?: boolean | { gracefulTimeout?: number; forceTimeout?: number };
 
   /**
-   * Maximum allowed size (in bytes) for a request body that is buffered in memory.
+   * Maximum allowed size (in bytes) for the request body.
    *
-   * This guards the Node.js fallback path used by `request.text()` / `request.json()`
-   * when the body is consumed as a whole instead of being streamed. As chunks arrive,
-   * their accumulated length is tracked and, once it exceeds this limit, reading is
-   * aborted and rejects with a `413`-style error (the error has `statusCode: 413`,
-   * `status: 413` and `code: "ERR_BODY_TOO_LARGE"`) so a handler can map it to an
-   * HTTP 413 (Payload Too Large) response.
+   * As the body is read, its accumulated length is tracked and, once it exceeds
+   * this limit, reading is aborted and rejects with a `413`-style error (the error
+   * has `statusCode: 413`, `status: 413` and `code: "ERR_BODY_TOO_LARGE"`) so a
+   * handler can map it to an HTTP 413 (Payload Too Large) response.
    *
-   * **Note:** Currently only enforced for the Node.js runtime buffered body fallback.
-   * Streaming consumers (`request.body`) are not affected.
+   * This is enforced for the buffered reads (`request.text()` / `request.json()`)
+   * as well as the streamed body (`request.body`, and therefore the native `Request`
+   * methods `arrayBuffer()` / `blob()` / `bytes()` / `formData()`).
+   *
+   * **Note:** Currently only enforced for the Node.js runtime.
    *
    * @default undefined (no limit)
    */

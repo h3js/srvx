@@ -8,8 +8,8 @@ export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
   /**
-   * Maximum allowed size (in bytes) for a body buffered in memory via the
-   * {@link readBody} fallback. See `ServerOptions.maxBodySize`.
+   * Maximum allowed size (in bytes) for the request body, enforced for both the
+   * buffered reads and the streamed body. See `ServerOptions.maxBodySize`.
    */
   maxBodySize?: number;
 };
@@ -118,10 +118,17 @@ export const NodeRequest: {
       if (this.#bodyStream === undefined) {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
-        this.#bodyStream = hasBody
+        let stream = hasBody
           ? // TODO: HTTP2ServerRequest
             (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
           : null;
+        // Enforce `maxBodySize` at the single choke point every consumer funnels
+        // through (`request.body`, and therefore the native `Request` methods
+        // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
+        if (stream && this.#maxBodySize !== undefined) {
+          stream = limitBodyStream(stream, this.#maxBodySize);
+        }
+        this.#bodyStream = stream;
       }
       return this.#bodyStream;
     }
@@ -256,9 +263,41 @@ function readBody(req: NodeServerRequest, maxBodySize?: number): Promise<any> {
 }
 
 /**
- * Creates a `413 Payload Too Large` style error for when a buffered request body
- * exceeds the configured `maxBodySize`. The `statusCode` / `status` properties let
- * a handler map it to an HTTP 413 response.
+ * Wraps a body `ReadableStream` so the total number of bytes read cannot exceed
+ * `maxBodySize`. Once the limit is passed the wrapped stream errors with a
+ * `413`-style error and the upstream (Node request) stream is cancelled. This
+ * is pull-based, so it preserves backpressure and stops reading as soon as the
+ * limit is hit rather than buffering the whole body first.
+ */
+function limitBodyStream(stream: ReadableStream, maxBodySize: number): ReadableStream {
+  const reader = stream.getReader();
+  let size = 0;
+  return new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+      size += (value as Uint8Array).byteLength;
+      if (size > maxBodySize) {
+        const error = createBodyTooLargeError(maxBodySize);
+        reader.cancel(error).catch(() => {});
+        controller.error(error);
+        return;
+      }
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+}
+
+/**
+ * Creates a `413 Payload Too Large` style error for when a request body exceeds
+ * the configured `maxBodySize`. The `statusCode` / `status` properties let a
+ * handler map it to an HTTP 413 response.
  */
 function createBodyTooLargeError(maxBodySize: number): Error {
   return Object.assign(
