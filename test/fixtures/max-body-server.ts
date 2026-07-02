@@ -1,4 +1,4 @@
-// Minimal server used by the cross-runtime maxBodySize tests. Spawned under the
+// Minimal server used by the cross-runtime maxRequestBodySize tests. Spawned under the
 // target runtime (bun/deno); reads PORT from the env like the main fixture.
 const runtime = (globalThis as any).Deno ? "deno" : (globalThis as any).Bun ? "bun" : "node";
 const { serve } = (await import(
@@ -7,7 +7,7 @@ const { serve } = (await import(
 
 serve({
   hostname: "localhost",
-  maxBodySize: 8,
+  maxRequestBodySize: 8,
   fetch: async (req) => {
     try {
       // Read via the whole native body path so streaming/native reads are exercised.

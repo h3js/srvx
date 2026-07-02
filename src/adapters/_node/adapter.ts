@@ -19,7 +19,7 @@ export type AdapterMeta = {
  */
 export function toNodeHandler(
   handler: FetchHandler & AdapterMeta,
-  options?: { maxBodySize?: number },
+  options?: { maxRequestBodySize?: number },
 ): NodeHttpHandler & AdapterMeta {
   if (handler.__nodeHandler) {
     return handler.__nodeHandler;
@@ -29,7 +29,7 @@ export function toNodeHandler(
     const request = new NodeRequest({
       req: nodeReq,
       res: nodeRes,
-      maxBodySize: options?.maxBodySize,
+      maxRequestBodySize: options?.maxRequestBodySize,
     });
     const res = handler(request);
     return res instanceof Promise

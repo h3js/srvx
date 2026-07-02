@@ -58,13 +58,13 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.#wait = createWaitUntil();
     this.waitUntil = this.#wait.waitUntil;
 
-    const maxBodySize = this.options.maxBodySize;
+    const maxRequestBodySize = this.options.maxRequestBodySize;
     this.fetch = (request, info) => {
       // Deno.serve has no native body-size option, so enforce it here by
       // rebuilding the request with a size-limited body stream (no-op when unset
       // or bodyless, keeping the default hot path allocation-free).
-      if (maxBodySize !== undefined) {
-        request = limitRequestBody(request, maxBodySize);
+      if (maxRequestBodySize !== undefined) {
+        request = limitRequestBody(request, maxRequestBodySize);
       }
       Object.defineProperties(request, {
         waitUntil: { value: this.#wait?.waitUntil },

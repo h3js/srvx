@@ -10,9 +10,9 @@ export type NodeRequestContext = {
   res?: NodeServerResponse;
   /**
    * Maximum allowed size (in bytes) for the request body, enforced for both the
-   * buffered reads and the streamed body. See `ServerOptions.maxBodySize`.
+   * buffered reads and the streamed body. See `ServerOptions.maxRequestBodySize`.
    */
-  maxBodySize?: number;
+  maxRequestBodySize?: number;
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
@@ -31,15 +31,15 @@ export const NodeRequest: {
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
-    #maxBodySize?: number;
+    #maxRequestBodySize?: number;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
-      this.#maxBodySize = ctx.maxBodySize;
+      this.#maxRequestBodySize = ctx.maxRequestBodySize;
       this.runtime = {
         name: "node",
         // Reuse the context object as-is to avoid a per-request allocation on
-        // the hot path. `maxBodySize` may ride along but is intentionally not
+        // the hot path. `maxRequestBodySize` may ride along but is intentionally not
         // part of the public `runtime.node` type; consumers only read req/res.
         node: ctx,
       };
@@ -123,11 +123,11 @@ export const NodeRequest: {
           ? // TODO: HTTP2ServerRequest
             (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
           : null;
-        // Enforce `maxBodySize` at the single choke point every consumer funnels
+        // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
         // through (`request.body`, and therefore the native `Request` methods
         // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
-        if (stream && this.#maxBodySize !== undefined) {
-          stream = limitBodyStream(stream, this.#maxBodySize);
+        if (stream && this.#maxRequestBodySize !== undefined) {
+          stream = limitBodyStream(stream, this.#maxRequestBodySize);
         }
         this.#bodyStream = stream;
       }
@@ -141,7 +141,7 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req, this.#maxBodySize).then((buf) => buf.toString());
+      return readBody(this.#req, this.#maxRequestBodySize).then((buf) => buf.toString());
     }
 
     json() {
@@ -214,17 +214,17 @@ export function patchGlobalRequest(): typeof Request {
  * Buffers the whole request body into a single `Buffer`.
  *
  * This is the fallback used by `NodeRequest.text()` / `.json()` when the body was
- * not consumed as a stream. When `maxBodySize` (bytes) is provided, the accumulated
+ * not consumed as a stream. When `maxRequestBodySize` (bytes) is provided, the accumulated
  * length is tracked as chunks arrive and, once it is exceeded, reading is aborted
  * (the stream is paused so a handler can still send a response) and the promise
- * rejects with a `413`-style error. When `maxBodySize` is `undefined` (the default)
+ * rejects with a `413`-style error. When `maxRequestBodySize` is `undefined` (the default)
  * no limit is enforced.
  */
-function readBody(req: NodeServerRequest, maxBodySize?: number): Promise<any> {
+function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<any> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
-    if (maxBodySize !== undefined && req.rawBody.length > maxBodySize) {
-      return Promise.reject(createBodyTooLargeError(maxBodySize));
+    if (maxRequestBodySize !== undefined && req.rawBody.length > maxRequestBodySize) {
+      return Promise.reject(createBodyTooLargeError(maxRequestBodySize));
     }
     return Promise.resolve(req.rawBody);
   }
@@ -238,14 +238,14 @@ function readBody(req: NodeServerRequest, maxBodySize?: number): Promise<any> {
       req.off("error", onError);
     };
     const onData = (chunk: any) => {
-      if (maxBodySize !== undefined) {
+      if (maxRequestBodySize !== undefined) {
         size += chunk.length;
-        if (size > maxBodySize) {
+        if (size > maxRequestBodySize) {
           cleanup();
           // Stop consuming the body but keep the socket alive so a handler can
           // still respond (e.g. with an HTTP 413).
           req.pause?.();
-          reject(createBodyTooLargeError(maxBodySize));
+          reject(createBodyTooLargeError(maxRequestBodySize));
           return;
         }
       }

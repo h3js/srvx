@@ -141,7 +141,7 @@ export interface ServerOptions {
    *
    * @default undefined (no limit)
    */
-  maxBodySize?: number;
+  maxRequestBodySize?: number;
 
   /**
    * TLS server options.

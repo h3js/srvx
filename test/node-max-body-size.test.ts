@@ -2,11 +2,11 @@ import { describe, expect, test } from "vitest";
 import { fetch, FormData } from "undici";
 import { serve } from "../src/adapters/node.ts";
 
-describe("node maxBodySize", () => {
+describe("node maxRequestBodySize", () => {
   test("rejects a buffered body larger than the limit with a 413-style error", async () => {
     const server = serve({
       port: 0,
-      maxBodySize: 8,
+      maxRequestBodySize: 8,
       fetch: async (req) => {
         try {
           return new Response(await req.text());
@@ -25,7 +25,7 @@ describe("node maxBodySize", () => {
   test("accepts a buffered body within the limit", async () => {
     const server = serve({
       port: 0,
-      maxBodySize: 1024,
+      maxRequestBodySize: 1024,
       fetch: async (req) => new Response(await req.text()),
     });
     await server.ready();
@@ -52,7 +52,7 @@ describe("node maxBodySize", () => {
     test(`rejects an oversized body read via ${name}`, async () => {
       const server = serve({
         port: 0,
-        maxBodySize: 8,
+        maxRequestBodySize: 8,
         fetch: async (req) => {
           try {
             return new Response(String(await read(req)));
@@ -72,7 +72,7 @@ describe("node maxBodySize", () => {
   test("rejects an oversized multipart body via formData()", async () => {
     const server = serve({
       port: 0,
-      maxBodySize: 16,
+      maxRequestBodySize: 16,
       fetch: async (req) => {
         try {
           const form = await req.formData();
@@ -94,7 +94,7 @@ describe("node maxBodySize", () => {
   test("accepts a body within the limit read via arrayBuffer()", async () => {
     const server = serve({
       port: 0,
-      maxBodySize: 1024,
+      maxRequestBodySize: 1024,
       fetch: async (req) => new Response(String((await req.arrayBuffer()).byteLength)),
     });
     await server.ready();
