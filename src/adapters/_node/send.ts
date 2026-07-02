@@ -34,7 +34,10 @@ export async function sendNodeResponse(
     return endNodeResponse(nodeRes);
   }
 
-  const rawHeaders = [...webRes.headers];
+  const rawHeaders: string[] = [];
+  for (const [key, value] of webRes.headers) {
+    rawHeaders.push(key, value);
+  }
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
   return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
@@ -44,21 +47,21 @@ function writeHead(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  rawHeaders: [string, string][],
-): void {
   // Node.js writeHead accepts a raw array of [key, value, key, value] or [[key, value], [key, value]]
   // https://github.com/nodejs/node/blob/v22.14.0/lib/_http_server.js#L376
   // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
   // But it has an inconsistency in slow-path that does not unflattens!!
   // https://github.com/h3js/srvx/pull/40
-  const writeHeaders = rawHeaders.flat();
+  // We always pass the (safe) flat form, pre-built to avoid a per-response flatten.
+  rawHeaders: string[],
+): void {
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
       // @ts-expect-error
-      nodeRes.writeHead(status, writeHeaders);
+      nodeRes.writeHead(status, rawHeaders);
     } else {
       // @ts-expect-error
-      nodeRes.writeHead(status, statusText, writeHeaders);
+      nodeRes.writeHead(status, statusText, rawHeaders);
     }
   }
 }
@@ -72,7 +75,7 @@ function pipeBody(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  headers: [string, string][],
+  headers: string[],
 ): Promise<void> | void {
   if (nodeRes.destroyed) {
     stream.destroy?.();

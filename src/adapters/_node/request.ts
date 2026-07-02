@@ -257,7 +257,8 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
     };
     const onEnd = () => {
       cleanup();
-      resolve(Buffer.concat(chunks));
+      // Single-chunk bodies (the common case) skip Buffer.concat's alloc+copy
+      resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });

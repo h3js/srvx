@@ -8,7 +8,8 @@ export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView |
 export interface PreparedNodeResponse {
   status: number;
   statusText: string;
-  headers: [string, string][];
+  /** Flat rawHeaders-style list: `[name1, value1, name2, value2, …]` */
+  headers: string[];
   body: PreparedNodeResponseBody;
 }
 
@@ -145,8 +146,8 @@ export const NodeResponse: {
         }
       }
 
-      // Headers
-      const headers: [string, string][] = [];
+      // Headers (flat rawHeaders-style list — avoids a per-response flatten in writeHead)
+      const headers: string[] = [];
       const initHeaders = this.#init?.headers;
       const headerEntries =
         this.#response?.headers ||
@@ -156,21 +157,22 @@ export const NodeResponse: {
             ? initHeaders
             : initHeaders?.entries
               ? (initHeaders as Headers).entries()
-              : // prettier-ignore
-                Object.entries(initHeaders).map(([k, v]) => [k.toLowerCase(), v])
+              : Object.entries(initHeaders)
           : undefined);
       let hasContentTypeHeader: boolean | undefined;
       let hasContentLength: boolean | undefined;
       if (headerEntries) {
         for (const [key, value] of headerEntries) {
+          // Normalize names once: enables case-insensitive content-type /
+          // content-length dedup and matches native Response header casing.
+          const lowerKey = typeof key === "string" ? key.toLowerCase() : String(key);
           if (Array.isArray(value)) {
             for (const v of value) {
-              headers.push([key, v]);
+              headers.push(lowerKey, v);
             }
           } else {
-            headers.push([key, value]);
+            headers.push(lowerKey, value);
           }
-          const lowerKey = typeof key === "string" ? key.toLowerCase() : key;
           if (lowerKey === "content-type") {
             hasContentTypeHeader = true;
           } else if (lowerKey === "content-length") {
@@ -179,10 +181,10 @@ export const NodeResponse: {
         }
       }
       if (contentType && !hasContentTypeHeader) {
-        headers.push(["content-type", contentType]);
+        headers.push("content-type", contentType);
       }
       if (contentLength && !hasContentLength) {
-        headers.push(["content-length", String(contentLength)]);
+        headers.push("content-length", String(contentLength));
       }
 
       // Free up memory
