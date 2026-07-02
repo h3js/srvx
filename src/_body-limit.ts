@@ -60,6 +60,7 @@ export function limitRequestBody(request: Request, maxRequestBodySize: number): 
     return request;
   }
   return new Request(request, {
+    // oxlint-disable-next-line no-invalid-fetch-options -- guarded by `request.body` above, so never GET/HEAD
     body: limitBodyStream(request.body, maxRequestBodySize),
     // @ts-expect-error `duplex` is required for a streaming request body.
     duplex: "half",
