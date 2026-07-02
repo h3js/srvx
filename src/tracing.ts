@@ -44,7 +44,7 @@ export function tracingPlugin(opts: { middleware?: boolean; fetch?: boolean } = 
 
     // Wrap the fetch handler with tracing
     if (opts.fetch !== false) {
-      const fetchChannel = tracingChannel<unknown, RequestEvent>("srvx.request");
+      const fetchChannel = tracingChannel<RequestEvent, RequestEvent>("srvx.request");
       const originalFetch = server.options.fetch;
       server.options.fetch = (request) => {
         return fetchChannel.tracePromise(async () => await originalFetch(request), {
@@ -56,7 +56,7 @@ export function tracingPlugin(opts: { middleware?: boolean; fetch?: boolean } = 
 
     // Wrap middleware with tracing
     if (opts.middleware !== false) {
-      const middlewareChannel = tracingChannel<unknown, RequestEvent>("srvx.middleware");
+      const middlewareChannel = tracingChannel<RequestEvent, RequestEvent>("srvx.middleware");
       const originalMiddleware = server.options.middleware;
       const wrappedMiddleware: ServerMiddleware[] = originalMiddleware.map((handler, index) => {
         const middleware = Object.freeze({ index, handler });
