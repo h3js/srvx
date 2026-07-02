@@ -28,13 +28,32 @@ export function sendNodeResponse(
  * there. Streaming bodies still return their tracking promise (it drives
  * their own cleanup).
  *
+ * A synchronous throw during serialization (e.g. an invalid header value in
+ * `writeHead`) must not escape the request listener — that would surface as an
+ * `uncaughtException` and take the process down. Guard it here and fail the
+ * single response instead.
+ *
  * @internal
  */
 export function sendNodeResponseDetached(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
 ): Promise<void> | void {
-  return _sendNodeResponse(nodeRes, webRes, true);
+  try {
+    return _sendNodeResponse(nodeRes, webRes, true);
+  } catch (error) {
+    handleSendError(nodeRes, error);
+  }
+}
+
+function handleSendError(nodeRes: NodeServerResponse, _error: unknown): void {
+  if (nodeRes.headersSent) {
+    // Response already committed — the only recovery is to tear down the socket.
+    nodeRes.destroy();
+  } else {
+    nodeRes.statusCode = 500;
+    nodeRes.end();
+  }
 }
 
 function _sendNodeResponse(

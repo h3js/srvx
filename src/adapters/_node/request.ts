@@ -138,6 +138,13 @@ export const NodeRequest: {
       return this.#bodyStream;
     }
 
+    // Buffer the raw request body once; consumers add their own single
+    // continuation (`.toString()` / `JSON.parse`) so no extra promise or
+    // microtask hop is introduced vs. inlining the read.
+    #readBuffered() {
+      return readBody(this.#req, this.#maxRequestBodySize);
+    }
+
     text() {
       if (this.#request) {
         return this.#request.text();
@@ -145,7 +152,7 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req, this.#maxRequestBodySize).then((buf) => buf.toString());
+      return this.#readBuffered().then((buf) => buf.toString());
     }
 
     json() {
@@ -157,9 +164,7 @@ export const NodeRequest: {
       }
       // Parse in a single continuation (readBody -> parse) instead of going
       // through text() — one less promise + microtask hop per body read.
-      return readBody(this.#req, this.#maxRequestBodySize).then((buf) =>
-        JSON.parse(buf.toString()),
-      );
+      return this.#readBuffered().then((buf) => JSON.parse(buf.toString()));
     }
 
     get _request(): globalThis.Request {
