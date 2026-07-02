@@ -75,7 +75,11 @@ class NodeServer implements Server {
         nodeRes.end();
         return;
       }
-      const request = new NodeRequest({ req: nodeReq, res: nodeRes });
+      const request = new NodeRequest({
+        req: nodeReq,
+        res: nodeRes,
+        maxBodySize: this.options.maxBodySize,
+      });
       request.waitUntil = this.#wait?.waitUntil;
       const res = fetchHandler(request);
       return res instanceof Promise

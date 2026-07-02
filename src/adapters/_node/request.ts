@@ -7,6 +7,11 @@ import { Readable } from "node:stream";
 export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
+  /**
+   * Maximum allowed size (in bytes) for a body buffered in memory via the
+   * {@link readBody} fallback. See `ServerOptions.maxBodySize`.
+   */
+  maxBodySize?: number;
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
@@ -25,12 +30,14 @@ export const NodeRequest: {
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
+    #maxBodySize?: number;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
+      this.#maxBodySize = ctx.maxBodySize;
       this.runtime = {
         name: "node",
-        node: ctx,
+        node: { req: ctx.req, res: ctx.res },
       };
     }
 
@@ -123,7 +130,7 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req).then((buf) => buf.toString());
+      return readBody(this.#req, this.#maxBodySize).then((buf) => buf.toString());
     }
 
     json() {
@@ -192,27 +199,69 @@ export function patchGlobalRequest(): typeof Request {
   return PatchedRequest;
 }
 
-function readBody(req: NodeServerRequest): Promise<any> {
+/**
+ * Buffers the whole request body into a single `Buffer`.
+ *
+ * This is the fallback used by `NodeRequest.text()` / `.json()` when the body was
+ * not consumed as a stream. When `maxBodySize` (bytes) is provided, the accumulated
+ * length is tracked as chunks arrive and, once it is exceeded, reading is aborted
+ * (the stream is paused so a handler can still send a response) and the promise
+ * rejects with a `413`-style error. When `maxBodySize` is `undefined` (the default)
+ * no limit is enforced.
+ */
+function readBody(req: NodeServerRequest, maxBodySize?: number): Promise<any> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
+    if (maxBodySize !== undefined && req.rawBody.length > maxBodySize) {
+      return Promise.reject(createBodyTooLargeError(maxBodySize));
+    }
     return Promise.resolve(req.rawBody);
   }
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let size = 0;
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
     const onData = (chunk: any) => {
+      if (maxBodySize !== undefined) {
+        size += chunk.length;
+        if (size > maxBodySize) {
+          cleanup();
+          // Stop consuming the body but keep the socket alive so a handler can
+          // still respond (e.g. with an HTTP 413).
+          req.pause?.();
+          reject(createBodyTooLargeError(maxBodySize));
+          return;
+        }
+      }
       chunks.push(chunk);
     };
     const onError = (err: any) => {
+      cleanup();
       reject(err);
     };
     const onEnd = () => {
-      req.off("error", onError);
-      req.off("data", onData);
+      cleanup();
       resolve(Buffer.concat(chunks));
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });
+}
+
+/**
+ * Creates a `413 Payload Too Large` style error for when a buffered request body
+ * exceeds the configured `maxBodySize`. The `statusCode` / `status` properties let
+ * a handler map it to an HTTP 413 response.
+ */
+function createBodyTooLargeError(maxBodySize: number): Error {
+  return Object.assign(
+    new Error(`Request body exceeds the maximum allowed size of ${maxBodySize} bytes.`),
+    { code: "ERR_BODY_TOO_LARGE", statusCode: 413, status: 413 },
+  );
 }
 
 /**
