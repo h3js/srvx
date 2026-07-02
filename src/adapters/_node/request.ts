@@ -37,7 +37,10 @@ export const NodeRequest: {
       this.#maxBodySize = ctx.maxBodySize;
       this.runtime = {
         name: "node",
-        node: { req: ctx.req, res: ctx.res },
+        // Reuse the context object as-is to avoid a per-request allocation on
+        // the hot path. `maxBodySize` may ride along but is intentionally not
+        // part of the public `runtime.node` type; consumers only read req/res.
+        node: ctx,
       };
     }
 
