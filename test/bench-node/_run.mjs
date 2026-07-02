@@ -25,6 +25,7 @@ const names = [
   "node",
   "srvx",
   "srvx-fast",
+  "srvx-fast-maxbody",
   release && "srvx-release",
   release && "srvx-fast-release",
   all && "whatwg-node",
