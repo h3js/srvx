@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.11.19
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.18...v0.11.19)
+
+### 🚀 Enhancements
+
+- `maxRequestBodySize` server option ([#216](https://github.com/h3js/srvx/pull/216))
+
+### 🩹 Fixes
+
+- **node:** Case-insensitive content-length/content-type dedup in FastResponse ([#214](https://github.com/h3js/srvx/pull/214))
+- **url:** Deopt FastURL for query percent-encode-set chars (" ' < >) ([#215](https://github.com/h3js/srvx/pull/215))
+- **tracing:** Satisfy tracingChannel StoreType object constraint ([57001b6](https://github.com/h3js/srvx/commit/57001b6))
+- **node:** Read duplicate single-value headers from rawHeaders in get/has ([#217](https://github.com/h3js/srvx/pull/217))
+
+### 🏡 Chore
+
+- Update deps ([49638c2](https://github.com/h3js/srvx/commit/49638c2))
+- Lint ([28f7aac](https://github.com/h3js/srvx/commit/28f7aac))
+
+### ✅ Tests
+
+- Cleanup output ([230a58c](https://github.com/h3js/srvx/commit/230a58c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+
 ## v0.11.18
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.17...v0.11.18)
