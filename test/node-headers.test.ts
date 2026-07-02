@@ -79,4 +79,44 @@ describe("NodeRequestHeaders", () => {
     expect(after.get("authorization")).toBe("Bearer AAA, Bearer BBB");
     expect(after.get("content-type")).toBe("text/plain, application/json");
   });
+
+  test("get()/has() see a literal `__proto__` header", () => {
+    // Node's `req.headers` can never carry an own `__proto__` key (the
+    // prototype accessor swallows the assignment), so the fast path must
+    // fall back to rawHeaders for this name.
+    const withProto = new NodeRequestHeaders(
+      mockReq(["__proto__", "evil", "x-a", "1"], { "x-a": "1" }),
+    );
+    expect(withProto.get("__proto__")).toBe("evil");
+    expect(withProto.has("__proto__")).toBe(true);
+
+    const withoutProto = new NodeRequestHeaders(mockReq(["x-a", "1"], { "x-a": "1" }));
+    expect(withoutProto.get("__proto__")).toBe(null);
+    expect(withoutProto.has("__proto__")).toBe(false);
+  });
+
+  test("get()/has() ignore `req.headers` prototype artifacts and reject invalid names", () => {
+    const headers = new NodeRequestHeaders(mockReq(["x-a", "1"], { "x-a": "1" }));
+    // Plain (non null-prototype) `req.headers` exposes Object.prototype members
+    expect(headers.get("toString")).toBe(null);
+    expect(headers.has("toString")).toBe(false);
+    // Invalid names throw like native Headers
+    expect(() => headers.get("foo bar")).toThrow(TypeError);
+    expect(() => headers.has("foo bar")).toThrow(TypeError);
+    expect(() => headers.get(":path")).toThrow(TypeError);
+  });
+
+  test("repeated cookie joins with '; ' like native Headers", () => {
+    // Node joins repeated cookie headers with "; " in `req.headers`, matching
+    // the Fetch spec's cookie special case — the fast path returns it as-is.
+    const headers = new NodeRequestHeaders(
+      mockReq(["cookie", "a=1", "cookie", "b=2"], { cookie: "a=1; b=2" }),
+    );
+    expect(headers.get("cookie")).toBe("a=1; b=2");
+    // Reference: materialized native Headers behave identically
+    const ref = new Headers();
+    ref.append("cookie", "a=1");
+    ref.append("cookie", "b=2");
+    expect(ref.get("cookie")).toBe("a=1; b=2");
+  });
 });

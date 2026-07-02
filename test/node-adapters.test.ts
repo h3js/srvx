@@ -395,10 +395,19 @@ describe("node server startup", () => {
 });
 
 describe("FastResponse header dedup", () => {
-  const contentLengthEntries = (headers: [string, string][]) =>
-    headers.filter(([key]) => key.toLowerCase() === "content-length");
-  const contentTypeEntries = (headers: [string, string][]) =>
-    headers.filter(([key]) => key.toLowerCase() === "content-type");
+  // `_toNodeResponse().headers` is a flat rawHeaders-style list; header names
+  // are normalized to lowercase (matching native Response semantics).
+  const headerPairs = (headers: string[]) => {
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      pairs.push([headers[i], headers[i + 1]]);
+    }
+    return pairs;
+  };
+  const contentLengthEntries = (headers: string[]) =>
+    headerPairs(headers).filter(([key]) => key === "content-length");
+  const contentTypeEntries = (headers: string[]) =>
+    headerPairs(headers).filter(([key]) => key === "content-type");
 
   test("does not duplicate capitalized array-form Content-Length", () => {
     const { headers } = new FastResponse("hello", {
@@ -406,7 +415,7 @@ describe("FastResponse header dedup", () => {
     })._toNodeResponse();
     const cl = contentLengthEntries(headers);
     expect(cl).toHaveLength(1);
-    expect(cl[0]).toEqual(["Content-Length", "999"]);
+    expect(cl[0]).toEqual(["content-length", "999"]);
   });
 
   test("does not duplicate capitalized array-form Content-Type", () => {
@@ -415,8 +424,7 @@ describe("FastResponse header dedup", () => {
     })._toNodeResponse();
     const ct = contentTypeEntries(headers);
     expect(ct).toHaveLength(1);
-    expect(ct[0]).toEqual(["Content-Type", "text/html"]);
-    expect(headers).not.toContainEqual(["content-type", "text/plain; charset=UTF-8"]);
+    expect(ct[0]).toEqual(["content-type", "text/html"]);
   });
 
   test("lowercase array-form Content-Length still dedups", () => {
