@@ -4,13 +4,66 @@ import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
 import type { NodeResponse } from "./response.ts";
 
-export async function sendNodeResponse(
+/**
+ * Sends a web `Response` to a Node.js `ServerResponse`.
+ *
+ * The returned promise resolves once the response has been fully sent
+ * (kept for `toNodeHandler` consumers that await completion).
+ */
+export function sendNodeResponse(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
 ): Promise<void> {
+  try {
+    return _sendNodeResponse(nodeRes, webRes, false) || Promise.resolve();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+/**
+ * Fire-and-forget variant for the internal `serve()` path: node:http ignores
+ * the request listener's return value, so tracking `end()` completion with a
+ * per-response Promise (and the microtask hops to settle it) is pure overhead
+ * there. Streaming bodies still return their tracking promise (it drives
+ * their own cleanup).
+ *
+ * A synchronous throw during serialization (e.g. an invalid header value in
+ * `writeHead`) must not escape the request listener — that would surface as an
+ * `uncaughtException` and take the process down. Guard it here and fail the
+ * single response instead.
+ *
+ * @internal
+ */
+export function sendNodeResponseDetached(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse,
+): Promise<void> | void {
+  try {
+    return _sendNodeResponse(nodeRes, webRes, true);
+  } catch (error) {
+    handleSendError(nodeRes, error);
+  }
+}
+
+function handleSendError(nodeRes: NodeServerResponse, _error: unknown): void {
+  if (nodeRes.headersSent) {
+    // Response already committed — the only recovery is to tear down the socket.
+    nodeRes.destroy();
+  } else {
+    nodeRes.statusCode = 500;
+    nodeRes.end();
+  }
+}
+
+function _sendNodeResponse(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse,
+  detached: boolean,
+): Promise<void> | void {
   if (!webRes) {
     nodeRes.statusCode = 500;
-    return endNodeResponse(nodeRes);
+    return endNodeResponse(nodeRes, detached);
   }
 
   // Fast path for NodeResponse
@@ -31,7 +84,7 @@ export async function sendNodeResponse(
     } else {
       writeHead(nodeRes, res.status, res.statusText, res.headers);
     }
-    return endNodeResponse(nodeRes);
+    return endNodeResponse(nodeRes, detached);
   }
 
   const rawHeaders: string[] = [];
@@ -40,7 +93,7 @@ export async function sendNodeResponse(
   }
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
-  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
+  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes, detached);
 }
 
 function writeHead(
@@ -66,7 +119,11 @@ function writeHead(
   }
 }
 
-function endNodeResponse(nodeRes: NodeServerResponse) {
+function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
+  if (detached) {
+    nodeRes.end();
+    return;
+  }
   return new Promise<void>((resolve) => nodeRes.end(resolve));
 }
 
@@ -106,7 +163,7 @@ function pipeBody(
       stream.off("readable", onReadable);
       stream.destroy();
       writeHead(nodeRes, 500, "Internal Server Error", []);
-      endNodeResponse(nodeRes).then(resolve);
+      (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     function onReadable() {
       stream.off("error", onEarlyError);

@@ -1,4 +1,4 @@
-import { sendNodeResponse } from "./_node/send.ts";
+import { sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
 import {
   fmtURL,
@@ -82,9 +82,11 @@ class NodeServer implements Server {
       });
       request.waitUntil = this.#wait?.waitUntil;
       const res = fetchHandler(request);
+      // node:http ignores the listener's return value — use the detached
+      // variant to skip the per-response end-tracking Promise.
       return res instanceof Promise
-        ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
-        : sendNodeResponse(nodeRes, res);
+        ? res.then((resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes))
+        : sendNodeResponseDetached(nodeRes, res);
     };
 
     this.node = { handler, server: undefined };

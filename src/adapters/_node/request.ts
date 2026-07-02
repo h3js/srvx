@@ -24,6 +24,10 @@ export const NodeRequest: {
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
+    // Declared so the post-construction `request.waitUntil = ...` assignment
+    // in the adapters doesn't add a property (hidden-class transition) per
+    // request.
+    waitUntil?: ServerRequest["waitUntil"];
 
     #req: NodeServerRequest;
     #url?: URL;
@@ -134,6 +138,13 @@ export const NodeRequest: {
       return this.#bodyStream;
     }
 
+    // Buffer the raw request body once; consumers add their own single
+    // continuation (`.toString()` / `JSON.parse`) so no extra promise or
+    // microtask hop is introduced vs. inlining the read.
+    #readBuffered() {
+      return readBody(this.#req, this.#maxRequestBodySize);
+    }
+
     text() {
       if (this.#request) {
         return this.#request.text();
@@ -141,14 +152,19 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req, this.#maxRequestBodySize).then((buf) => buf.toString());
+      return this.#readBuffered().then((buf) => buf.toString());
     }
 
     json() {
       if (this.#request) {
         return this.#request.json();
       }
-      return this.text().then((text) => JSON.parse(text));
+      if (this.#bodyStream !== undefined) {
+        return this.text().then((text) => JSON.parse(text));
+      }
+      // Parse in a single continuation (readBody -> parse) instead of going
+      // through text() — one less promise + microtask hop per body read.
+      return this.#readBuffered().then((buf) => JSON.parse(buf.toString()));
     }
 
     get _request(): globalThis.Request {
