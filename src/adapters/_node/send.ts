@@ -4,13 +4,47 @@ import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
 import type { NodeResponse } from "./response.ts";
 
-export async function sendNodeResponse(
+/**
+ * Sends a web `Response` to a Node.js `ServerResponse`.
+ *
+ * The returned promise resolves once the response has been fully sent
+ * (kept for `toNodeHandler` consumers that await completion).
+ */
+export function sendNodeResponse(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
 ): Promise<void> {
+  try {
+    return _sendNodeResponse(nodeRes, webRes, false) || Promise.resolve();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+/**
+ * Fire-and-forget variant for the internal `serve()` path: node:http ignores
+ * the request listener's return value, so tracking `end()` completion with a
+ * per-response Promise (and the microtask hops to settle it) is pure overhead
+ * there. Streaming bodies still return their tracking promise (it drives
+ * their own cleanup).
+ *
+ * @internal
+ */
+export function sendNodeResponseDetached(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse,
+): Promise<void> | void {
+  return _sendNodeResponse(nodeRes, webRes, true);
+}
+
+function _sendNodeResponse(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse,
+  detached: boolean,
+): Promise<void> | void {
   if (!webRes) {
     nodeRes.statusCode = 500;
-    return endNodeResponse(nodeRes);
+    return endNodeResponse(nodeRes, detached);
   }
 
   // Fast path for NodeResponse
@@ -31,39 +65,46 @@ export async function sendNodeResponse(
     } else {
       writeHead(nodeRes, res.status, res.statusText, res.headers);
     }
-    return endNodeResponse(nodeRes);
+    return endNodeResponse(nodeRes, detached);
   }
 
-  const rawHeaders = [...webRes.headers];
+  const rawHeaders: string[] = [];
+  for (const [key, value] of webRes.headers) {
+    rawHeaders.push(key, value);
+  }
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
-  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes);
+  return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes, detached);
 }
 
 function writeHead(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  rawHeaders: [string, string][],
-): void {
   // Node.js writeHead accepts a raw array of [key, value, key, value] or [[key, value], [key, value]]
   // https://github.com/nodejs/node/blob/v22.14.0/lib/_http_server.js#L376
   // https://github.com/nodejs/node/blob/v24.10.0/lib/_http_outgoing.js#L417
   // But it has an inconsistency in slow-path that does not unflattens!!
   // https://github.com/h3js/srvx/pull/40
-  const writeHeaders = rawHeaders.flat();
+  // We always pass the (safe) flat form, pre-built to avoid a per-response flatten.
+  rawHeaders: string[],
+): void {
   if (!nodeRes.headersSent) {
     if (nodeRes.req?.httpVersion === "2.0") {
       // @ts-expect-error
-      nodeRes.writeHead(status, writeHeaders);
+      nodeRes.writeHead(status, rawHeaders);
     } else {
       // @ts-expect-error
-      nodeRes.writeHead(status, statusText, writeHeaders);
+      nodeRes.writeHead(status, statusText, rawHeaders);
     }
   }
 }
 
-function endNodeResponse(nodeRes: NodeServerResponse) {
+function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
+  if (detached) {
+    nodeRes.end();
+    return;
+  }
   return new Promise<void>((resolve) => nodeRes.end(resolve));
 }
 
@@ -72,7 +113,7 @@ function pipeBody(
   nodeRes: NodeServerResponse,
   status: number,
   statusText: string,
-  headers: [string, string][],
+  headers: string[],
 ): Promise<void> | void {
   if (nodeRes.destroyed) {
     stream.destroy?.();
@@ -103,7 +144,7 @@ function pipeBody(
       stream.off("readable", onReadable);
       stream.destroy();
       writeHead(nodeRes, 500, "Internal Server Error", []);
-      endNodeResponse(nodeRes).then(resolve);
+      (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     function onReadable() {
       stream.off("error", onEarlyError);

@@ -24,6 +24,10 @@ export const NodeRequest: {
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
+    // Declared so the post-construction `request.waitUntil = ...` assignment
+    // in the adapters doesn't add a property (hidden-class transition) per
+    // request.
+    waitUntil?: ServerRequest["waitUntil"];
 
     #req: NodeServerRequest;
     #url?: URL;
@@ -148,7 +152,14 @@ export const NodeRequest: {
       if (this.#request) {
         return this.#request.json();
       }
-      return this.text().then((text) => JSON.parse(text));
+      if (this.#bodyStream !== undefined) {
+        return this.text().then((text) => JSON.parse(text));
+      }
+      // Parse in a single continuation (readBody -> parse) instead of going
+      // through text() — one less promise + microtask hop per body read.
+      return readBody(this.#req, this.#maxRequestBodySize).then((buf) =>
+        JSON.parse(buf.toString()),
+      );
     }
 
     get _request(): globalThis.Request {
@@ -257,7 +268,8 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
     };
     const onEnd = () => {
       cleanup();
-      resolve(Buffer.concat(chunks));
+      // Single-chunk bodies (the common case) skip Buffer.concat's alloc+copy
+      resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);
   });
