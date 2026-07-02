@@ -20,6 +20,15 @@ export type URLInit = {
 const _needsNormRE =
   /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^#"<>{}`\x80-\uffff]/i;
 
+// Query percent-encode set chars the WHATWG URL parser rewrites but the verbatim
+// fast path would keep raw. Native percent-encodes `" ' < >` in the query (note
+// this set is narrower than the path set: `` ` `` `{` `}` are NOT encoded in the
+// query); `#` starts a fragment the fast path must not fold into search. When any
+// appears in the query \u2014 or, for a raw origin-form string, anywhere (`" < >` also
+// need encoding in the path) \u2014 we deopt to native parsing.
+// (Control chars and space are rejected by Node's HTTP parser, so unreachable.)
+const _searchNeedsNormRE = /[#"'<>]/;
+
 /**
  * URL wrapper with fast paths to access to the following props:
  *
@@ -51,13 +60,17 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
       constructor(url: string | URLInit) {
         if (typeof url === "string") {
           const isOriginForm = url[0] === "/";
-          if (isOriginForm && !url.includes("#")) {
+          if (isOriginForm && !_searchNeedsNormRE.test(url)) {
             this.#href = url;
           } else {
-            // Absolute-form or a target with a fragment (#) needs full parsing
+            // Absolute-form, or a target with a fragment (#) / query percent-encode
+            // set chars (" ' < >) that need full parsing to match native.
             this.#url = new NativeURL(isOriginForm ? `http://localhost${url}` : url);
           }
-        } else if (_needsNormRE.test(url.pathname) || url.search?.includes("#")) {
+        } else if (
+          _needsNormRE.test(url.pathname) ||
+          (url.search && _searchNeedsNormRE.test(url.search))
+        ) {
           this.#url = new NativeURL(
             `${url.protocol || "http:"}//${url.host || "localhost"}${url.pathname}${url.search || ""}`,
           );
