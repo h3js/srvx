@@ -170,9 +170,10 @@ export const NodeResponse: {
           } else {
             headers.push([key, value]);
           }
-          if (key === "content-type") {
+          const lowerKey = typeof key === "string" ? key.toLowerCase() : key;
+          if (lowerKey === "content-type") {
             hasContentTypeHeader = true;
-          } else if (key === "content-length") {
+          } else if (lowerKey === "content-length") {
             hasContentLength = true;
           }
         }
