@@ -9,6 +9,16 @@ import { addTests } from "./_tests.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
 
+// Output that tests deliberately provoke and runtimes print to stderr. These
+// are expected and only add noise to the vitest output, so they are filtered
+// out (unless TEST_DEBUG is set). See `test/_utils.ts` stderr forwarding.
+const IGNORED_STDERR: RegExp[] = [
+  // Intentional error thrown by the `/response/stream-error` fixture route.
+  /stream error!/,
+  // Deno legacy-behavior deprecation warning (Deno.serve request.signal abort).
+  /Deno\.serve: request\.signal aborts on successful responses/,
+];
+
 export function testsExec(cmd: string, opts: { runtime: string; silent?: boolean }): void {
   let childProc: ExecaRes;
   let baseURL: string;
@@ -28,7 +38,13 @@ export function testsExec(cmd: string, opts: { runtime: string; silent?: boolean
     });
     if (process.env.TEST_DEBUG || !opts.silent) {
       childProc.stderr!.on("data", (chunk) => {
-        console.log(chunk.toString());
+        const str = chunk.toString();
+        // Filter known-benign output that tests intentionally trigger, so real
+        // fixture errors stay visible. Bypassed when TEST_DEBUG is set.
+        if (!process.env.TEST_DEBUG && IGNORED_STDERR.some((re) => re.test(str))) {
+          return;
+        }
+        console.log(str);
       });
     }
     if (process.env.TEST_DEBUG) {
