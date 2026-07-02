@@ -3,7 +3,13 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
-import { fetchNodeHandler, serve, toNodeHandler, toFetchHandler } from "../src/adapters/node.ts";
+import {
+  fetchNodeHandler,
+  FastResponse,
+  serve,
+  toNodeHandler,
+  toFetchHandler,
+} from "../src/adapters/node.ts";
 
 import express from "express";
 import fastify from "fastify";
@@ -385,5 +391,49 @@ describe("node server startup", () => {
       await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
       await server.close();
     });
+  });
+});
+
+describe("FastResponse header dedup", () => {
+  const contentLengthEntries = (headers: [string, string][]) =>
+    headers.filter(([key]) => key.toLowerCase() === "content-length");
+  const contentTypeEntries = (headers: [string, string][]) =>
+    headers.filter(([key]) => key.toLowerCase() === "content-type");
+
+  test("does not duplicate capitalized array-form Content-Length", () => {
+    const { headers } = new FastResponse("hello", {
+      headers: [["Content-Length", "999"]],
+    })._toNodeResponse();
+    const cl = contentLengthEntries(headers);
+    expect(cl).toHaveLength(1);
+    expect(cl[0]).toEqual(["Content-Length", "999"]);
+  });
+
+  test("does not duplicate capitalized array-form Content-Type", () => {
+    const { headers } = new FastResponse("hello", {
+      headers: [["Content-Type", "text/html"]],
+    })._toNodeResponse();
+    const ct = contentTypeEntries(headers);
+    expect(ct).toHaveLength(1);
+    expect(ct[0]).toEqual(["Content-Type", "text/html"]);
+    expect(headers).not.toContainEqual(["content-type", "text/plain; charset=UTF-8"]);
+  });
+
+  test("lowercase array-form Content-Length still dedups", () => {
+    const { headers } = new FastResponse("hello", {
+      headers: [["content-length", "999"]],
+    })._toNodeResponse();
+    const cl = contentLengthEntries(headers);
+    expect(cl).toHaveLength(1);
+    expect(cl[0]).toEqual(["content-length", "999"]);
+  });
+
+  test("auto-computes Content-Length when user provides none", () => {
+    const { headers } = new FastResponse("hello", {
+      headers: [["X-Custom", "1"]],
+    })._toNodeResponse();
+    const cl = contentLengthEntries(headers);
+    expect(cl).toHaveLength(1);
+    expect(cl[0]).toEqual(["content-length", "5"]);
   });
 });
