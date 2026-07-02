@@ -49,4 +49,34 @@ describe("NodeRequestHeaders", () => {
     expect(cookie).toContain("a=1");
     expect(cookie).toContain("b=2");
   });
+
+  test("get()/has() combine duplicate single-value headers regardless of iteration order", () => {
+    // Node collapses headers it treats as single-value (authorization,
+    // content-type, …) to the FIRST occurrence in `req.headers`, while
+    // `rawHeaders` keeps every occurrence. The result must not depend on
+    // whether the Headers object was iterated first.
+    const rawHeaders = [
+      "authorization",
+      "Bearer AAA",
+      "authorization",
+      "Bearer BBB",
+      "content-type",
+      "text/plain",
+      "content-type",
+      "application/json",
+    ];
+    const collapsed = { authorization: "Bearer AAA", "content-type": "text/plain" };
+
+    // Fresh instance: get() before any iteration.
+    const before = new NodeRequestHeaders(mockReq(rawHeaders, collapsed));
+    expect(before.get("authorization")).toBe("Bearer AAA, Bearer BBB");
+    expect(before.get("content-type")).toBe("text/plain, application/json");
+    expect(before.has("authorization")).toBe(true);
+
+    // Separate instance, iterated first, then get(): must match.
+    const after = new NodeRequestHeaders(mockReq(rawHeaders, collapsed));
+    void [...after.entries()];
+    expect(after.get("authorization")).toBe("Bearer AAA, Bearer BBB");
+    expect(after.get("content-type")).toBe("text/plain, application/json");
+  });
 });

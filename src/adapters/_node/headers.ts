@@ -41,26 +41,18 @@ export const NodeRequestHeaders: {
     }
 
     get(name: string): string | null {
-      if (this.#headers) {
-        return this.#headers.get(name);
-      }
-      const value = this.#req.headers[name.toLowerCase()];
-      return Array.isArray(value) ? value.join(", ") : value || null;
+      // Always read from the rawHeaders-materialized Headers: Node collapses
+      // headers it treats as single-value (authorization, content-type, …) to
+      // their first occurrence in `req.headers`, which diverges from WHATWG.
+      return this._headers.get(name);
     }
 
     has(name: string): boolean {
-      if (this.#headers) {
-        return this.#headers.has(name);
-      }
-      return name.toLowerCase() in this.#req.headers;
+      return this._headers.has(name);
     }
 
     getSetCookie(): string[] {
-      if (this.#headers) {
-        return this.#headers.getSetCookie();
-      }
-      const value = this.#req.headers["set-cookie"];
-      return Array.isArray(value) ? value : value ? [value] : [];
+      return this._headers.getSetCookie();
     }
 
     entries(): HeadersIterator<[string, string]> {
