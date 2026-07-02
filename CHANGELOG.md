@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.11.20
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.19...v0.11.20)
+
+### 🔥 Performance
+
+- **node:** Fast header lookups and fewer per-request allocations ([#218](https://github.com/h3js/srvx/pull/218))
+- **node:** Fire-and-forget response send on the serve() path ([#219](https://github.com/h3js/srvx/pull/219))
+
+### ❤️ Contributors
+
+- Pooya Parsa <pyapar@gmail.com>
+- Pi0x <x@pi0.io>
+
 ## v0.11.19
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.18...v0.11.19)
