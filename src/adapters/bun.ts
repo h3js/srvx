@@ -76,6 +76,12 @@ class BunServer implements Server<BunFetchHandler> {
       ...resolvePortAndHost(this.options),
       reusePort: this.options.reusePort,
       error: this.options.error,
+      // Forward `maxRequestBodySize` to Bun's native serve option (Bun enforces it,
+      // returning 413 before the handler runs). An explicit `bun.maxRequestBodySize`
+      // below still wins.
+      ...(this.options.maxRequestBodySize !== undefined
+        ? { maxRequestBodySize: this.options.maxRequestBodySize }
+        : {}),
       ...(this.options.bun as any),
       tls: {
         cert: tls?.cert,

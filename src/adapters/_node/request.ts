@@ -2,11 +2,17 @@ import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../..
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
+import { createBodyTooLargeError, limitBodyStream } from "../../_body-limit.ts";
 import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
   res?: NodeServerResponse;
+  /**
+   * Maximum allowed size (in bytes) for the request body, enforced for both the
+   * buffered reads and the streamed body. See `ServerOptions.maxRequestBodySize`.
+   */
+  maxRequestBodySize?: number;
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
@@ -25,11 +31,16 @@ export const NodeRequest: {
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
+    #maxRequestBodySize?: number;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
+      this.#maxRequestBodySize = ctx.maxRequestBodySize;
       this.runtime = {
         name: "node",
+        // Reuse the context object as-is to avoid a per-request allocation on
+        // the hot path. `maxRequestBodySize` may ride along but is intentionally not
+        // part of the public `runtime.node` type; consumers only read req/res.
         node: ctx,
       };
     }
@@ -108,10 +119,17 @@ export const NodeRequest: {
       if (this.#bodyStream === undefined) {
         const method = this.method;
         const hasBody = !(method === "GET" || method === "HEAD");
-        this.#bodyStream = hasBody
+        let stream = hasBody
           ? // TODO: HTTP2ServerRequest
             (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
           : null;
+        // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
+        // through (`request.body`, and therefore the native `Request` methods
+        // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
+        if (stream && this.#maxRequestBodySize !== undefined) {
+          stream = limitBodyStream(stream, this.#maxRequestBodySize);
+        }
+        this.#bodyStream = stream;
       }
       return this.#bodyStream;
     }
@@ -123,7 +141,7 @@ export const NodeRequest: {
       if (this.#bodyStream !== undefined) {
         return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
       }
-      return readBody(this.#req).then((buf) => buf.toString());
+      return readBody(this.#req, this.#maxRequestBodySize).then((buf) => buf.toString());
     }
 
     json() {
@@ -192,23 +210,53 @@ export function patchGlobalRequest(): typeof Request {
   return PatchedRequest;
 }
 
-function readBody(req: NodeServerRequest): Promise<any> {
+/**
+ * Buffers the whole request body into a single `Buffer`.
+ *
+ * This is the fallback used by `NodeRequest.text()` / `.json()` when the body was
+ * not consumed as a stream. When `maxRequestBodySize` (bytes) is provided, the accumulated
+ * length is tracked as chunks arrive and, once it is exceeded, reading is aborted
+ * (the stream is paused so a handler can still send a response) and the promise
+ * rejects with a `413`-style error. When `maxRequestBodySize` is `undefined` (the default)
+ * no limit is enforced.
+ */
+function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<any> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
+    if (maxRequestBodySize !== undefined && req.rawBody.length > maxRequestBodySize) {
+      return Promise.reject(createBodyTooLargeError(maxRequestBodySize));
+    }
     return Promise.resolve(req.rawBody);
   }
 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
+    let size = 0;
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("error", onError);
+    };
     const onData = (chunk: any) => {
+      if (maxRequestBodySize !== undefined) {
+        size += chunk.length;
+        if (size > maxRequestBodySize) {
+          cleanup();
+          // Stop consuming the body but keep the socket alive so a handler can
+          // still respond (e.g. with an HTTP 413).
+          req.pause?.();
+          reject(createBodyTooLargeError(maxRequestBodySize));
+          return;
+        }
+      }
       chunks.push(chunk);
     };
     const onError = (err: any) => {
+      cleanup();
       reject(err);
     };
     const onEnd = () => {
-      req.off("error", onError);
-      req.off("data", onData);
+      cleanup();
       resolve(Buffer.concat(chunks));
     };
     req.on("data", onData).once("end", onEnd).once("error", onError);

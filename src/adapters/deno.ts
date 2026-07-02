@@ -9,6 +9,7 @@ import {
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
+import { limitRequestBody } from "../_body-limit.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -57,7 +58,14 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.#wait = createWaitUntil();
     this.waitUntil = this.#wait.waitUntil;
 
+    const maxRequestBodySize = this.options.maxRequestBodySize;
     this.fetch = (request, info) => {
+      // Deno.serve has no native body-size option, so enforce it here by
+      // rebuilding the request with a size-limited body stream (no-op when unset
+      // or bodyless, keeping the default hot path allocation-free).
+      if (maxRequestBodySize !== undefined) {
+        request = limitRequestBody(request, maxRequestBodySize);
+      }
       Object.defineProperties(request, {
         waitUntil: { value: this.#wait?.waitUntil },
         runtime: {

@@ -17,13 +17,20 @@ export type AdapterMeta = {
 /**
  * Converts a Fetch API handler to a Node.js HTTP handler.
  */
-export function toNodeHandler(handler: FetchHandler & AdapterMeta): NodeHttpHandler & AdapterMeta {
+export function toNodeHandler(
+  handler: FetchHandler & AdapterMeta,
+  options?: { maxRequestBodySize?: number },
+): NodeHttpHandler & AdapterMeta {
   if (handler.__nodeHandler) {
     return handler.__nodeHandler;
   }
 
   function convertedNodeHandler(nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) {
-    const request = new NodeRequest({ req: nodeReq, res: nodeRes });
+    const request = new NodeRequest({
+      req: nodeReq,
+      res: nodeRes,
+      maxRequestBodySize: options?.maxRequestBodySize,
+    });
     const res = handler(request);
     return res instanceof Promise
       ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))

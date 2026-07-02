@@ -123,6 +123,27 @@ export interface ServerOptions {
   gracefulShutdown?: boolean | { gracefulTimeout?: number; forceTimeout?: number };
 
   /**
+   * Maximum allowed size (in bytes) for the request body.
+   *
+   * As the body is read, its accumulated length is tracked and, once it exceeds
+   * this limit, reading is aborted and rejects with a `413`-style error (the error
+   * has `statusCode: 413`, `status: 413` and `code: "ERR_BODY_TOO_LARGE"`) so a
+   * handler can map it to an HTTP 413 (Payload Too Large) response.
+   *
+   * The limit covers the buffered reads (`request.text()` / `request.json()`) as
+   * well as the streamed body (`request.body`, and therefore `arrayBuffer()` /
+   * `blob()` / `bytes()` / `formData()`).
+   *
+   * Runtime support:
+   * - **Node**: enforced by srvx (body stream is size-limited).
+   * - **Bun**: mapped to Bun's native `maxRequestBodySize` (413 before the handler).
+   * - **Deno**: enforced by srvx (request body stream is size-limited).
+   *
+   * @default undefined (no limit)
+   */
+  maxRequestBodySize?: number;
+
+  /**
    * TLS server options.
    */
   tls?: {
