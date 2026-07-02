@@ -312,6 +312,48 @@ describe("FastURL", () => {
     }
   });
 
+  describe("query percent-encode set in request target", () => {
+    // Characters Node's HTTP parser delivers verbatim but the WHATWG URL parser
+    // percent-encodes in the query (" ' < >). This set is narrower than the path
+    // set (` { } are NOT encoded in the query). The fast path must match native so
+    // `url.search` / `url.href` stay consistent with `new URL(url.href)` — apps that
+    // reflect the raw query into HTML are XSS-safe on Deno/Bun/CF but would leak raw
+    // `< > " '` under Node's fast path otherwise. Same interpretation-conflict class
+    // (CWE-436) as the path/fragment cases; `searchParams` decodes identically.
+    // (Control chars and space are rejected by Node with 400, so excluded.)
+    const chars = ['"', "'", "<", ">"];
+
+    for (const ch of chars) {
+      const input = `/p?x=${ch}a${ch}`;
+      test(`FastURL "${input}" matches native search & href`, () => {
+        const std = new URL(`http://localhost${input}`);
+        expect(std.search).not.toBe(`?x=${ch}a${ch}`); // sanity: native encoded it
+
+        const url = new NodeRequestURL({
+          req: { url: input, headers: { host: "localhost" } } as any,
+        });
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.href, ".href").toBe(std.href);
+        // searchParams still decodes to the raw value
+        expect(url.searchParams.get("x"), ".searchParams x").toBe(`${ch}a${ch}`);
+        expect(url.searchParams.get("x")).toBe(std.searchParams.get("x"));
+      });
+    }
+
+    test("path + query combined matches native", () => {
+      const input = `/a<b?y=>c&z="d'`;
+      const std = new URL(`http://localhost${input}`);
+      const url = new NodeRequestURL({
+        req: { url: input, headers: { host: "localhost" } } as any,
+      });
+      expect(url.pathname, ".pathname").toBe(std.pathname);
+      expect(url.search, ".search").toBe(std.search);
+      expect(url.href, ".href").toBe(std.href);
+      expect(url.searchParams.get("y"), ".searchParams y").toBe(">c");
+      expect(url.searchParams.get("z"), ".searchParams z").toBe("\"d'");
+    });
+  });
+
   describe("pathname normalization", () => {
     const cases = [
       // Literal dot segments
