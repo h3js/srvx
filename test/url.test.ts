@@ -410,4 +410,28 @@ describe("FastURL", () => {
       });
     }
   });
+
+  describe("pathname setter", () => {
+    // Setting `pathname` updates the (web) URL view but must NOT mutate the
+    // raw Node `req.url`, so the original wire-encoded target stays available.
+    // See h3js/h3#1432.
+    test("does not mutate raw req.url", () => {
+      const req = { url: "/h%65llo?q=%41", headers: { host: "localhost" } } as any;
+      const url = new NodeRequestURL({ req });
+      url.pathname = "/decoded";
+      expect(url.pathname).toBe("/decoded");
+      expect(url.href).toBe("http://localhost/decoded?q=%41");
+      // raw node request target preserved
+      expect(req.url).toBe("/h%65llo?q=%41");
+    });
+
+    test("does not mutate raw req.url after deopt", () => {
+      const req = { url: "/foo?q=1", headers: { host: "localhost" } } as any;
+      const url = new NodeRequestURL({ req });
+      void url.hostname; // force deopt to native URL
+      url.pathname = "/base/foo";
+      expect(url.pathname).toBe("/base/foo");
+      expect(req.url).toBe("/foo?q=1");
+    });
+  });
 });
