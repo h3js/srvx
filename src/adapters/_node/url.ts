@@ -49,14 +49,9 @@ export class NodeRequestURL extends FastURL {
     }
   }
 
-  override get pathname(): string {
-    return super.pathname;
-  }
-
-  override set pathname(value: string) {
-    // Update the (web) URL view only. The raw Node `req.url` is intentionally
-    // left untouched so consumers can still access the original, wire-encoded
-    // request target (e.g. for audit logging or proxying). See h3js/h3#1432.
-    this._url.pathname = value;
-  }
+  // NOTE: `pathname` is intentionally NOT overridden. The inherited `FastURL`
+  // setter updates the (web) URL view only (`this._url.pathname = value`) and
+  // leaves the raw Node `req.url` untouched, so consumers can still access the
+  // original wire-encoded request target (e.g. for audit logging or proxying).
+  // See h3js/h3#1432.
 }
