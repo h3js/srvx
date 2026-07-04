@@ -58,9 +58,7 @@ export const NodeRequest: {
     }
 
     get tls(): ServerRequest["tls"] {
-      const socket = this.#req.socket as
-        | (import("node:tls").TLSSocket & { encrypted?: boolean })
-        | undefined;
+      const socket = this.#req.socket as import("node:tls").TLSSocket | undefined;
       // Plain (non-TLS) sockets have no `getPeerCertificate`.
       if (!socket || typeof socket.getPeerCertificate !== "function") {
         return undefined;

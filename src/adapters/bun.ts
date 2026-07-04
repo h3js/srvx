@@ -95,11 +95,9 @@ class BunServer implements Server<BunFetchHandler> {
          * Deno — importing `srvx/node` is not a workaround. (Bun's `node:tls` itself works; the
          * gap is the node:http↔node:tls bridge.) Tracked by https://github.com/oven-sh/bun/issues/16254
          */
-        ...(tls?.ca ? { ca: tls.ca } : {}),
-        ...(tls?.requestCert === undefined ? {} : { requestCert: tls.requestCert }),
-        ...(tls?.rejectUnauthorized === undefined
-          ? {}
-          : { rejectUnauthorized: tls.rejectUnauthorized }),
+        ca: tls?.ca,
+        requestCert: tls?.requestCert,
+        rejectUnauthorized: tls?.rejectUnauthorized,
         ...(this.options.bun as bun.Serve.Options<any>)?.tls,
       },
       fetch: this.fetch,
