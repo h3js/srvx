@@ -362,7 +362,7 @@ export interface ServerRequestContext {
  *
  * Available when the request was served over TLS. The peer certificate fields are populated only when the server requested a client certificate (`tls.requestCert`) and the client presented one.
  *
- * @note On Bun, `peerCertificate` / `authorized` / `authorizationError` are currently unavailable: Bun does not expose the peer certificate to the request handler (neither `Bun.serve` nor the `node:http(s)` server, so importing `srvx/node` is not a workaround). TLS enforcement (`requestCert` / `rejectUnauthorized`) still applies. See https://github.com/oven-sh/bun/issues/16254
+ * @note On Bun's native `Bun.serve`, `peerCertificate` / `authorized` / `authorizationError` are unavailable: it enforces TLS (`requestCert` / `rejectUnauthorized`) at the handshake but does not expose the peer certificate to the handler. Importing `srvx/node` on Bun is a workaround — Bun's `node:https` server does populate these fields (verified on Bun 1.3.14). See https://github.com/oven-sh/bun/issues/16254
  */
 export interface ServerRequestTLS {
   /**
