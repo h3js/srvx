@@ -82,8 +82,8 @@ describe("mtls() plugin (Node adapter)", () => {
   });
 });
 
-test("non-TLS request has no request.tls (plugin idle)", async () => {
-  const server = nodeServe(fixture({ port: 0, plugins: [mtls()] }));
+test("request.tls is absent without the mtls() plugin", async () => {
+  const server = nodeServe(fixture({ port: 0 }));
   await server.ready();
   try {
     const res = await fetch(server.url! + "tls");
@@ -91,6 +91,12 @@ test("non-TLS request has no request.tls (plugin idle)", async () => {
   } finally {
     await server.close(true);
   }
+});
+
+test("mtls() throws when TLS is not configured", () => {
+  expect(() =>
+    nodeServe(fixture({ manual: true, port: 0, plugins: [mtls({ ca: tls.ca })] })),
+  ).toThrow(/HTTPS server/);
 });
 
 test("mtls() throws on the native Deno adapter and points to srvx/node", () => {

@@ -95,7 +95,9 @@ export interface MTLSOptions {
  * Only srvx's Node.js adapter can deliver this (`import { serve } from "srvx/node"`),
  * on Node.js or Deno (via `node:https`). Native `Deno.serve` / `Bun.serve` and Bun's
  * `node:http(s)` server do not expose the peer certificate, so the plugin throws there
- * rather than silently doing nothing.
+ * rather than silently doing nothing. It also requires the server to be configured for
+ * TLS (`tls.cert` / `tls.key`) and throws otherwise, since mutual TLS cannot run over
+ * plain HTTP.
  *
  * @example
  * ```js
@@ -126,6 +128,16 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
     if ("Bun" in globalThis) {
       throw new Error(
         "[srvx] mtls() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
+      );
+    }
+    // Mutual TLS is meaningless without TLS.
+    if (
+      server.options.protocol === "http" ||
+      !server.options.tls?.cert ||
+      !server.options.tls?.key
+    ) {
+      throw new Error(
+        "[srvx] mtls() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
       );
     }
 
