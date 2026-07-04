@@ -9,8 +9,6 @@ export const HOST_RE: RegExp =
   /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:\d{1,5})?$/;
 
 export class NodeRequestURL extends FastURL {
-  #req: NodeServerRequest;
-
   constructor({ req }: { req: NodeServerRequest }) {
     const path = req.url || "/";
 
@@ -49,15 +47,5 @@ export class NodeRequestURL extends FastURL {
       // absolute-form (e.g. proxy request)
       super(path);
     }
-    this.#req = req;
-  }
-
-  override get pathname(): string {
-    return super.pathname;
-  }
-
-  override set pathname(value: string) {
-    this._url.pathname = value;
-    this.#req.url = this._url.pathname + this._url.search;
   }
 }
