@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.11.21
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.20...v0.11.21)
+
+### 🩹 Fixes
+
+- **node:** Do not mutate raw req.url on pathname change ([#220](https://github.com/h3js/srvx/pull/220))
+
+### 🏡 Chore
+
+- Improve node bench script ([9dae95d](https://github.com/h3js/srvx/commit/9dae95d))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.20
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.19...v0.11.20)
