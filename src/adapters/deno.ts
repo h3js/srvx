@@ -43,17 +43,6 @@ class DenoServer implements Server<DenoFetchHandler> {
 
     gracefulShutdownPlugin(this);
 
-    if (this.options.tls?.requestCert) {
-      /**
-       * Native `Deno.serve` cannot request or inspect client certificates (its TLS options have no `requestCert`/`ca`), checked after plugins run.
-       *
-       * Rather than silently ignore mutual-TLS config, fail loudly: Deno's `node:https` server (supported since Deno 2.8) does support it.
-       */
-      throw new Error(
-        'Mutual TLS (`tls.requestCert`) is not supported by the native Deno server. Import the Node adapter instead: `import { serve } from "srvx/node"` (it runs on Deno via `node:https` and exposes `request.tls`).',
-      );
-    }
-
     const fetchHandler = wrapFetch(this);
 
     // Detect running in srvx loader

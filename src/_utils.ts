@@ -64,9 +64,6 @@ export function resolveTLSOptions(opts: ServerOptions):
       cert: string;
       key: string;
       passphrase: any;
-      ca?: string[];
-      requestCert?: boolean;
-      rejectUnauthorized?: boolean;
     }
   | undefined {
   if (!opts.tls || opts.protocol === "http") {
@@ -83,28 +80,14 @@ export function resolveTLSOptions(opts: ServerOptions):
   if (!cert || !key) {
     throw new TypeError("TLS `cert` and `key` must be provided together.");
   }
-  let ca: string[] | undefined;
-  if (opts.tls.ca !== undefined) {
-    const entries = Array.isArray(opts.tls.ca) ? opts.tls.ca : [opts.tls.ca];
-    ca = entries.map((entry) => {
-      const resolved = resolveCertOrKey(entry);
-      if (!resolved) {
-        throw new TypeError("TLS `ca` entries must be non-empty PEM strings or file paths.");
-      }
-      return resolved;
-    });
-  }
   return {
     cert,
     key,
     passphrase: opts.tls.passphrase,
-    ca,
-    requestCert: opts.tls.requestCert,
-    rejectUnauthorized: opts.tls.rejectUnauthorized,
   };
 }
 
-function resolveCertOrKey(value?: unknown): undefined | string {
+export function resolveCertOrKey(value?: unknown): undefined | string {
   if (!value) {
     return;
   }

@@ -4,6 +4,7 @@ import { getTLSCert } from "./_utils.ts";
 import { fixture } from "./_fixture.ts";
 import { serve as nodeServe } from "../src/adapters/node.ts";
 import { serve as denoServe } from "../src/adapters/deno.ts";
+import { mtls } from "../src/mtls.ts";
 
 const tls = await getTLSCert();
 
@@ -17,21 +18,21 @@ function clientAgent(opts: { withClientCert: boolean }) {
   });
 }
 
-describe("mTLS peer certificate (Node adapter)", () => {
+describe("mtls() plugin (Node adapter)", () => {
   let server: Awaited<ReturnType<typeof nodeServe>> | undefined;
 
   beforeAll(async () => {
     server = nodeServe(
       fixture({
         port: 0,
-        tls: {
-          cert: tls.cert,
-          key: tls.key,
-          ca: tls.ca,
-          requestCert: true,
-          // Inspect the certificate even when self-presented/unauthorized.
-          rejectUnauthorized: false,
-        },
+        tls: { cert: tls.cert, key: tls.key },
+        plugins: [
+          mtls({
+            ca: tls.ca,
+            // Inspect the certificate even when self-presented/unauthorized.
+            rejectUnauthorized: false,
+          }),
+        ],
       }),
     );
     await server!.ready();
@@ -81,8 +82,8 @@ describe("mTLS peer certificate (Node adapter)", () => {
   });
 });
 
-test("non-TLS request has no request.tls", async () => {
-  const server = nodeServe(fixture({ port: 0 }));
+test("non-TLS request has no request.tls (plugin idle)", async () => {
+  const server = nodeServe(fixture({ port: 0, plugins: [mtls()] }));
   await server.ready();
   try {
     const res = await fetch(server.url! + "tls");
@@ -92,14 +93,16 @@ test("non-TLS request has no request.tls", async () => {
   }
 });
 
-test("native Deno server rejects mutual TLS and points to the Node adapter", () => {
-  // `Deno.serve` cannot request client certificates; the adapter must fail loudly instead of silently ignoring `requestCert`.
+test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
+  // The native `Deno.serve` cannot expose client certificates, so the plugin must
+  // fail loudly instead of silently leaving `request.tls` empty.
   expect(() =>
     denoServe(
       fixture({
         manual: true,
         port: 0,
-        tls: { cert: tls.cert, key: tls.key, ca: tls.ca, requestCert: true },
+        tls: { cert: tls.cert, key: tls.key },
+        plugins: [mtls({ ca: tls.ca })],
       }),
     ),
   ).toThrow(/srvx\/node/);

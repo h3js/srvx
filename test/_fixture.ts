@@ -42,6 +42,7 @@ export const fixture: (
       },
     ],
     plugins: [
+      ...(opts?.plugins ?? []),
       (server) => {
         server.options.middleware ??= [];
         server.options.middleware.unshift(async (req, next) => {
