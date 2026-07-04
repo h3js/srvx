@@ -123,7 +123,7 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
         `[srvx] mtls() requires srvx's Node.js adapter (import { serve } from "srvx/node"). The "${server.runtime}" server cannot request or expose client certificates.`,
       );
     }
-    if (globalThis.process?.versions?.bun) {
+    if ("Bun" in globalThis) {
       throw new Error(
         "[srvx] mtls() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
       );
