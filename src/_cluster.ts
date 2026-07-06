@@ -22,6 +22,12 @@ const MAX_START_ATTEMPTS = 3;
 
 type ReadyMessage = { srvx?: string; url?: string };
 
+type WorkerState = {
+  child: ChildProcess;
+  ready: boolean;
+  startedAt: number;
+};
+
 /**
  * Adds cluster (multi-process) support to a runtime adapter's `serve()`.
  *
@@ -43,6 +49,7 @@ export function withCluster(
   if (!env || (globalThis as any).__srvxLoader__) {
     return factory(options);
   }
+
   // Worker process: start a regular server on the shared port
   if (env[CLUSTER_WORKER_ENV]) {
     // Deno supports SO_REUSEPORT on Linux only (non-Linux runs a single
@@ -58,10 +65,12 @@ export function withCluster(
     );
     return server;
   }
+
   const workers = resolveClusterSize(options);
   if (workers === undefined) {
     return factory(options);
   }
+
   return new ClusterServer(options, workers);
 }
 
@@ -75,23 +84,22 @@ export function withCluster(
  * @returns The worker count, or `undefined` when cluster mode is disabled.
  */
 function resolveClusterSize(options: ServerOptions): number | undefined {
+  // Cluster mode disabled
   if (options.cluster === false || options.cluster === 0) {
     return;
   }
+
+  // Cluster size from environment variable
   const envSize = Number.parseInt(globalThis.process?.env?.SRVX_WORKERS || "", 10) || undefined;
   if (!options.cluster && !envSize) {
     return;
   }
+
+  // Cluster size from options
   const size =
     typeof options.cluster === "number" ? options.cluster : (envSize ?? availableParallelism());
   return Math.max(1, Math.floor(size));
 }
-
-type WorkerState = {
-  child: ChildProcess;
-  ready: boolean;
-  startedAt: number;
-};
 
 /**
  * Cluster supervisor implementing the `Server` interface.
@@ -126,10 +134,12 @@ class ClusterServer implements Server {
         "Cluster mode requires a server entry file (cannot re-execute this process).",
       );
     }
+
     const { port, hostname } = resolvePortAndHost(options);
     if (!port) {
       throw new Error("Cluster mode requires a fixed port (port: 0 is not supported).");
     }
+
     const secure = !!(options.tls?.cert || options.protocol === "https");
     this.#fallbackURL = fmtURL(hostname || "localhost", port, secure);
 
@@ -159,13 +169,16 @@ class ClusterServer implements Server {
       }
 
       this.#log(c.gray, `Starting ${this.#size} cluster worker${this.#size > 1 ? "s" : ""}...`);
+
       for (let slot = 0; slot < this.#size; slot++) {
         this.#spawn(slot, 0);
       }
+      
       for (const signal of ["SIGINT", "SIGTERM"] as const) {
         process.on(signal, this.#onSignal);
       }
     }
+
     return this.ready();
   }
 
@@ -320,7 +333,6 @@ class ClusterServer implements Server {
 
     return fork(process.argv[1], process.argv.slice(2), {
       env: { ...process.env, ...workerEnv },
-      // fork's default, passed explicitly: runtime flags like --import must reach the workers
       execArgv: process.execArgv,
     });
   }
