@@ -173,7 +173,7 @@ class ClusterServer implements Server {
       for (let slot = 0; slot < this.#size; slot++) {
         this.#spawn(slot, 0);
       }
-      
+
       for (const signal of ["SIGINT", "SIGTERM"] as const) {
         process.on(signal, this.#onSignal);
       }
