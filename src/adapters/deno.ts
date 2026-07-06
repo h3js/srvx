@@ -10,12 +10,13 @@ import {
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
 import { limitRequestBody } from "../_body-limit.ts";
+import { withCluster } from "../_cluster.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
 
-export function serve(options: ServerOptions): DenoServer {
-  return new DenoServer(options);
+export function serve(options: ServerOptions): Server {
+  return withCluster(options, (options) => new DenoServer(options));
 }
 
 // https://docs.deno.com/api/deno/~/Deno.serve

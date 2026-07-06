@@ -17,6 +17,7 @@ ${c.bold("SERVE MODE")}
 ${c.bold(c.green(`# ${command} serve [options]`))}
 ${c.gray("$")} ${c.cyan(command)} serve --entry ${c.gray("./server.ts")}    ${c.gray("# Start development server")}
 ${c.gray("$")} ${c.cyan(command)} serve --prod                 ${c.gray("# Start production  server")}
+${c.gray("$")} ${c.cyan(command)} serve --prod --cluster       ${c.gray("# Production server with one worker per CPU core")}
 ${c.gray("$")} ${c.cyan(command)} serve --port=8080            ${c.gray("# Listen on port 8080")}
 ${c.gray("$")} ${c.cyan(command)} serve --host=localhost       ${c.gray("# Bind to localhost only")}
 ${c.gray("$")} ${c.cyan(command)} serve --static=./dist        ${c.gray("# Serve static files (no entry needed)")}
@@ -48,6 +49,7 @@ ${c.bold("SERVE OPTIONS")}
   ${c.green("--host")} ${c.yellow("<host>")}            Host to bind to (default: all interfaces)
   ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
   ${c.green("--prod")}                   Run in production mode (no watch, no debug)
+  ${c.green("--cluster")} ${c.yellow("[N]")}            Run N server processes (default: CPU cores, requires --prod)
   ${c.green("--import")} ${c.yellow("<loader>")}        ES module to preload
   ${c.green("--tls")}                    Enable TLS (HTTPS/HTTP2)
   ${c.green("--cert")} ${c.yellow("<file>")}            TLS certificate file
@@ -64,6 +66,7 @@ ${c.bold("ENVIRONMENT")}
 
   ${c.green("PORT")}                     Override port
   ${c.green("HOST")}                     Override host
+  ${c.green("SRVX_WORKERS")}             Number of cluster workers (enables cluster mode)
   ${c.green("NODE_ENV")}                 Set to ${c.yellow("production")} for production mode.
 
 ${mainOpts.usage?.docs ? `➤ ${c.url("Documentation", mainOpts.usage.docs)}` : ""}

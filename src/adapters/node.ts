@@ -9,6 +9,7 @@ import {
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
+import { withCluster } from "../_cluster.ts";
 
 import nodeHTTP from "node:http";
 import nodeHTTPS from "node:https";
@@ -36,7 +37,7 @@ export { toNodeHandler, toFetchHandler } from "./_node/adapter.ts";
 export type { AdapterMeta } from "./_node/adapter.ts";
 
 export function serve(options: ServerOptions): Server {
-  return new NodeServer(options);
+  return withCluster(options, (options) => new NodeServer(options));
 }
 
 // https://nodejs.org/api/http.html

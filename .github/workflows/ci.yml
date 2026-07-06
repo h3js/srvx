@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: "${{ matrix.node-version }}", cache: pnpm }
       - run: pnpm install
-      - run: pnpm vitest --coverage test/node.test.ts test/node-adapters.test.ts test/url.test.ts
+      - run: pnpm vitest --coverage test/node.test.ts test/node-adapters.test.ts test/url.test.ts test/cluster.test.ts
       - uses: codecov/codecov-action@v3
         if: matrix.node-version == 24
         with:
@@ -44,7 +44,7 @@ jobs:
       # - uses: denoland/setup-deno@v2
       - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/download/v2.7.12/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
       - run: pnpm install
-      - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts
+      - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts test/cluster.test.ts
       - run: pnpm add -D undici@^7.25.0
       - run: deno run test:node-compat:deno
   tests_bun:
@@ -56,7 +56,7 @@ jobs:
         with: { node-version: lts/*, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install
-      - run: pnpm vitest --coverage test/bun.test.ts test/url.test.ts
+      - run: pnpm vitest --coverage test/bun.test.ts test/url.test.ts test/cluster.test.ts
       - run: bun run test:node-compat:bun
   publish:
     runs-on: ubuntu-latest

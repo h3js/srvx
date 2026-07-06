@@ -100,6 +100,25 @@ export interface ServerOptions {
   reusePort?: boolean;
 
   /**
+   * Run multiple server processes sharing the same port (cluster mode).
+   *
+   * The main process becomes a small supervisor that spawns workers (re-executing the same entry),
+   * restarts them when they crash and forwards shutdown signals. Set to a number for an exact
+   * worker count, or `true` to read it from the `SRVX_WORKERS` environment variable (number of
+   * CPU cores when unset). `SRVX_WORKERS` alone also enables cluster mode; `false` disables it entirely.
+   *
+   * Worker processes can be detected via the `SRVX_CLUSTER_WORKER` environment variable (worker index, starting at `"0"`).
+   *
+   * Supported on Node.js (`node:cluster`, all platforms) and on Bun and Deno (`SO_REUSEPORT`, load balancing on Linux only).
+   * Serverless runtimes scale processes themselves and ignore this option.
+   *
+   * **Note:** Cluster mode requires a fixed port (`port: 0` is not supported).
+   *
+   * @see https://srvx.h3.dev/guide/cluster
+   */
+  cluster?: boolean | number;
+
+  /**
    * The protocol to use for the server.
    *
    * Possible values are `http` and `https`.
