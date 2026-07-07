@@ -1,5 +1,5 @@
 import nodeCluster from "node:cluster";
-import { fork, type ChildProcess } from "node:child_process";
+import { fork, spawn, type ChildProcess } from "node:child_process";
 import { availableParallelism } from "node:os";
 import * as c from "./cli/_utils.ts";
 import { fmtURL, printListening, resolvePortAndHost } from "./_utils.ts";
@@ -329,6 +329,23 @@ class ClusterServer implements Server {
 
     if (this.runtime === "node") {
       return nodeCluster.fork(workerEnv).process;
+    }
+
+    // Deno workers bind with SO_REUSEPORT (Linux-only), which Deno gates behind
+    // `--unstable-net` and enforces with a hard process exit. fork() cannot pass
+    // Deno CLI flags (execArgv is translated as Node/V8 flags), so spawn the
+    // worker with explicit `deno run` arguments and an IPC channel instead.
+    // Compiled (standalone) binaries have unstable config baked in and accept
+    // no `run` subcommand, so they keep using fork().
+    if (IS_DENO && process.platform === "linux" && !(globalThis as any).Deno?.build?.standalone) {
+      return spawn(
+        process.execPath,
+        ["run", "--unstable-net", "-A", process.argv[1], ...process.argv.slice(2)],
+        {
+          env: { ...process.env, ...workerEnv },
+          stdio: ["inherit", "inherit", "inherit", "ipc"],
+        },
+      );
     }
 
     return fork(process.argv[1], process.argv.slice(2), {
