@@ -1,7 +1,7 @@
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import * as c from "./_utils.ts";
 import type { CLIOptions, MainOptions } from "./types.ts";
 import { cliServe, NO_ENTRY_ERROR } from "./serve.ts";
@@ -44,11 +44,6 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   // Log versions
   console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
 
-  // Cluster mode is production-only (dev mode uses a single process with watcher)
-  if (!cliOpts.prod && (cliOpts.cluster || process.env.SRVX_WORKERS)) {
-    console.log(c.yellow("Cluster mode is only available in production mode (--prod), ignoring."));
-  }
-
   // Resolve .env files
   const envFiles = [".env", cliOpts.prod ? ".env.production" : ".env.local"].filter((f) =>
     existsSync(f),
@@ -57,6 +52,15 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     console.log(
       `${c.gray(`Loading environment variables from ${c.magenta(envFiles.join(", "))}`)}`,
     );
+  }
+
+  if (
+    !cliOpts.prod &&
+    (cliOpts.cluster ||
+      process.env.SRVX_WORKERS ||
+      envFiles.some((f) => /^\s*SRVX_WORKERS\s*=/m.test(readFileSync(f, "utf8"))))
+  ) {
+    console.log(c.yellow("Cluster mode is only available in production mode (--prod), ignoring."));
   }
 
   // In prod mode without --import, run directly in current process (no fork needed)

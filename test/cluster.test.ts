@@ -76,7 +76,8 @@ function testClusterExec(cmd: string[], opts: { workers: number; lb: boolean }) 
   });
 
   afterAll(async () => {
-    await childProc.kill();
+    childProc.kill("SIGTERM");
+    await childProc.catch(() => {});
   });
 
   it("serves requests from cluster workers", async () => {
