@@ -1,6 +1,6 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { isTrustedProxy } from "../../_trust-proxy.ts";
+import { isTrustedProxy, firstForwardedValue } from "../../_trust-proxy.ts";
 import type {
   APIGatewayProxyEvent,
   Context as AWSContext,
@@ -34,7 +34,12 @@ export function awsRequest(
   context: AWSContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
-  const req = new Request(awsEventURL(event, trustProxy), {
+  // Resolve the immediate-peer address and trust decision once and pass them
+  // down; both the URL and the client IP derivation need them.
+  const sourceIp = awsEventIP(event);
+  const trusted = isTrustedProxy(trustProxy, sourceIp);
+
+  const req = new Request(awsEventURL(event, trusted), {
     method: awsEventMethod(event),
     headers: awsEventHeaders(event),
     body: awsEventBody(event),
@@ -45,7 +50,7 @@ export function awsRequest(
     awsLambda: { event, context },
   };
 
-  req.ip = awsEventClientIP(event, trustProxy);
+  req.ip = awsEventClientIP(event, sourceIp, trusted);
 
   return req;
 }
@@ -71,13 +76,13 @@ function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): strin
  */
 function awsEventClientIP(
   event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  trustProxy?: TrustProxyOption,
+  sourceIp: string | undefined,
+  trusted: boolean,
 ): string | undefined {
-  const sourceIp = awsEventIP(event);
-  if (isTrustedProxy(trustProxy, sourceIp)) {
-    const forwarded = (event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"])
-      ?.split(",")[0]
-      .trim();
+  if (trusted) {
+    const forwarded = firstForwardedValue(
+      event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"],
+    );
     if (forwarded) {
       return forwarded;
     }
@@ -85,23 +90,18 @@ function awsEventClientIP(
   return sourceIp;
 }
 
-function awsEventURL(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  trustProxy?: TrustProxyOption,
-): URL {
+function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, trusted: boolean): URL {
   const path = (event as APIGatewayProxyEvent).path || (event as APIGatewayProxyEventV2).rawPath;
 
   const query = awsEventQuery(event);
 
   // Only honor client-supplied `X-Forwarded-*` headers when the proxy is
   // trusted; otherwise any client could spoof the host or protocol.
-  const trusted = isTrustedProxy(trustProxy, awsEventIP(event));
-
   const forwardedHost = trusted
-    ? event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"]
+    ? firstForwardedValue(event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"])
     : undefined;
   const hostname =
-    forwardedHost?.split(",")[0].trim() ||
+    forwardedHost ||
     event.headers.host ||
     event.headers.Host ||
     event.requestContext?.domainName ||
@@ -109,7 +109,7 @@ function awsEventURL(
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
   const forwardedProto = trusted
-    ? event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"]
+    ? firstForwardedValue(event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"])
     : undefined;
   const protocol = forwardedProto === "http" ? "http" : "https";
 

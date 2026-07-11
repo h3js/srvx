@@ -36,8 +36,24 @@ export function isTrustedProxy(
   if (trustProxy === "loopback") {
     return isLoopbackAddress(remoteAddress);
   }
-  // Allowlist of trusted immediate-peer addresses.
-  return remoteAddress !== undefined && trustProxy.includes(remoteAddress);
+  // Allowlist of trusted immediate-peer addresses. Dual-stack Node reports an
+  // IPv4 peer as an IPv4-mapped IPv6 address (`::ffff:10.0.0.1`), so also match
+  // the bare IPv4 form against the allowlist.
+  if (remoteAddress === undefined) {
+    return false;
+  }
+  if (trustProxy.includes(remoteAddress)) {
+    return true;
+  }
+  const mapped = ipv4FromMapped(remoteAddress);
+  return mapped !== undefined && trustProxy.includes(mapped);
+}
+
+/** Bare IPv4 form of an IPv4-mapped IPv6 address (`::ffff:1.2.3.4` -> `1.2.3.4`). */
+function ipv4FromMapped(address: string): string | undefined {
+  return address.startsWith("::ffff:") && address.includes(".")
+    ? address.slice("::ffff:".length)
+    : undefined;
 }
 
 /** Whether `address` is an IPv4/IPv6 loopback address. */
@@ -48,18 +64,33 @@ function isLoopbackAddress(address: string | undefined): boolean {
   );
 }
 
+/**
+ * Validates an HTTP Host header value (domain, IPv4, or bracketed IPv6) with
+ * optional port. Used to reject spoofed/malformed hosts (e.g. `"localhost:3000/foobar?"`
+ * or a forwarded host containing whitespace) across every adapter.
+ */
+export const HOST_RE: RegExp =
+  /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:\d{1,5})?$/;
+
 /** Whether a host value carries an explicit `:port` (handles `[IPv6]:port`). */
 function forwardedHostHasPort(host: string): boolean {
   const bracket = host.lastIndexOf("]");
   return bracket === -1 ? host.includes(":") : host.indexOf(":", bracket) !== -1;
 }
 
-/** Leftmost/first entry of a comma-separated `X-Forwarded-*` header value. */
-function firstForwardedValue(value: string | null): string | undefined {
+/**
+ * Leftmost/first entry of a comma-separated `X-Forwarded-*` header value. With a
+ * chain of proxies the header is a comma-separated list; the leftmost entry is
+ * the value seen by the outermost proxy. Node exposes repeated headers as a
+ * `string[]`, so the array form is normalized to its first element.
+ */
+export function firstForwardedValue(
+  value: string | string[] | null | undefined,
+): string | undefined {
   if (!value) {
     return undefined;
   }
-  const first = value.split(",")[0].trim();
+  const first = (Array.isArray(value) ? value[0] : value).split(",")[0].trim();
   return first || undefined;
 }
 
@@ -100,8 +131,11 @@ function applyTrustedProxy(request: ServerRequest, trustProxy: TrustProxyOption)
     if (forwardedProto === "https" || forwardedProto === "http") {
       url.protocol = `${forwardedProto}:`;
     }
-    if (forwardedHost) {
-      // Invalid hosts are ignored by the URL setter, keeping the original host.
+    // Only apply a well-formed forwarded host. Relying on the URL setter to
+    // reject invalid values silently keeps the original host but still runs the
+    // port-reset below, which would drop the real listener port. Validating up
+    // front (same `HOST_RE` as the Node adapter) skips bad values entirely.
+    if (forwardedHost && HOST_RE.test(forwardedHost)) {
       url.host = forwardedHost;
       // The `host` setter only updates the port when the value carries one, so
       // an origin-form host (no port) would inherit the listener's port. The

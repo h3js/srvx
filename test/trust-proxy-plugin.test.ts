@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { trustProxyPlugin } from "../src/_trust-proxy.ts";
+import { trustProxyPlugin, isTrustedProxy } from "../src/_trust-proxy.ts";
 import type { Server, ServerRequest, TrustProxyOption } from "../src/types.ts";
 
 function makeRequest(
@@ -147,6 +147,55 @@ describe("trustProxyPlugin", () => {
     const url = new URL(req.url);
     expect(url.hostname).toBe("public.example");
     expect(url.port).toBe("8443");
+  });
+
+  test("a malformed X-Forwarded-Host is ignored and keeps the original host:port", async () => {
+    const req = await run(
+      true,
+      makeRequest("http://origin.example:34697/", "10.0.0.1", {
+        // Contains a space -> invalid; must not silently strip the real port.
+        "x-forwarded-host": "bad host",
+      }),
+    );
+    const url = new URL(req.url);
+    expect(url.hostname).toBe("origin.example");
+    expect(url.port).toBe("34697");
+  });
+
+  test("honors the leftmost entry of a comma-joined X-Forwarded-Proto", async () => {
+    const req = await run(
+      true,
+      makeRequest("http://origin.example/", "10.0.0.1", {
+        "x-forwarded-proto": "https, http",
+      }),
+    );
+    expect(new URL(req.url).protocol).toBe("https:");
+  });
+});
+
+describe("isTrustedProxy", () => {
+  test("allowlist matches an IPv4-mapped IPv6 peer by its bare IPv4 form", () => {
+    // Dual-stack Node reports an IPv4 peer as `::ffff:10.0.0.1`.
+    expect(isTrustedProxy(["10.0.0.1"], "::ffff:10.0.0.1")).toBe(true);
+    expect(isTrustedProxy(["10.0.0.2"], "::ffff:10.0.0.1")).toBe(false);
+  });
+
+  test("allowlist still matches a plain address exactly", () => {
+    expect(isTrustedProxy(["10.0.0.1"], "10.0.0.1")).toBe(true);
+    expect(isTrustedProxy(["10.0.0.1"], "9.9.9.9")).toBe(false);
+  });
+
+  test("false/undefined never trust; true always trusts", () => {
+    expect(isTrustedProxy(false, "10.0.0.1")).toBe(false);
+    expect(isTrustedProxy(undefined, "10.0.0.1")).toBe(false);
+    expect(isTrustedProxy(true, undefined)).toBe(true);
+  });
+
+  test('"loopback" matches IPv4/IPv6 loopback including IPv4-mapped', () => {
+    expect(isTrustedProxy("loopback", "127.0.0.1")).toBe(true);
+    expect(isTrustedProxy("loopback", "::1")).toBe(true);
+    expect(isTrustedProxy("loopback", "::ffff:127.0.0.1")).toBe(true);
+    expect(isTrustedProxy("loopback", "203.0.113.5")).toBe(false);
   });
 
   test("falls back to the peer address when X-Forwarded-For is absent", async () => {

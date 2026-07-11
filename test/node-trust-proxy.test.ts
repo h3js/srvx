@@ -80,6 +80,14 @@ describe("trustProxy protocol gating (Node)", () => {
     expect(body).toBe("https:");
   });
 
+  test("trustProxy: true honors the leftmost entry of a comma-joined X-Forwarded-Proto", async () => {
+    // A proxy chain can join the header (e.g. "https, http"); the outermost
+    // (leftmost) value reflects the original client's scheme.
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, { "X-Forwarded-Proto": "https, http" });
+    expect(body).toBe("https:");
+  });
+
   test('trustProxy: "loopback" trusts a same-host peer', async () => {
     // The test client connects over loopback (127.0.0.1 / ::1).
     const port = await start({ trustProxy: "loopback" });
@@ -88,8 +96,10 @@ describe("trustProxy protocol gating (Node)", () => {
   });
 
   test("trustProxy allowlist honors trusted peer address", async () => {
-    // The loopback peer address (127.0.0.1 or ::1 for dual-stack) is allowlisted.
-    const port = await start({ trustProxy: ["127.0.0.1", "::1", "::ffff:127.0.0.1"] });
+    // The loopback peer address is allowlisted. On dual-stack it may be reported
+    // as the IPv4-mapped `::ffff:127.0.0.1`, which isTrustedProxy matches against
+    // the bare `127.0.0.1` entry, so only the two canonical forms are listed.
+    const port = await start({ trustProxy: ["127.0.0.1", "::1"] });
     const { body } = await rawRequest(port, { "X-Forwarded-Proto": "https" });
     expect(body).toBe("https:");
   });
@@ -148,6 +158,17 @@ describe("trustProxy host gating (Node)", () => {
   test("falls back to Host when X-Forwarded-Host is absent", async () => {
     const port = await start({ trustProxy: true });
     const { body } = await rawRequest(port, { Host: "real.example" });
+    expect(body).toBe("real.example");
+  });
+
+  test("falls back to Host when a trusted X-Forwarded-Host is malformed", async () => {
+    // A malformed forwarded host must not poison request.url (previously became
+    // "_invalid_"); fall back to the real Host, matching the Bun/Deno plugin.
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, {
+      Host: "real.example",
+      "X-Forwarded-Host": "bad_host:notaport",
+    });
     expect(body).toBe("real.example");
   });
 });
