@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.11.22
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.21...v0.11.22)
+
+### 🚀 Enhancements
+
+- Add mtls plugin ([#213](https://github.com/h3js/srvx/pull/213))
+- Add `trustProxy` option ([#223](https://github.com/h3js/srvx/pull/223))
+
+### 🏡 Chore
+
+- Update deps ([7ff4e30](https://github.com/h3js/srvx/commit/7ff4e30))
+
+### ✅ Tests
+
+- **mtls:** Wire tls-peer-cert tests into CI, add Bun-guard regression test ([137abc7](https://github.com/h3js/srvx/commit/137abc7))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+- Sandro Circi ([@sandros94](https://github.com/sandros94))
+
 ## v0.11.21
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.20...v0.11.21)
