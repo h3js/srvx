@@ -79,7 +79,13 @@ export interface MTLSOptions {
   requestCert?: boolean;
 
   /**
-   * Reject connections whose client certificate is not signed by one of the trusted `ca` certificates. When `false`, an unverified certificate is still exposed via `request.tls` with `authorized: false`.
+   * Reject the TLS handshake itself when the client certificate is not signed by one of
+   * the trusted `ca` certificates — the connection never reaches the `fetch` handler, so
+   * checking `request.tls.authorized` in application code is unreachable at this setting.
+   *
+   * Set to `false` to let the handshake complete regardless and instead expose the
+   * unverified certificate via `request.tls` with `authorized: false`, so your handler
+   * can decide how to respond.
    *
    * @default true (Node.js default when `requestCert` is enabled)
    */
@@ -99,6 +105,11 @@ export interface MTLSOptions {
  * TLS (`tls.cert` / `tls.key`) and throws otherwise, since mutual TLS cannot run over
  * plain HTTP.
  *
+ * With the default `rejectUnauthorized: true`, unauthenticated clients are rejected
+ * during the TLS handshake and never reach the `fetch` handler. Set it to `false` to
+ * let every handshake complete and enforce authorization yourself via
+ * `request.tls.authorized`, as in the example below.
+ *
  * @example
  * ```js
  * import { serve } from "srvx/node";
@@ -106,7 +117,7 @@ export interface MTLSOptions {
  *
  * serve({
  *   tls: { cert, key },
- *   plugins: [mtls({ ca, requestCert: true })],
+ *   plugins: [mtls({ ca, requestCert: true, rejectUnauthorized: false })],
  *   fetch: (request) => {
  *     if (!request.tls?.authorized) {
  *       return new Response("client certificate required", { status: 401 });
