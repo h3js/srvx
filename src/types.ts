@@ -147,24 +147,21 @@ export interface ServerOptions {
   maxRequestBodySize?: number;
 
   /**
-   * Trust `X-Forwarded-*` headers (and the HTTP/2 `:scheme` pseudo-header) when
-   * deriving request metadata such as `request.url.protocol`.
+   * Whether to trust `X-Forwarded-Proto` (and the HTTP/2 `:scheme`) when
+   * deriving `request.url.protocol`.
    *
-   * These headers are set by the client on the wire, so a plaintext request can
-   * carry `X-Forwarded-Proto: https` and spoof `request.url.protocol` unless a
-   * proxy you control overwrites them. Enable this **only** when such a proxy
-   * sits in front of the server.
+   * Any client can send `X-Forwarded-Proto: https`, so trusting it lets a
+   * plaintext request masquerade as `https:`. Only enable this when a proxy you
+   * control sits in front and overwrites the header.
    *
-   * - `false` (default): ignore forwarded headers and derive protocol from the
-   *   real transport (`req.socket.encrypted` on Node). Secure by default.
-   * - `true`: always trust forwarded headers (previous behavior).
-   * - `"loopback"`: trust only when the immediate peer is a loopback address
-   *   (`127.0.0.0/8` or `::1`), i.e. a proxy running on the same host.
-   * - `string[]`: trust only when the immediate peer address (e.g.
-   *   `req.socket.remoteAddress`) is in the allowlist.
+   * - `false` (default): ignore the header; use the real connection protocol.
+   * - `true`: always trust the header.
+   * - `"loopback"`: trust it only when the proxy connects from a loopback
+   *   address (`127.0.0.0/8` or `::1`).
+   * - `string[]`: trust it only when the proxy's address is in the list.
    *
-   * Only affects adapters that reconstruct the protocol from headers (Node and
-   * AWS Lambda). Bun, Deno and Workers expose the real scheme natively.
+   * Only applies to the Node and AWS Lambda adapters; Bun, Deno and Workers
+   * report the real protocol natively.
    *
    * @default false
    */
