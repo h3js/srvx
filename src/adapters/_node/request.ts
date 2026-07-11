@@ -1,4 +1,6 @@
 import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
+import type { TrustProxyOption } from "../../_trust-proxy.ts";
+import { isTrustedProxy, firstForwardedValue } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
@@ -13,6 +15,11 @@ export type NodeRequestContext = {
    * buffered reads and the streamed body. See `ServerOptions.maxRequestBodySize`.
    */
   maxRequestBodySize?: number;
+  /**
+   * Whether to trust `X-Forwarded-*` / `:scheme` headers when deriving the
+   * request protocol, host and client IP. See `ServerOptions.trustProxy`.
+   */
+  trustProxy?: TrustProxyOption;
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
@@ -36,10 +43,16 @@ export const NodeRequest: {
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
     #maxRequestBodySize?: number;
+    #trustProxy?: TrustProxyOption;
+    #ip?: string;
+    #ipResolved = false;
+    #remoteAddress?: string;
+    #trusted?: boolean;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
       this.#maxRequestBodySize = ctx.maxRequestBodySize;
+      this.#trustProxy = ctx.trustProxy;
       this.runtime = {
         name: "node",
         // Reuse the context object as-is to avoid a per-request allocation on
@@ -53,8 +66,35 @@ export const NodeRequest: {
       return val instanceof NativeRequest;
     }
 
+    // Resolve the trust decision once: the peer address is fixed for the
+    // lifetime of the request, and both `ip` and `_url` need it. `isTrustedProxy`
+    // (and the `socket.remoteAddress` read) would otherwise run twice per request.
+    #resolveTrusted(): boolean {
+      if (this.#trusted === undefined) {
+        this.#remoteAddress = this.#req.socket?.remoteAddress;
+        this.#trusted = isTrustedProxy(this.#trustProxy, this.#remoteAddress);
+      }
+      return this.#trusted;
+    }
+
     get ip(): string | undefined {
-      return this.#req.socket?.remoteAddress;
+      // Resolve once: the peer address and forwarded header are fixed for the
+      // lifetime of the request.
+      if (this.#ipResolved) {
+        return this.#ip;
+      }
+      this.#ipResolved = true;
+      const trusted = this.#resolveTrusted();
+      // Only honor `X-Forwarded-For` when the immediate peer is a trusted proxy;
+      // otherwise any client could forge its address. The leftmost entry is the
+      // original client as seen by the outermost trusted proxy.
+      if (trusted) {
+        const forwarded = firstForwardedValue(this.#req.headers["x-forwarded-for"]);
+        if (forwarded) {
+          return (this.#ip = forwarded);
+        }
+      }
+      return (this.#ip = this.#remoteAddress);
     }
 
     get method(): string {
@@ -65,7 +105,10 @@ export const NodeRequest: {
     }
 
     get _url() {
-      return (this.#url ||= new NodeRequestURL({ req: this.#req }));
+      return (this.#url ||= new NodeRequestURL({
+        req: this.#req,
+        trusted: this.#resolveTrusted(),
+      }));
     }
 
     set _url(url: URL) {

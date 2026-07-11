@@ -79,6 +79,7 @@ class NodeServer implements Server {
         req: nodeReq,
         res: nodeRes,
         maxRequestBodySize: this.options.maxRequestBodySize,
+        trustProxy: this.options.trustProxy,
       });
       request.waitUntil = this.#wait?.waitUntil;
       const res = fetchHandler(request);

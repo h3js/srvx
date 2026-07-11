@@ -261,9 +261,34 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event, createMockContext());
+      // Forwarded protocol is only honored when the proxy is trusted.
+      const request = awsRequest(v1Event, createMockContext(), true);
 
       expect(request.url).toMatch(/^http:\/\//);
+    });
+
+    test("should ignore X-Forwarded-Proto when proxy is not trusted (default)", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-proto": "http",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext());
+
+      expect(request.url).toMatch(/^https:\/\//);
     });
 
     test("should default to HTTPS when protocol not specified", () => {
@@ -285,6 +310,102 @@ describe("[AWS Lambda] Request Utils", () => {
       const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toMatch(/^https:\/\//);
+    });
+
+    test("should honor X-Forwarded-Host when proxy is trusted", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "real.example.com",
+          "x-forwarded-host": "forwarded.example.com",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext(), true);
+
+      expect(new URL(request.url).host).toBe("forwarded.example.com");
+    });
+
+    test("should ignore X-Forwarded-Host when proxy is not trusted (default)", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "real.example.com",
+          "x-forwarded-host": "forwarded.example.com",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext());
+
+      expect(new URL(request.url).host).toBe("real.example.com");
+    });
+
+    test("should honor X-Forwarded-For for request.ip when proxy is trusted", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-for": "1.2.3.4, 10.0.0.1",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext(), true);
+
+      expect(request.ip).toBe("1.2.3.4");
+    });
+
+    test("should ignore X-Forwarded-For for request.ip when not trusted (default)", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-for": "1.2.3.4",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext());
+
+      expect(request.ip).toBe("10.0.0.1");
     });
 
     test("should handle path parameters in URL construction", () => {

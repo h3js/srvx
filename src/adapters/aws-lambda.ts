@@ -1,5 +1,6 @@
 import type * as AWS from "aws-lambda";
 import type { FetchHandler, Server, ServerOptions } from "../types.ts";
+import type { TrustProxyOption } from "../_trust-proxy.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 import {
@@ -39,8 +40,9 @@ export async function handleLambdaEvent(
   fetchHandler: FetchHandler,
   event: AwsLambdaEvent,
   context: AWS.Context,
+  trustProxy?: TrustProxyOption,
 ): Promise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2> {
-  const request = awsRequest(event, context);
+  const request = awsRequest(event, context, trustProxy);
   const response = await fetchHandler(request);
   return {
     statusCode: response.status,
@@ -54,8 +56,9 @@ export async function handleLambdaEventWithStream(
   event: AwsLambdaEvent,
   responseStream: AWSLambdaResponseStream,
   context: AWS.Context,
+  trustProxy?: TrustProxyOption,
 ): Promise<void> {
-  const request = awsRequest(event, context);
+  const request = awsRequest(event, context, trustProxy);
   const response = await fetchHandler(request);
   await awsStreamResponse(response, responseStream, event);
 }
@@ -83,7 +86,7 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
     const fetchHandler = wrapFetch(this as unknown as Server);
 
     this.fetch = (event: AwsLambdaEvent, context: AWS.Context) =>
-      handleLambdaEvent(fetchHandler, event, context);
+      handleLambdaEvent(fetchHandler, event, context, this.options.trustProxy);
   }
 
   serve() {}
