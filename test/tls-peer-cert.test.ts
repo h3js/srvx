@@ -1,4 +1,4 @@
-import { describe, beforeAll, afterAll, expect, test } from "vitest";
+import { describe, beforeAll, afterAll, expect, test, vi } from "vitest";
 import { fetch, Agent } from "undici";
 import { getTLSCert } from "./_utils.ts";
 import { fixture } from "./_fixture.ts";
@@ -18,7 +18,10 @@ function clientAgent(opts: { withClientCert: boolean }) {
   });
 }
 
-describe("mtls() plugin (Node adapter)", () => {
+// Skipped under a real Bun runtime: mtls() unconditionally refuses to start
+// on Bun (see the throw test below), so `beforeAll` would fail before any of
+// these sub-tests could run.
+describe.skipIf(typeof Bun !== "undefined")("mtls() plugin (Node adapter)", () => {
   let server: Awaited<ReturnType<typeof nodeServe>> | undefined;
 
   beforeAll(async () => {
@@ -94,9 +97,12 @@ test("request.tls is absent without the mtls() plugin", async () => {
 });
 
 test("mtls() throws when TLS is not configured", () => {
+  // On a real Bun runtime, the Bun-support guard fires unconditionally before
+  // the TLS-config check (see below), so the thrown message differs there.
+  const expected = typeof Bun !== "undefined" ? /not available on Bun/ : /HTTPS server/;
   expect(() =>
     nodeServe(fixture({ manual: true, port: 0, plugins: [mtls({ ca: tls.ca })] })),
-  ).toThrow(/HTTPS server/);
+  ).toThrow(expected);
 });
 
 test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
@@ -112,4 +118,30 @@ test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
       }),
     ),
   ).toThrow(/srvx\/node/);
+});
+
+test("mtls() throws when running under Bun, even with TLS configured", () => {
+  // Verified against the real Bun runtime separately (`bun --bun vitest`):
+  // Bun's node:http(s) compat does not expose the peer certificate to the
+  // handler (https://github.com/oven-sh/bun/issues/16254), so this guard must
+  // fire regardless of TLS config. Simulated here via a stubbed global so the
+  // assertion runs (and can regress) under Node/CI without a real Bun binary.
+  if (typeof Bun !== "undefined") {
+    return; // Already exercising the real thing; avoid double-stubbing globalThis.Bun.
+  }
+  vi.stubGlobal("Bun", {});
+  try {
+    expect(() =>
+      nodeServe(
+        fixture({
+          manual: true,
+          port: 0,
+          tls: { cert: tls.cert, key: tls.key },
+          plugins: [mtls({ ca: tls.ca })],
+        }),
+      ),
+    ).toThrow(/not available on Bun/);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
