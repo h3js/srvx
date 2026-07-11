@@ -44,6 +44,8 @@ export const NodeRequest: {
     #abortController?: AbortController;
     #maxRequestBodySize?: number;
     #trustProxy?: TrustProxyOption;
+    #ip?: string;
+    #ipResolved = false;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
@@ -63,6 +65,13 @@ export const NodeRequest: {
     }
 
     get ip(): string | undefined {
+      // Resolve once: the peer address and forwarded header are fixed for the
+      // lifetime of the request, and `isTrustedProxy` would otherwise re-run on
+      // every access.
+      if (this.#ipResolved) {
+        return this.#ip;
+      }
+      this.#ipResolved = true;
       const remoteAddress = this.#req.socket?.remoteAddress;
       // Only honor `X-Forwarded-For` when the immediate peer is a trusted proxy;
       // otherwise any client could forge its address. The leftmost entry is the
@@ -70,10 +79,10 @@ export const NodeRequest: {
       if (isTrustedProxy(this.#trustProxy, remoteAddress)) {
         const forwarded = forwardedFor(this.#req.headers["x-forwarded-for"]);
         if (forwarded) {
-          return forwarded;
+          return (this.#ip = forwarded);
         }
       }
-      return remoteAddress;
+      return (this.#ip = remoteAddress);
     }
 
     get method(): string {
