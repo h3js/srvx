@@ -87,7 +87,7 @@ export function resolveTLSOptions(opts: ServerOptions):
   };
 }
 
-function resolveCertOrKey(value?: unknown): undefined | string {
+export function resolveCertOrKey(value?: unknown): undefined | string {
   if (!value) {
     return;
   }

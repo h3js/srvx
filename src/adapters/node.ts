@@ -111,7 +111,7 @@ class NodeServer implements Server {
       port,
       host,
       exclusive: !this.options.reusePort,
-      ...(tls ? { cert: tls.cert, key: tls.key, passphrase: tls.passphrase } : {}),
+      ...tls,
       ...this.options.node,
     };
 
