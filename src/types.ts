@@ -163,8 +163,7 @@ export interface ServerOptions {
    *   address (`127.0.0.0/8` or `::1`).
    * - `string[]`: trust them only when the proxy's address is in the list.
    *
-   * Only applies to the Node and AWS Lambda adapters; Bun, Deno and Workers
-   * report the real protocol, host and IP natively.
+   * Applies to the Node, AWS Lambda, Bun and Deno adapters.
    *
    * @default false
    */

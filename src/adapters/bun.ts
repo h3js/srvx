@@ -10,6 +10,7 @@ import {
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
+import { trustProxyPlugin } from "../_trust-proxy.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
@@ -35,6 +36,7 @@ class BunServer implements Server<BunFetchHandler> {
 
     for (const plugin of options.plugins || []) plugin(this);
 
+    trustProxyPlugin(this);
     gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
@@ -61,6 +63,9 @@ class BunServer implements Server<BunFetchHandler> {
         },
         ip: {
           enumerable: true,
+          // Configurable so the trustProxy plugin can override it from
+          // `X-Forwarded-For` when the peer is trusted.
+          configurable: true,
           get() {
             return server?.requestIP(request as Request)?.address;
           },
