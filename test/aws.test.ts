@@ -1241,5 +1241,99 @@ describe("[AWS Lambda] Request Utils", () => {
       // writer.end should NOT be called since error happened before streaming
       expect(mockWriter.end).not.toHaveBeenCalled();
     });
+
+    // API Gateway REST APIs (v1) now support response streaming via
+    // `responseTransferMode: STREAM` + the `InvokeWithResponseStream` API,
+    // using the same `APIGatewayProxyEvent` input shape as buffered proxy
+    // integrations. See: https://github.com/h3js/srvx/issues/184 and
+    // https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode-lambda.html
+    describe("API Gateway REST API (v1) streaming", () => {
+      test("delivers chunks to the writer progressively instead of buffering the full body", async () => {
+        const { mockStream, mockWriter, getChunks } = createMockResponseStream();
+
+        const fetchHandler = vi.fn().mockImplementation(async () => {
+          const encoder = new TextEncoder();
+          const stream = new ReadableStream({
+            async start(controller) {
+              controller.enqueue(encoder.encode("chunk-1"));
+              await Promise.resolve();
+              controller.enqueue(encoder.encode("chunk-2"));
+              await Promise.resolve();
+              controller.enqueue(encoder.encode("chunk-3"));
+              controller.close();
+            },
+          });
+          return new Response(stream, { headers: { "content-type": "text/plain" } });
+        });
+
+        const v1Event: APIGatewayProxyEvent = {
+          httpMethod: "GET",
+          path: "/stream",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+
+        await handleLambdaEventWithStream(fetchHandler, v1Event, mockStream, createMockContext());
+
+        // Each chunk must reach the writer as a separate write, otherwise
+        // API Gateway can't start forwarding bytes before the body is complete.
+        const decoder = new TextDecoder();
+        expect(getChunks().map((chunk) => decoder.decode(chunk as Uint8Array))).toEqual([
+          "chunk-1",
+          "chunk-2",
+          "chunk-3",
+        ]);
+        expect(mockWriter.end).toHaveBeenCalled();
+      });
+
+      test("emits a metadata prelude matching the API Gateway stream-response format", async () => {
+        const { mockStream, getMetadata } = createMockResponseStream();
+
+        const fetchHandler = vi.fn().mockResolvedValue(
+          new Response("ok", {
+            status: 201,
+            headers: { "content-type": "text/plain" },
+          }),
+        );
+
+        const v1Event: APIGatewayProxyEvent = {
+          httpMethod: "GET",
+          path: "/stream",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+
+        await handleLambdaEventWithStream(fetchHandler, v1Event, mockStream, createMockContext());
+
+        const metadata = getMetadata() as any;
+
+        // AWS only accepts `headers`, `multiValueHeaders`, `cookies` and
+        // `statusCode` in the JSON prelude - no v2-only fields should leak in.
+        expect(Object.keys(metadata).sort()).toEqual(["headers", "statusCode"]);
+        expect(metadata.statusCode).toBe(201);
+
+        // API Gateway requires either `Transfer-Encoding: chunked` or a
+        // `Content-Length` header on the prelude, or it rejects the stream.
+        expect(
+          metadata.headers["transfer-encoding"] || metadata.headers["content-length"],
+        ).toBeTruthy();
+      });
+    });
   });
 });

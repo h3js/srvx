@@ -27,6 +27,16 @@ functions:
           path: /{proxy+}
           method: ANY
           cors: true
+  stream:
+    handler: stream.streamHandler
+    events:
+      - http:
+          path: /stream
+          method: get
+          # Requires API Gateway REST API response streaming (Nov 2025+):
+          # https://docs.aws.amazon.com/apigateway/latest/developerguide/response-transfer-mode.html
+          response:
+            transferMode: STREAM
 
 custom:
   serverless-offline:
