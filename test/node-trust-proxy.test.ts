@@ -80,17 +80,11 @@ describe("trustProxy protocol gating (Node)", () => {
     expect(body).toBe("https:");
   });
 
-  test("trustProxy predicate gates per-request", async () => {
-    const port = await start({ trustProxy: (req) => req.headers["x-internal"] === "1" });
-
-    const trusted = await rawRequest(port, {
-      "X-Forwarded-Proto": "https",
-      "X-Internal": "1",
-    });
-    expect(trusted.body).toBe("https:");
-
-    const untrusted = await rawRequest(port, { "X-Forwarded-Proto": "https" });
-    expect(untrusted.body).toBe("http:");
+  test('trustProxy: "loopback" trusts a same-host peer', async () => {
+    // The test client connects over loopback (127.0.0.1 / ::1).
+    const port = await start({ trustProxy: "loopback" });
+    const { body } = await rawRequest(port, { "X-Forwarded-Proto": "https" });
+    expect(body).toBe("https:");
   });
 
   test("trustProxy allowlist honors trusted peer address", async () => {

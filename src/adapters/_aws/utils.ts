@@ -78,7 +78,7 @@ function awsEventURL(
 
   // Only honor a client-supplied `X-Forwarded-Proto` when the proxy is trusted;
   // otherwise assume `https` (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = isTrustedProxy(trustProxy, awsEventIP(event), event)
+  const forwardedProto = isTrustedProxy(trustProxy, awsEventIP(event))
     ? event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"]
     : undefined;
   const protocol = forwardedProto === "http" ? "http" : "https";

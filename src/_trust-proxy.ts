@@ -9,23 +9,21 @@
  *   - `false` (default): never trust forwarded headers; derive protocol from the
  *     real transport only.
  *   - `true`: always trust forwarded headers.
+ *   - `"loopback"`: trust only when the immediate peer is a loopback address
+ *     (`127.0.0.0/8` or `::1`), i.e. a proxy running on the same host.
  *   - `string[]`: trust only when the immediate peer address is in the allowlist.
- *   - `(req) => boolean`: trust only when the predicate returns `true` for the
- *     runtime-native request/event.
  */
-export type TrustProxyOption = boolean | string[] | ((req: any) => boolean);
+export type TrustProxyOption = boolean | "loopback" | string[];
 
 /**
  * Resolve whether forwarded headers should be trusted for a given request.
  *
  * @param trustProxy - The configured {@link TrustProxyOption} (or `undefined`).
- * @param remoteAddress - Address of the immediate peer (for the allowlist form).
- * @param req - Runtime-native request/event passed to the predicate form.
+ * @param remoteAddress - Address of the immediate peer.
  */
 export function isTrustedProxy(
   trustProxy: TrustProxyOption | undefined,
   remoteAddress: string | undefined,
-  req: unknown,
 ): boolean {
   if (trustProxy === undefined || trustProxy === false) {
     return false;
@@ -33,9 +31,17 @@ export function isTrustedProxy(
   if (trustProxy === true) {
     return true;
   }
-  if (typeof trustProxy === "function") {
-    return trustProxy(req) === true;
+  if (trustProxy === "loopback") {
+    return isLoopbackAddress(remoteAddress);
   }
   // Allowlist of trusted immediate-peer addresses.
   return remoteAddress !== undefined && trustProxy.includes(remoteAddress);
+}
+
+/** Whether `address` is an IPv4/IPv6 loopback address. */
+function isLoopbackAddress(address: string | undefined): boolean {
+  return (
+    !!address &&
+    (address === "::1" || address.startsWith("127.") || address.startsWith("::ffff:127."))
+  );
 }

@@ -158,11 +158,10 @@ export interface ServerOptions {
    * - `false` (default): ignore forwarded headers and derive protocol from the
    *   real transport (`req.socket.encrypted` on Node). Secure by default.
    * - `true`: always trust forwarded headers (previous behavior).
+   * - `"loopback"`: trust only when the immediate peer is a loopback address
+   *   (`127.0.0.0/8` or `::1`), i.e. a proxy running on the same host.
    * - `string[]`: trust only when the immediate peer address (e.g.
    *   `req.socket.remoteAddress`) is in the allowlist.
-   * - `(req) => boolean`: trust only when the predicate returns `true`. The
-   *   argument is the runtime-native request (Node `IncomingMessage`) or event
-   *   (AWS Lambda).
    *
    * Only affects adapters that reconstruct the protocol from headers (Node and
    * AWS Lambda). Bun, Deno and Workers expose the real scheme natively.

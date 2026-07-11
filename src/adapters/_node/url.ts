@@ -29,7 +29,7 @@ export class NodeRequestURL extends FastURL {
     // comes through a trusted proxy; otherwise any client could spoof `https`
     // on a plaintext connection. The real transport (`encrypted`) is always
     // authoritative.
-    const trusted = isTrustedProxy(trustProxy, req.socket?.remoteAddress, req);
+    const trusted = isTrustedProxy(trustProxy, req.socket?.remoteAddress);
     const protocol =
       (req.socket as any)?.encrypted ||
       (trusted &&
