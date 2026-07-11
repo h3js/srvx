@@ -10,11 +10,33 @@ import { FastURL } from "../../_url.ts";
 export const HOST_RE: RegExp =
   /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:\d{1,5})?$/;
 
+/**
+ * Extract the client-facing host from an `X-Forwarded-Host` header value. When
+ * a chain of proxies is involved the header is a comma-separated list; the
+ * first entry is the original host seen by the outermost proxy.
+ */
+function forwardedHost(value: string | string[] | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const first = (Array.isArray(value) ? value[0] : value).split(",")[0].trim();
+  return first || undefined;
+}
+
 export class NodeRequestURL extends FastURL {
   constructor({ req, trustProxy }: { req: NodeServerRequest; trustProxy?: TrustProxyOption }) {
     const path = req.url || "/";
 
-    let host = req.headers.host || (req.headers[":authority"] as string);
+    // Only honor client-supplied `X-Forwarded-*` hints when the request comes
+    // through a trusted proxy; otherwise any client could spoof the host or
+    // `https` on a plaintext connection. The real transport (`encrypted`) and
+    // the on-the-wire `Host` header remain authoritative when untrusted.
+    const trusted = isTrustedProxy(trustProxy, req.socket?.remoteAddress);
+
+    let host =
+      (trusted && forwardedHost(req.headers["x-forwarded-host"])) ||
+      req.headers.host ||
+      (req.headers[":authority"] as string);
     if (host && !HOST_RE.test(host)) {
       host = "_invalid_";
     } else if (!host) {
@@ -25,11 +47,6 @@ export class NodeRequestURL extends FastURL {
       }
     }
 
-    // Only honor client-supplied forwarded protocol hints when the request
-    // comes through a trusted proxy; otherwise any client could spoof `https`
-    // on a plaintext connection. The real transport (`encrypted`) is always
-    // authoritative.
-    const trusted = isTrustedProxy(trustProxy, req.socket?.remoteAddress);
     const protocol =
       (req.socket as any)?.encrypted ||
       (trusted &&

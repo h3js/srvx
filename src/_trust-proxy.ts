@@ -1,13 +1,13 @@
 /**
- * Controls whether `X-Forwarded-*` headers (proto, and the HTTP/2 `:scheme`
- * pseudo-header) are trusted when deriving request metadata.
+ * Controls whether `X-Forwarded-*` headers (proto, host, for, and the HTTP/2
+ * `:scheme` pseudo-header) are trusted when deriving request metadata.
  *
  * These headers are set by the client on the wire, so they can only be trusted
  * when a proxy you control sits in front and overwrites them. See
  * {@link ServerOptions.trustProxy}.
  *
- *   - `false` (default): never trust forwarded headers; derive protocol from the
- *     real transport only.
+ *   - `false` (default): never trust forwarded headers; derive protocol, host
+ *     and client IP from the real transport only.
  *   - `true`: always trust forwarded headers.
  *   - `"loopback"`: trust only when the immediate peer is a loopback address
  *     (`127.0.0.0/8` or `::1`), i.e. a proxy running on the same host.

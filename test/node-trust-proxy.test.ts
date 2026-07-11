@@ -100,3 +100,100 @@ describe("trustProxy protocol gating (Node)", () => {
     expect(body).toBe("http:");
   });
 });
+
+describe("trustProxy host gating (Node)", () => {
+  let server: Server;
+
+  async function start(options: Partial<ServerOptions>) {
+    server = serve({
+      port: 0,
+      fetch: (request) => new Response(new URL(request.url).host),
+      ...options,
+    } as ServerOptions);
+    await server.ready();
+    return getPort(server);
+  }
+
+  afterEach(async () => {
+    if (server) await server.close(true);
+  });
+
+  test("default (trustProxy unset) ignores X-Forwarded-Host", async () => {
+    const port = await start({});
+    const { body } = await rawRequest(port, {
+      Host: "real.example",
+      "X-Forwarded-Host": "spoofed.example",
+    });
+    expect(body).toBe("real.example");
+  });
+
+  test("trustProxy: true honors X-Forwarded-Host", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, {
+      Host: "real.example",
+      "X-Forwarded-Host": "forwarded.example",
+    });
+    expect(body).toBe("forwarded.example");
+  });
+
+  test("trustProxy: true uses first entry of an X-Forwarded-Host chain", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, {
+      Host: "real.example",
+      "X-Forwarded-Host": "outer.example, inner.example",
+    });
+    expect(body).toBe("outer.example");
+  });
+
+  test("falls back to Host when X-Forwarded-Host is absent", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, { Host: "real.example" });
+    expect(body).toBe("real.example");
+  });
+});
+
+describe("trustProxy client IP gating (Node)", () => {
+  let server: Server;
+
+  async function start(options: Partial<ServerOptions>) {
+    server = serve({
+      port: 0,
+      fetch: (request) => new Response(request.ip ?? ""),
+      ...options,
+    } as ServerOptions);
+    await server.ready();
+    return getPort(server);
+  }
+
+  afterEach(async () => {
+    if (server) await server.close(true);
+  });
+
+  test("default (trustProxy unset) ignores X-Forwarded-For", async () => {
+    const port = await start({});
+    const { body } = await rawRequest(port, { "X-Forwarded-For": "1.2.3.4" });
+    // The real loopback peer address, not the spoofed header.
+    expect(body).not.toBe("1.2.3.4");
+    expect(body).toMatch(/127\.0\.0\.1|::1|::ffff:127\.0\.0\.1/);
+  });
+
+  test("trustProxy: true honors X-Forwarded-For", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, { "X-Forwarded-For": "1.2.3.4" });
+    expect(body).toBe("1.2.3.4");
+  });
+
+  test("trustProxy: true uses the leftmost X-Forwarded-For entry", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, {
+      "X-Forwarded-For": "1.2.3.4, 10.0.0.1, 10.0.0.2",
+    });
+    expect(body).toBe("1.2.3.4");
+  });
+
+  test("falls back to peer address when X-Forwarded-For is absent", async () => {
+    const port = await start({ trustProxy: true });
+    const { body } = await rawRequest(port, {});
+    expect(body).toMatch(/127\.0\.0\.1|::1|::ffff:127\.0\.0\.1/);
+  });
+});

@@ -147,21 +147,24 @@ export interface ServerOptions {
   maxRequestBodySize?: number;
 
   /**
-   * Whether to trust `X-Forwarded-Proto` (and the HTTP/2 `:scheme`) when
-   * deriving `request.url.protocol`.
+   * Whether to trust `X-Forwarded-*` headers (`X-Forwarded-Proto`,
+   * `X-Forwarded-Host`, `X-Forwarded-For`, and the HTTP/2 `:scheme`) when
+   * deriving `request.url` and `request.ip`.
    *
-   * Any client can send `X-Forwarded-Proto: https`, so trusting it lets a
-   * plaintext request masquerade as `https:`. Only enable this when a proxy you
-   * control sits in front and overwrites the header.
+   * Any client can send `X-Forwarded-Proto: https`, `X-Forwarded-Host` or
+   * `X-Forwarded-For`, so trusting them lets a request masquerade as `https:`,
+   * forge its host, or spoof its client IP. Only enable this when a proxy you
+   * control sits in front and overwrites the headers.
    *
-   * - `false` (default): ignore the header; use the real connection protocol.
-   * - `true`: always trust the header.
-   * - `"loopback"`: trust it only when the proxy connects from a loopback
+   * - `false` (default): ignore the headers; use the real connection protocol,
+   *   the on-the-wire `Host` header and the socket peer address.
+   * - `true`: always trust the headers.
+   * - `"loopback"`: trust them only when the proxy connects from a loopback
    *   address (`127.0.0.0/8` or `::1`).
-   * - `string[]`: trust it only when the proxy's address is in the list.
+   * - `string[]`: trust them only when the proxy's address is in the list.
    *
    * Only applies to the Node and AWS Lambda adapters; Bun, Deno and Workers
-   * report the real protocol natively.
+   * report the real protocol, host and IP natively.
    *
    * @default false
    */

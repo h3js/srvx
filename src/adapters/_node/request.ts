@@ -1,5 +1,6 @@
 import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
+import { isTrustedProxy } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
@@ -16,7 +17,7 @@ export type NodeRequestContext = {
   maxRequestBodySize?: number;
   /**
    * Whether to trust `X-Forwarded-*` / `:scheme` headers when deriving the
-   * request protocol. See `ServerOptions.trustProxy`.
+   * request protocol, host and client IP. See `ServerOptions.trustProxy`.
    */
   trustProxy?: TrustProxyOption;
 };
@@ -62,7 +63,17 @@ export const NodeRequest: {
     }
 
     get ip(): string | undefined {
-      return this.#req.socket?.remoteAddress;
+      const remoteAddress = this.#req.socket?.remoteAddress;
+      // Only honor `X-Forwarded-For` when the immediate peer is a trusted proxy;
+      // otherwise any client could forge its address. The leftmost entry is the
+      // original client as seen by the outermost trusted proxy.
+      if (isTrustedProxy(this.#trustProxy, remoteAddress)) {
+        const forwarded = forwardedFor(this.#req.headers["x-forwarded-for"]);
+        if (forwarded) {
+          return forwarded;
+        }
+      }
+      return remoteAddress;
     }
 
     get method(): string {
@@ -235,6 +246,19 @@ export function patchGlobalRequest(): typeof Request {
     globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
   }
   return PatchedRequest;
+}
+
+/**
+ * Extract the client address from an `X-Forwarded-For` header value. With a
+ * chain of proxies the header is a comma-separated list; the leftmost entry is
+ * the original client seen by the outermost proxy.
+ */
+function forwardedFor(value: string | string[] | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const first = (Array.isArray(value) ? value[0] : value).split(",")[0].trim();
+  return first || undefined;
 }
 
 /**

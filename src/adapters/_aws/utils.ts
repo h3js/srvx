@@ -45,7 +45,7 @@ export function awsRequest(
     awsLambda: { event, context },
   };
 
-  req.ip = awsEventIP(event);
+  req.ip = awsEventClientIP(event, trustProxy);
 
   return req;
 }
@@ -65,20 +65,50 @@ function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): strin
   );
 }
 
+/**
+ * Resolve the client IP, preferring the leftmost `X-Forwarded-For` entry when
+ * the immediate peer (the gateway `sourceIp`) is a trusted proxy.
+ */
+function awsEventClientIP(
+  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  trustProxy?: TrustProxyOption,
+): string | undefined {
+  const sourceIp = awsEventIP(event);
+  if (isTrustedProxy(trustProxy, sourceIp)) {
+    const forwarded = (event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"])
+      ?.split(",")[0]
+      .trim();
+    if (forwarded) {
+      return forwarded;
+    }
+  }
+  return sourceIp;
+}
+
 function awsEventURL(
   event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
   trustProxy?: TrustProxyOption,
 ): URL {
-  const hostname =
-    event.headers.host || event.headers.Host || event.requestContext?.domainName || ".";
-
   const path = (event as APIGatewayProxyEvent).path || (event as APIGatewayProxyEventV2).rawPath;
 
   const query = awsEventQuery(event);
 
-  // Only honor a client-supplied `X-Forwarded-Proto` when the proxy is trusted;
-  // otherwise assume `https` (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = isTrustedProxy(trustProxy, awsEventIP(event))
+  // Only honor client-supplied `X-Forwarded-*` headers when the proxy is
+  // trusted; otherwise any client could spoof the host or protocol.
+  const trusted = isTrustedProxy(trustProxy, awsEventIP(event));
+
+  const forwardedHost = trusted
+    ? event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"]
+    : undefined;
+  const hostname =
+    forwardedHost?.split(",")[0].trim() ||
+    event.headers.host ||
+    event.headers.Host ||
+    event.requestContext?.domainName ||
+    ".";
+
+  // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
+  const forwardedProto = trusted
     ? event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"]
     : undefined;
   const protocol = forwardedProto === "http" ? "http" : "https";
