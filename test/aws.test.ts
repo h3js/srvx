@@ -261,9 +261,34 @@ describe("[AWS Lambda] Request Utils", () => {
         queryStringParameters: null,
       };
 
-      const request = awsRequest(v1Event, createMockContext());
+      // Forwarded protocol is only honored when the proxy is trusted.
+      const request = awsRequest(v1Event, createMockContext(), true);
 
       expect(request.url).toMatch(/^http:\/\//);
+    });
+
+    test("should ignore X-Forwarded-Proto when proxy is not trusted (default)", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-proto": "http",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext());
+
+      expect(request.url).toMatch(/^https:\/\//);
     });
 
     test("should default to HTTPS when protocol not specified", () => {

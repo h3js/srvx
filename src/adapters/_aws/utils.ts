@@ -1,4 +1,6 @@
 import type { ServerRequest } from "../../types.ts";
+import type { TrustProxyOption } from "../../_trust-proxy.ts";
+import { isTrustedProxy } from "../../_trust-proxy.ts";
 import type {
   APIGatewayProxyEvent,
   Context as AWSContext,
@@ -30,8 +32,9 @@ export interface AWSResponseHeaders {
 export function awsRequest(
   event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
   context: AWSContext,
+  trustProxy?: TrustProxyOption,
 ): ServerRequest {
-  const req = new Request(awsEventURL(event), {
+  const req = new Request(awsEventURL(event, trustProxy), {
     method: awsEventMethod(event),
     headers: awsEventHeaders(event),
     body: awsEventBody(event),
@@ -62,7 +65,10 @@ function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): strin
   );
 }
 
-function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): URL {
+function awsEventURL(
+  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  trustProxy?: TrustProxyOption,
+): URL {
   const hostname =
     event.headers.host || event.headers.Host || event.requestContext?.domainName || ".";
 
@@ -70,10 +76,12 @@ function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): URL 
 
   const query = awsEventQuery(event);
 
-  const protocol =
-    (event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"]) === "http"
-      ? "http"
-      : "https";
+  // Only honor a client-supplied `X-Forwarded-Proto` when the proxy is trusted;
+  // otherwise assume `https` (Lambda is always TLS-terminated at the gateway).
+  const forwardedProto = isTrustedProxy(trustProxy, awsEventIP(event), event)
+    ? event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"]
+    : undefined;
+  const protocol = forwardedProto === "http" ? "http" : "https";
 
   return new URL(`${path}${query ? `?${query}` : ""}`, `${protocol}://${hostname}`);
 }

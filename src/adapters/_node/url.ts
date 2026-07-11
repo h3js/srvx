@@ -1,4 +1,6 @@
 import type { NodeServerRequest } from "../../types.ts";
+import type { TrustProxyOption } from "../../_trust-proxy.ts";
+import { isTrustedProxy } from "../../_trust-proxy.ts";
 import { FastURL } from "../../_url.ts";
 
 /**
@@ -9,7 +11,7 @@ export const HOST_RE: RegExp =
   /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:\d{1,5})?$/;
 
 export class NodeRequestURL extends FastURL {
-  constructor({ req }: { req: NodeServerRequest }) {
+  constructor({ req, trustProxy }: { req: NodeServerRequest; trustProxy?: TrustProxyOption }) {
     const path = req.url || "/";
 
     let host = req.headers.host || (req.headers[":authority"] as string);
@@ -23,10 +25,15 @@ export class NodeRequestURL extends FastURL {
       }
     }
 
+    // Only honor client-supplied forwarded protocol hints when the request
+    // comes through a trusted proxy; otherwise any client could spoof `https`
+    // on a plaintext connection. The real transport (`encrypted`) is always
+    // authoritative.
+    const trusted = isTrustedProxy(trustProxy, req.socket?.remoteAddress, req);
     const protocol =
       (req.socket as any)?.encrypted ||
-      req.headers["x-forwarded-proto"] === "https" ||
-      req.headers[":scheme"] === "https"
+      (trusted &&
+        (req.headers["x-forwarded-proto"] === "https" || req.headers[":scheme"] === "https"))
         ? "https:"
         : "http:";
 

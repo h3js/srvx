@@ -5,6 +5,9 @@ import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 import type * as AWS from "aws-lambda";
+import type { TrustProxyOption } from "./_trust-proxy.ts";
+
+export type { TrustProxyOption } from "./_trust-proxy.ts";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -142,6 +145,31 @@ export interface ServerOptions {
    * @default undefined (no limit)
    */
   maxRequestBodySize?: number;
+
+  /**
+   * Trust `X-Forwarded-*` headers (and the HTTP/2 `:scheme` pseudo-header) when
+   * deriving request metadata such as `request.url.protocol`.
+   *
+   * These headers are set by the client on the wire, so a plaintext request can
+   * carry `X-Forwarded-Proto: https` and spoof `request.url.protocol` unless a
+   * proxy you control overwrites them. Enable this **only** when such a proxy
+   * sits in front of the server.
+   *
+   * - `false` (default): ignore forwarded headers and derive protocol from the
+   *   real transport (`req.socket.encrypted` on Node). Secure by default.
+   * - `true`: always trust forwarded headers (previous behavior).
+   * - `string[]`: trust only when the immediate peer address (e.g.
+   *   `req.socket.remoteAddress`) is in the allowlist.
+   * - `(req) => boolean`: trust only when the predicate returns `true`. The
+   *   argument is the runtime-native request (Node `IncomingMessage`) or event
+   *   (AWS Lambda).
+   *
+   * Only affects adapters that reconstruct the protocol from headers (Node and
+   * AWS Lambda). Bun, Deno and Workers expose the real scheme natively.
+   *
+   * @default false
+   */
+  trustProxy?: TrustProxyOption;
 
   /**
    * TLS server options.

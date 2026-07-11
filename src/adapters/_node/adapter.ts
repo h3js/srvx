@@ -5,6 +5,7 @@ import type {
   NodeServerResponse,
   ServerRequest,
 } from "../../types.ts";
+import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
 import { sendNodeResponse } from "./send.ts";
@@ -19,7 +20,7 @@ export type AdapterMeta = {
  */
 export function toNodeHandler(
   handler: FetchHandler & AdapterMeta,
-  options?: { maxRequestBodySize?: number },
+  options?: { maxRequestBodySize?: number; trustProxy?: TrustProxyOption },
 ): NodeHttpHandler & AdapterMeta {
   if (handler.__nodeHandler) {
     return handler.__nodeHandler;
@@ -30,6 +31,7 @@ export function toNodeHandler(
       req: nodeReq,
       res: nodeRes,
       maxRequestBodySize: options?.maxRequestBodySize,
+      trustProxy: options?.trustProxy,
     });
     const res = handler(request);
     return res instanceof Promise

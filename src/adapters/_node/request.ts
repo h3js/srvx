@@ -1,4 +1,5 @@
 import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
+import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
@@ -13,6 +14,11 @@ export type NodeRequestContext = {
    * buffered reads and the streamed body. See `ServerOptions.maxRequestBodySize`.
    */
   maxRequestBodySize?: number;
+  /**
+   * Whether to trust `X-Forwarded-*` / `:scheme` headers when deriving the
+   * request protocol. See `ServerOptions.trustProxy`.
+   */
+  trustProxy?: TrustProxyOption;
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
@@ -36,10 +42,12 @@ export const NodeRequest: {
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
     #maxRequestBodySize?: number;
+    #trustProxy?: TrustProxyOption;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
       this.#maxRequestBodySize = ctx.maxRequestBodySize;
+      this.#trustProxy = ctx.trustProxy;
       this.runtime = {
         name: "node",
         // Reuse the context object as-is to avoid a per-request allocation on
@@ -65,7 +73,10 @@ export const NodeRequest: {
     }
 
     get _url() {
-      return (this.#url ||= new NodeRequestURL({ req: this.#req }));
+      return (this.#url ||= new NodeRequestURL({
+        req: this.#req,
+        trustProxy: this.#trustProxy,
+      }));
     }
 
     set _url(url: URL) {
