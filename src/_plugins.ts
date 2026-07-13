@@ -33,11 +33,18 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
 
   const w = server.options.silent ? () => {} : process.stderr.write.bind(process.stderr);
 
+  const exitClusterWorker = () => {
+    if (process.env.SRVX_CLUSTER_WORKER) {
+      process.exit(0);
+    }
+  };
+
   const forceClose = async () => {
     if (isClosed) return;
     w(c.red("\x1b[2K\rForcibly closing connections...\n"));
     isClosed = true;
     await server.close(true);
+    exitClusterWorker();
   };
 
   const shutdown = async () => {
@@ -68,6 +75,7 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
       if (closed) {
         w("\x1b[2K\r" + c.green("Server closed successfully.\n"));
         isClosed = true;
+        exitClusterWorker();
         return;
       }
     }

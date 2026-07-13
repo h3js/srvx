@@ -1,7 +1,7 @@
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import * as c from "./_utils.ts";
 import type { CLIOptions, MainOptions } from "./types.ts";
 import { cliServe, NO_ENTRY_ERROR } from "./serve.ts";
@@ -54,6 +54,15 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     );
   }
 
+  if (
+    !cliOpts.prod &&
+    (cliOpts.cluster ||
+      process.env.SRVX_WORKERS ||
+      envFiles.some((f) => /^\s*SRVX_WORKERS\s*=/m.test(readFileSync(f, "utf8"))))
+  ) {
+    console.log(c.yellow("Cluster mode is only available in production mode (--prod), ignoring."));
+  }
+
   // In prod mode without --import, run directly in current process (no fork needed)
   if (cliOpts.prod && !cliOpts.import) {
     // Load env files manually since we're not forking with --env-file args
@@ -96,13 +105,18 @@ function parseArgs(args: string[]): CLIOptions {
 
   if (mode === "serve") {
     // Serve mode
+    // Support both `--cluster` (worker count = CPU cores) and `--cluster <value>` / `--cluster=<value>`
+    const serveArgs = args.map((arg, i) =>
+      arg === "--cluster" && !/^(\d+|true|false)$/.test(args[i + 1] || "") ? "--cluster=true" : arg,
+    );
     const { values, positionals } = parseNodeArgs({
-      args,
+      args: serveArgs,
       allowPositionals: true,
       options: {
         ...commonArgs,
         url: { type: "string" },
         prod: { type: "boolean" },
+        cluster: { type: "string" },
         port: { type: "string", short: "p" },
         static: { type: "string", short: "s" },
         import: { type: "string" },
@@ -130,7 +144,25 @@ function parseArgs(args: string[]): CLIOptions {
       }
     }
 
-    return { mode, ...values };
+    // Convert `--cluster` value: "true" enables with default size, a number sets
+    // the size, "false" disables cluster mode entirely (including SRVX_WORKERS)
+    let cluster: boolean | number | undefined;
+    if (values.cluster !== undefined) {
+      if (values.cluster === "true") {
+        cluster = true;
+      } else if (values.cluster === "false") {
+        cluster = false;
+      } else {
+        cluster = Number(values.cluster);
+        if (!Number.isInteger(cluster) || cluster <= 0) {
+          throw new Error(
+            `Invalid --cluster value: "${values.cluster}" (expected a positive integer, "true" or "false")`,
+          );
+        }
+      }
+    }
+
+    return { mode, ...values, cluster };
   }
 
   // Fetch mode

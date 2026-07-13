@@ -10,13 +10,14 @@ import {
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
+import { withCluster } from "../_cluster.ts";
 import { trustProxyPlugin } from "../_trust-proxy.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
 
-export function serve(options: ServerOptions): BunServer {
-  return new BunServer(options);
+export function serve(options: ServerOptions): Server {
+  return withCluster(options, (options) => new BunServer(options));
 }
 
 // https://bun.sh/docs/api/http

@@ -49,10 +49,13 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
       ...loaded.module,
     } as Partial<ServerOptions>;
 
-    printInfo(cliOpts, loaded);
+    if (!process.env.SRVX_CLUSTER_WORKER) {
+      printInfo(cliOpts, loaded);
+    }
     server = srvxServe({
       ...serverOptions,
       gracefulShutdown: !!cliOpts.prod,
+      cluster: cliOpts.prod ? (cliOpts.cluster ?? serverOptions.cluster) : false,
       port: cliOpts.port ?? serverOptions.port,
       hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
       tls: cliOpts.tls ? { cert: cliOpts.cert, key: cliOpts.key } : undefined,
