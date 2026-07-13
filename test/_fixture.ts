@@ -42,6 +42,7 @@ export const fixture: (
       },
     ],
     plugins: [
+      ...(opts?.plugins ?? []),
       (server) => {
         server.options.middleware ??= [];
         server.options.middleware.unshift(async (req, next) => {
@@ -114,6 +115,15 @@ export const fixture: (
         }
         case "/ip": {
           return new _Response(`ip: ${req.ip}`);
+        }
+        case "/tls": {
+          return Response.json({
+            hasTls: !!req.tls,
+            subjectCN: req.tls?.peerCertificate?.subject?.CN ?? null,
+            issuerCN: req.tls?.peerCertificate?.issuer?.CN ?? null,
+            authorized: req.tls?.authorized ?? null,
+            protocol: req.tls?.protocol ?? null,
+          });
         }
         case "/req-instanceof": {
           class MyRequst extends Request {}

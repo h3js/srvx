@@ -4,3 +4,5 @@ allowBuilds:
   "@parcel/watcher": false
   esbuild: false
   serverless: false
+minimumReleaseAgeExclude:
+  - obuild*

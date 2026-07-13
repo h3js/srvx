@@ -5,6 +5,9 @@ import type * as NodeNet from "node:net";
 import type * as Bun from "bun";
 import type * as CF from "@cloudflare/workers-types";
 import type * as AWS from "aws-lambda";
+import type { TrustProxyOption } from "./_trust-proxy.ts";
+
+export type { TrustProxyOption } from "./_trust-proxy.ts";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
@@ -161,6 +164,29 @@ export interface ServerOptions {
    * @default undefined (no limit)
    */
   maxRequestBodySize?: number;
+
+  /**
+   * Whether to trust `X-Forwarded-*` headers (`X-Forwarded-Proto`,
+   * `X-Forwarded-Host`, `X-Forwarded-For`, and the HTTP/2 `:scheme`) when
+   * deriving `request.url` and `request.ip`.
+   *
+   * Any client can send `X-Forwarded-Proto: https`, `X-Forwarded-Host` or
+   * `X-Forwarded-For`, so trusting them lets a request masquerade as `https:`,
+   * forge its host, or spoof its client IP. Only enable this when a proxy you
+   * control sits in front and overwrites the headers.
+   *
+   * - `false` (default): ignore the headers; use the real connection protocol,
+   *   the on-the-wire `Host` header and the socket peer address.
+   * - `true`: always trust the headers.
+   * - `"loopback"`: trust them only when the proxy connects from a loopback
+   *   address (`127.0.0.0/8` or `::1`).
+   * - `string[]`: trust them only when the proxy's address is in the list.
+   *
+   * Applies to the Node, AWS Lambda, Bun and Deno adapters.
+   *
+   * @default false
+   */
+  trustProxy?: TrustProxyOption;
 
   /**
    * TLS server options.
