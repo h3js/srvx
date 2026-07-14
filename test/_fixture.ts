@@ -228,7 +228,9 @@ export const fixture: (
           );
         }
         case "/clone-response": {
-          const res = new _Response("", {});
+          // Body must be non-empty: a clone() that drops the body entirely
+          // still yields "", so an empty body cannot detect the regression.
+          const res = new _Response("cloned", {});
           if (req.headers.get("x-clone-with-headers") === "true") {
             res.headers.set("x-clone-with-headers", "true");
           }
