@@ -21,7 +21,7 @@ export function addTests(opts: {
   test("GET works", async () => {
     const response = await fetch(url("/"));
     expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("ok");
+    expect(await response.text()).toBe("ok");
   });
 
   test("request instanceof Request", async () => {
@@ -279,6 +279,7 @@ export function addTests(opts: {
     test("clone simple response", async () => {
       const response = await fetch(url("/clone-response"));
       expect(response.status).toBe(200);
+      expect(await response.text()).toBe("cloned");
     });
 
     test("clone with headers", async () => {
@@ -288,8 +289,8 @@ export function addTests(opts: {
         },
       });
       expect(response.status).toBe(200);
-
       expect(response.headers.get("x-clone-with-headers")).toBe("true");
+      expect(await response.text()).toBe("cloned");
     });
 
     test.skipIf(!opts.fastResponse)("clone response with Node.js pipe-style body", async () => {
@@ -304,13 +305,18 @@ export function addTests(opts: {
     });
   });
 
-  test("inspect objects", async () => {
+  // Skipped on the Bun adapter only: Bun's `util.inspect(new Headers())` prints
+  // `Headers {}` without enumerating entries, while Node and Deno list them.
+  // Nothing for srvx to fix -- it does not implement a custom inspect. The Node
+  // adapter passes under Bun (node-compat) because its headers are srvx's own
+  // class rather than a native `Headers`. Re-enable if Bun fixes util.inspect.
+  test.skipIf(opts.runtime === "bun")("inspect objects", async () => {
     const response = await fetch(url("/node-inspect"), {
       headers: { "x-foo": "1" },
     });
     expect(response.status).toBe(200);
     const data = await response.text();
-    expect(data.includes("x-foo"));
+    expect(data.includes("x-foo")).toBe(true);
   });
 
   test("normalize traversal in request path", async () => {
