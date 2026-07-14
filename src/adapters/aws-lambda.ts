@@ -3,6 +3,7 @@ import type { FetchHandler, Server, ServerOptions } from "../types.ts";
 import type { TrustProxyOption } from "../_trust-proxy.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
+import { createWaitUntil } from "../_utils.ts";
 import {
   awsRequest,
   awsResponseBody,
@@ -36,19 +37,39 @@ export function toLambdaHandler(options: ServerOptions): AWSLambdaHandler {
   return (event, context) => server.fetch(event, context);
 }
 
+/**
+ * Streaming counterpart to {@link toLambdaHandler}.
+ *
+ * The returned handler goes through the same server contract as the buffered
+ * one (`plugins`, `middleware`, `error`, `trustProxy` all apply) and is meant to
+ * be wrapped with `awslambda.streamifyResponse(...)`.
+ */
+export function toLambdaStreamHandler(options: ServerOptions): AWSLambdaStreamingHandler {
+  const server = new AWSLambdaServer(options);
+  return (event, responseStream, context) => server.fetchStream(event, responseStream, context);
+}
+
 export async function handleLambdaEvent(
   fetchHandler: FetchHandler,
   event: AwsLambdaEvent,
   context: AWS.Context,
   trustProxy?: TrustProxyOption,
 ): Promise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2> {
+  const wait = createWaitUntil();
   const request = awsRequest(event, context, trustProxy);
-  const response = await fetchHandler(request);
-  return {
-    statusCode: response.status,
-    ...awsResponseHeaders(response, event),
-    ...(await awsResponseBody(response)),
-  };
+  Object.defineProperty(request, "waitUntil", { value: wait.waitUntil, configurable: true });
+  try {
+    const response = await fetchHandler(request);
+    return {
+      statusCode: response.status,
+      ...awsResponseHeaders(response, event),
+      ...(await awsResponseBody(response)),
+    };
+  } finally {
+    // Await background tasks registered via `request.waitUntil` before the
+    // invocation returns; the process would otherwise be frozen mid-flight.
+    await wait.wait();
+  }
 }
 
 export async function handleLambdaEventWithStream(
@@ -58,9 +79,15 @@ export async function handleLambdaEventWithStream(
   context: AWS.Context,
   trustProxy?: TrustProxyOption,
 ): Promise<void> {
+  const wait = createWaitUntil();
   const request = awsRequest(event, context, trustProxy);
-  const response = await fetchHandler(request);
-  await awsStreamResponse(response, responseStream, event);
+  Object.defineProperty(request, "waitUntil", { value: wait.waitUntil, configurable: true });
+  try {
+    const response = await fetchHandler(request);
+    await awsStreamResponse(response, responseStream, event);
+  } finally {
+    await wait.wait();
+  }
 }
 
 export async function invokeLambdaHandler(
@@ -76,6 +103,7 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
   readonly runtime = "aws-lambda";
   readonly options: Server["options"];
   readonly fetch: AWSLambdaHandler;
+  readonly fetchStream: AWSLambdaStreamingHandler;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -87,6 +115,19 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
 
     this.fetch = (event: AwsLambdaEvent, context: AWS.Context) =>
       handleLambdaEvent(fetchHandler, event, context, this.options.trustProxy);
+
+    this.fetchStream = (
+      event: AwsLambdaEvent,
+      responseStream: AWSLambdaResponseStream,
+      context: AWS.Context,
+    ) =>
+      handleLambdaEventWithStream(
+        fetchHandler,
+        event,
+        responseStream,
+        context,
+        this.options.trustProxy,
+      );
   }
 
   serve() {}

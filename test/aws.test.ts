@@ -3,6 +3,7 @@ import {
   awsRequest,
   awsResponseBody,
   awsResponseHeaders,
+  awsResultToResponse,
   awsStreamResponse,
   createMockContext,
   type AWSLambdaResponseStream,
@@ -11,6 +12,8 @@ import {
   handleLambdaEvent,
   handleLambdaEventWithStream,
   invokeLambdaHandler,
+  toLambdaHandler,
+  toLambdaStreamHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
 import type {
@@ -18,23 +21,6 @@ import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyResult,
 } from "aws-lambda";
-
-// Mock Headers.getAll method for testing
-class MockHeaders extends Headers {
-  private cookies: string[] = [];
-
-  constructor(init?: HeadersInit) {
-    super(init);
-  }
-
-  override getSetCookie(): string[] {
-    return this.cookies;
-  }
-
-  setCookie(cookie: string) {
-    this.cookies.push(cookie);
-  }
-}
 
 describe("[AWS Lambda] Request Utils", () => {
   describe("awsRequest", () => {
@@ -432,7 +418,7 @@ describe("[AWS Lambda] Request Utils", () => {
 
   describe("awsResponseHeaders", () => {
     test("should convert Response headers to AWS format", () => {
-      const headers = new MockHeaders({
+      const headers = new Headers({
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
         "X-Custom-Header": "custom-value",
@@ -455,30 +441,18 @@ describe("[AWS Lambda] Request Utils", () => {
     });
 
     test("should handle cookies for API Gateway compatibility", () => {
-      const headers = new MockHeaders({
-        "Content-Type": "application/json",
-      });
-      headers.setCookie("sessionId=abc123; HttpOnly; Secure");
-      headers.setCookie("theme=dark; Path=/");
+      // Use a real `Headers`: `set-cookie` therefore participates in header
+      // iteration, which is exactly the case the old `MockHeaders` masked.
+      const headers = new Headers({ "Content-Type": "application/json" });
+      headers.append("set-cookie", "sessionId=abc123; HttpOnly; Secure");
+      headers.append("set-cookie", "theme=dark; Path=/");
 
       const response = new Response('{"message": "success"}', {
         status: 200,
         headers,
       });
 
-      // Replace the response.headers with our MockHeaders instance
-      Object.defineProperty(response, "headers", {
-        value: headers,
-        writable: true,
-        configurable: true,
-      });
-
-      // Verify the mock is working
-      expect(headers.getSetCookie()).toEqual([
-        "sessionId=abc123; HttpOnly; Secure",
-        "theme=dark; Path=/",
-      ]);
-
+      // v1 (default: no event) -> cookies delivered via multiValueHeaders.
       const awsResponse = awsResponseHeaders(response);
 
       expect(awsResponse.cookies).toEqual([
@@ -488,10 +462,37 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(awsResponse.multiValueHeaders).toEqual({
         "set-cookie": ["sessionId=abc123; HttpOnly; Secure", "theme=dark; Path=/"],
       });
+      // Regression (F19): set-cookie must NOT also appear in `headers`, or API
+      // Gateway would merge both and send the last cookie twice.
+      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+    });
+
+    test("should not duplicate set-cookie in headers for v2 events (F19)", () => {
+      const headers = new Headers({ "Content-Type": "application/json" });
+      headers.append("set-cookie", "a=1");
+      headers.append("set-cookie", "b=2");
+
+      const response = new Response("ok", { status: 200, headers });
+
+      const v2Event: APIGatewayProxyEventV2 = {
+        version: "2.0",
+        routeKey: "GET /",
+        rawPath: "/",
+        rawQueryString: "",
+        headers: { host: "example.com" },
+        isBase64Encoded: false,
+        requestContext: { http: { method: "GET", path: "/" } } as any,
+      };
+
+      const awsResponse = awsResponseHeaders(response, v2Event);
+
+      expect(awsResponse.cookies).toEqual(["a=1", "b=2"]);
+      expect(awsResponse.multiValueHeaders).toBeUndefined();
+      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
     });
 
     test("should handle array headers by joining with commas", () => {
-      const headers = new MockHeaders();
+      const headers = new Headers();
       headers.set("Accept", "application/json");
       headers.append("Accept", "text/html");
       headers.append("Accept", "text/plain");
@@ -507,7 +508,7 @@ describe("[AWS Lambda] Request Utils", () => {
     });
 
     test("should handle null/undefined header values", () => {
-      const headers = new MockHeaders({
+      const headers = new Headers({
         "Valid-Header": "valid-value",
         "Null-Header": null as any,
         "Undefined-Header": undefined as any,
@@ -1145,11 +1146,10 @@ describe("[AWS Lambda] Request Utils", () => {
     test("should pass event to awsResponseHeaders for v2 format", async () => {
       const { mockStream, getMetadata } = createMockResponseStream();
 
-      const headers = new MockHeaders({ "Content-Type": "application/json" });
-      headers.setCookie("session=abc");
+      const headers = new Headers({ "Content-Type": "application/json" });
+      headers.append("set-cookie", "session=abc");
 
       const response = new Response("{}", { status: 200, headers });
-      Object.defineProperty(response, "headers", { value: headers });
 
       const v2Event: APIGatewayProxyEventV2 = {
         version: "2.0",
@@ -1165,6 +1165,9 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const metadata = getMetadata() as any;
       expect(metadata.cookies).toEqual(["session=abc"]);
+      // Regression (F19): the streaming prelude must not also carry set-cookie
+      // in `headers`.
+      expect(metadata.headers["set-cookie"]).toBeUndefined();
     });
   });
 
@@ -1454,6 +1457,187 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(
           metadata.headers["transfer-encoding"] || metadata.headers["content-length"],
         ).toBeTruthy();
+      });
+    });
+  });
+
+  describe("stabilization regressions", () => {
+    function v1Event(overrides: Partial<APIGatewayProxyEvent> = {}): APIGatewayProxyEvent {
+      return {
+        httpMethod: "GET",
+        path: "/",
+        headers: { host: "api.example.com" },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: {} as any,
+        resource: "",
+        queryStringParameters: null,
+        ...overrides,
+      };
+    }
+
+    test("F20: merges v1 multiValueHeaders without duplicating single headers", () => {
+      const request = awsRequest(
+        v1Event({
+          headers: { host: "api.example.com", "x-test": "b" },
+          multiValueHeaders: { "X-Test": ["a", "b"], host: ["api.example.com"] },
+        }),
+        createMockContext(),
+      );
+
+      // Both values are present (repeated header preserved) and the single-map
+      // entry is not appended a second time.
+      expect(request.headers.get("x-test")).toBe("a, b");
+      expect(request.headers.get("host")).toBe("api.example.com");
+    });
+
+    test("F21: compressed body is base64-encoded even for a text content-type", async () => {
+      const gzipped = Buffer.from([0x1f, 0x8b, 0x08, 0x00]);
+      const response = new Response(gzipped, {
+        status: 200,
+        headers: { "content-type": "text/html", "content-encoding": "gzip" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.isBase64Encoded).toBe(true);
+      expect(awsBody.body).toBe(gzipped.toString("base64"));
+    });
+
+    test("F21: identity content-encoding still uses utf8 for text", async () => {
+      const response = new Response("hello", {
+        status: 200,
+        headers: { "content-type": "text/plain", "content-encoding": "identity" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.body).toBe("hello");
+    });
+
+    test("F22: 204 handler round-trips through invokeLambdaHandler without throwing", async () => {
+      const handler = toLambdaHandler({
+        fetch: () => new Response(null, { status: 204 }),
+      });
+
+      const response = await invokeLambdaHandler(handler, new Request("https://x.example/"));
+
+      expect(response.status).toBe(204);
+      expect(response.body).toBeNull();
+    });
+
+    test("F22: awsResultToResponse passes null body for 304", () => {
+      const response = awsResultToResponse({ statusCode: 304, body: "" } as any);
+      expect(response.status).toBe(304);
+      expect(response.body).toBeNull();
+    });
+
+    test("F8: cookie round-trips once (no doubling)", async () => {
+      let seenCookie: string | null = null;
+      const handler = toLambdaHandler({
+        fetch: (req) => {
+          seenCookie = req.headers.get("cookie");
+          return new Response("ok");
+        },
+      });
+
+      await invokeLambdaHandler(
+        handler,
+        new Request("https://x.example/", { headers: { cookie: "a=1" } }),
+      );
+
+      expect(seenCookie).toBe("a=1");
+    });
+
+    test("F24: request.waitUntil is awaited before the invocation returns", async () => {
+      let done = false;
+      const fetchHandler = async (req: Request & { waitUntil?: (p: Promise<unknown>) => void }) => {
+        req.waitUntil?.(
+          new Promise<void>((resolve) =>
+            setTimeout(() => {
+              done = true;
+              resolve();
+            }, 10),
+          ),
+        );
+        return new Response("ok");
+      };
+
+      await handleLambdaEvent(fetchHandler as any, v1Event(), createMockContext());
+
+      expect(done).toBe(true);
+    });
+
+    test("F15: null headers throw a clear error", () => {
+      expect(() => awsRequest(v1Event({ headers: null as any }), createMockContext())).toThrow(
+        /headers/,
+      );
+    });
+
+    test("F15: GET with a body is treated as null-body instead of throwing", () => {
+      const request = awsRequest(
+        v1Event({ httpMethod: "GET", body: "should-be-dropped", isBase64Encoded: false }),
+        createMockContext(),
+      );
+      expect(request.body).toBeNull();
+    });
+
+    describe("F23: streaming path applies middleware/error", () => {
+      function createMockResponseStream() {
+        let metadata: unknown;
+        const mockWriter = {
+          write: vi.fn(() => true),
+          end: vi.fn(),
+          once: vi.fn(),
+        };
+        (globalThis as any).awslambda = {
+          HttpResponseStream: {
+            from: vi.fn((_stream: unknown, meta: unknown) => {
+              metadata = meta;
+              return mockWriter;
+            }),
+          },
+        };
+        return { mockStream: {} as AWSLambdaResponseStream, getMetadata: () => metadata };
+      }
+
+      afterEach(() => {
+        delete (globalThis as any).awslambda;
+      });
+
+      test("toLambdaStreamHandler runs middleware", async () => {
+        const { mockStream, getMetadata } = createMockResponseStream();
+
+        const handler = toLambdaStreamHandler({
+          middleware: [() => new Response("from-middleware", { status: 299 })],
+          fetch: () => new Response("from-fetch", { status: 200 }),
+        });
+
+        await handler(v1Event(), mockStream, createMockContext());
+
+        // The middleware short-circuited, proving it was wired into the
+        // streaming path (previously bypassed entirely).
+        expect((getMetadata() as any).statusCode).toBe(299);
+      });
+
+      test("toLambdaStreamHandler applies the error option on a thrown handler", async () => {
+        const { mockStream, getMetadata } = createMockResponseStream();
+
+        const handler = toLambdaStreamHandler({
+          error: () => new Response("handled", { status: 503 }),
+          fetch: () => {
+            throw new Error("boom");
+          },
+        });
+
+        await handler(v1Event(), mockStream, createMockContext());
+
+        expect((getMetadata() as any).statusCode).toBe(503);
       });
     });
   });

@@ -34,15 +34,27 @@ export function awsRequest(
   context: AWSContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
+  // Real API Gateway always sends a `headers` object; a null/non-object here
+  // means a malformed/hand-built event and would otherwise surface as an opaque
+  // `TypeError` deep inside header parsing.
+  if (!event.headers || typeof event.headers !== "object") {
+    throw new TypeError("[srvx] Invalid AWS Lambda event: `headers` must be an object.");
+  }
+
   // Resolve the immediate-peer address and trust decision once and pass them
   // down; both the URL and the client IP derivation need them.
   const sourceIp = awsEventIP(event);
   const trusted = isTrustedProxy(trustProxy, sourceIp);
 
+  // Per the fetch spec a GET/HEAD request cannot carry a body; passing one to
+  // `new Request` throws. Raw bytes stay reachable via `runtime.awsLambda.event`.
+  const method = awsEventMethod(event);
+  const hasBody = method !== "GET" && method !== "HEAD";
+
   const req = new Request(awsEventURL(event, trusted), {
-    method: awsEventMethod(event),
+    method,
     headers: awsEventHeaders(event),
-    body: awsEventBody(event),
+    body: hasBody ? awsEventBody(event) : undefined,
   }) as ServerRequest;
 
   req.runtime = {
@@ -129,11 +141,31 @@ function awsEventQuery(event: APIGatewayProxyEvent | APIGatewayProxyEventV2) {
 
 function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): Headers {
   const headers = new Headers();
+
+  // v1 (REST API) events carry repeated headers in `multiValueHeaders`; the
+  // single-valued `headers` map only keeps the last value for each key. Prefer
+  // the multi-value form and skip those keys in the single map to avoid
+  // duplicating a header that appears in both.
+  const multiValueHeaders = (event as APIGatewayProxyEvent).multiValueHeaders;
+  const covered = new Set<string>();
+  if (multiValueHeaders) {
+    for (const [key, values] of Object.entries(multiValueHeaders)) {
+      if (!values) continue;
+      covered.add(key.toLowerCase());
+      for (const value of values) {
+        if (value != null) {
+          headers.append(key, value);
+        }
+      }
+    }
+  }
+
   for (const [key, value] of Object.entries(event.headers)) {
-    if (value) {
+    if (value && !covered.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   }
+
   if ("cookies" in event && event.cookies) {
     for (const cookie of event.cookies) {
       headers.append("cookie", cookie);
@@ -160,14 +192,18 @@ export function awsResponseHeaders(
   response: Response,
   event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
 ): AWSResponseHeaders {
+  const cookies = response.headers.getSetCookie();
+
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
+    // `set-cookie` is delivered via `cookies` (v2) / `multiValueHeaders` (v1).
+    // Emitting it here too makes API Gateway merge both and send the last
+    // cookie a second time.
+    if (key === "set-cookie") continue;
     if (value) {
-      headers[key] = Array.isArray(value) ? value.join(",") : String(value);
+      headers[key] = value;
     }
   }
-
-  const cookies = response.headers.getSetCookie();
 
   if (cookies.length === 0) {
     return { headers };
@@ -193,7 +229,11 @@ export async function awsResponseBody(
   }
   const buffer = await toBuffer(response.body as any);
   const contentType = response.headers.get("content-type") || "";
-  return isTextType(contentType)
+  // A compressed body (e.g. `content-encoding: gzip`) is binary regardless of
+  // its content-type; running it through `toString("utf8")` mangles the bytes.
+  const contentEncoding = (response.headers.get("content-encoding") || "").trim().toLowerCase();
+  const isEncoded = contentEncoding !== "" && contentEncoding !== "identity";
+  return !isEncoded && isTextType(contentType)
     ? { body: buffer.toString("utf8") }
     : { body: buffer.toString("base64"), isBase64Encoded: true };
 }
@@ -299,12 +339,18 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
   const url = new URL(request.url);
 
   const headers: Record<string, string> = {};
+  const multiValueHeaders: Record<string, string[]> = {};
   const cookies: string[] = [];
   for (const [key, value] of request.headers) {
     if (key.toLowerCase() === "cookie") {
+      // Real v2 API Gateway events strip `cookie` from `headers` and carry it in
+      // `cookies`; keeping it in the header maps too would double it once
+      // `awsEventHeaders` re-appends `event.cookies` on the round trip.
       cookies.push(value);
+      continue;
     }
     headers[key] = value;
+    (multiValueHeaders[key] ??= []).push(value);
   }
 
   let body: string | undefined;
@@ -332,7 +378,7 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
     multiValueQueryStringParameters: parseMultiValueQuery(url.searchParams),
     pathParameters: undefined,
     stageVariables: undefined,
-    multiValueHeaders: Object.fromEntries([...request.headers].map(([k, v]) => [k, [v]])),
+    multiValueHeaders,
 
     // v2 (HTTP API) fields
     version: "2.0",
@@ -457,7 +503,13 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
 
   const statusCode = typeof result.statusCode === "number" ? result.statusCode : 200;
 
-  return new Response(body, {
+  // `new Response(body, ...)` throws for null-body statuses when `body` is a
+  // (even empty) string, which broke the documented local-testing round trip
+  // for any 204/304 handler.
+  const nullBody =
+    statusCode === 101 || statusCode === 204 || statusCode === 205 || statusCode === 304;
+
+  return new Response(nullBody ? null : body, {
     status: statusCode,
     headers,
   });

@@ -32,6 +32,17 @@ class GenericServer implements Server {
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
         waitUntil: { value: this.#wait.waitUntil },
+        runtime: { enumerable: true, value: { name: "generic" } },
+        ip: {
+          enumerable: true,
+          // The generic adapter has no native transport to read a peer address
+          // from, so `ip` is derived from `x-forwarded-for` when present.
+          // Configurable so a trustProxy setup can still override it.
+          configurable: true,
+          get() {
+            return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
+          },
+        },
       });
       return Promise.resolve(fetchHandler(request));
     };
