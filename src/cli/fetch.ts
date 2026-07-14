@@ -55,7 +55,10 @@ export async function cliFetch(
     fetchHandler = loaded.fetch;
   } else {
     stderr.write(`* Fetching remote URL: ${inputURL}\n`);
-    if (!URL?.canParse(inputURL)) {
+    // F44: `URL.canParse("localhost:3000/api")` is true (scheme "localhost:"),
+    // so only treat inputs with an explicit `scheme://` as absolute URLs;
+    // everything else (host, host:port, host/path) is a schemeless http host.
+    if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(inputURL)) {
       inputURL = `http${cliOpts.tls ? "s" : ""}://${inputURL}`;
     }
     fetchHandler = globalThis.fetch;
@@ -85,9 +88,11 @@ export async function cliFetch(
 
   // Build body
   let body: BodyInit | undefined;
+  let isStream = false;
   if (cliOpts.data !== undefined) {
     if (cliOpts.data === "@-") {
       // Read from stdin
+      isStream = true;
       body = new ReadableStream({
         async start(controller) {
           for await (const chunk of stdin) {
@@ -98,6 +103,7 @@ export async function cliFetch(
       });
     } else if (cliOpts.data.startsWith("@")) {
       // Read from file as stream
+      isStream = true;
       body = Readable.toWeb(createReadStream(cliOpts.data.slice(1))) as unknown as ReadableStream;
     } else {
       body = cliOpts.data;
@@ -110,11 +116,12 @@ export async function cliFetch(
     inputURL,
     `http${cliOpts.tls ? "s" : ""}://${cliOpts.host || cliOpts.hostname || "localhost"}`,
   );
-  const req = new Request(url, {
-    method,
-    headers,
-    body,
-  });
+  // F39: a streamed body (`-d @-` / `-d @file`) requires `duplex: "half"` on Node.
+  const reqInit: RequestInit & { duplex?: "half" } = { method, headers, body };
+  if (isStream) {
+    reqInit.duplex = "half";
+  }
+  const req = new Request(url, reqInit);
 
   // Verbose: print request info
   if (cliOpts.verbose) {

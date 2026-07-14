@@ -1,7 +1,16 @@
 // Colors support for terminal output
+// F58: honor the NO_COLOR convention (ANY non-empty value disables) and only
+// emit escape sequences to an interactive TTY (unless FORCE_COLOR is set).
 const noColor = /* @__PURE__ */ (() => {
-  const env = globalThis.process?.env ?? {};
-  return env.NO_COLOR === "1" || env.TERM === "dumb";
+  const proc = globalThis.process;
+  const env = proc?.env ?? {};
+  if (env.FORCE_COLOR) {
+    return false;
+  }
+  if (env.NO_COLOR || env.TERM === "dumb") {
+    return true;
+  }
+  return !proc?.stdout?.isTTY;
 })();
 
 const _c =
