@@ -204,12 +204,37 @@ describe("trustProxy client IP gating (Node)", () => {
     expect(body).toBe("1.2.3.4");
   });
 
-  test("trustProxy: true uses the leftmost X-Forwarded-For entry", async () => {
+  test("all hops trusted (trustProxy: true) -> leftmost X-Forwarded-For entry", async () => {
+    // Every address is trusted, so the outermost (leftmost) entry is the client,
+    // matching Express `trust proxy: true`.
     const port = await start({ trustProxy: true });
     const { body } = await rawRequest(port, {
       "X-Forwarded-For": "1.2.3.4, 10.0.0.1, 10.0.0.2",
     });
     expect(body).toBe("1.2.3.4");
+  });
+
+  test("hop-aware: rightmost untrusted entry is the client, not a spoofed prefix", async () => {
+    // Only the loopback peer is trusted. An attacker prepends `9.9.9.9`; the
+    // trusted proxy appends the attacker's real address `1.2.3.4`. Walking
+    // right-to-left, `1.2.3.4` is the first untrusted hop and wins — the old
+    // leftmost behavior would have returned the spoofed `9.9.9.9`.
+    const port = await start({ trustProxy: ["127.0.0.1", "::1"] });
+    const { body } = await rawRequest(port, {
+      "X-Forwarded-For": "9.9.9.9, 1.2.3.4",
+    });
+    expect(body).toBe("1.2.3.4");
+  });
+
+  test("untrusted peer -> X-Forwarded-For ignored entirely", async () => {
+    // The allowlist does not include the loopback peer, so the whole header is
+    // ignored and the real peer address is used.
+    const port = await start({ trustProxy: ["10.0.0.1"] });
+    const { body } = await rawRequest(port, {
+      "X-Forwarded-For": "1.2.3.4",
+    });
+    expect(body).not.toBe("1.2.3.4");
+    expect(body).toMatch(/127\.0\.0\.1|::1|::ffff:127\.0\.0\.1/);
   });
 
   test("falls back to peer address when X-Forwarded-For is absent", async () => {

@@ -408,6 +408,64 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.ip).toBe("10.0.0.1");
     });
 
+    test("hop-aware: rightmost untrusted X-Forwarded-For entry is the client", () => {
+      // The gateway `sourceIp` (10.0.0.1) is the nearest hop and is the only
+      // trusted address. An attacker prepends `9.9.9.9`; the gateway appends the
+      // real address `1.2.3.4`. Walking right-to-left, `1.2.3.4` wins — the old
+      // leftmost behavior would have returned the spoofed `9.9.9.9`.
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext(), ["10.0.0.1"]);
+
+      expect(request.ip).toBe("1.2.3.4");
+    });
+
+    test("hop-aware proto/host: only the trusted peer's appended entry is honored", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "real.example.com",
+          "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+          "x-forwarded-proto": "https, http",
+          "x-forwarded-host": "spoofed.example, forwarded.example",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      // Only the gateway (sourceIp) is trusted -> one hop -> the peer-appended
+      // (rightmost) proto/host entries win over the attacker-prepended ones.
+      const request = awsRequest(v1Event, createMockContext(), ["10.0.0.1"]);
+      const url = new URL(request.url);
+
+      expect(url.protocol).toBe("http:");
+      expect(url.host).toBe("forwarded.example");
+    });
+
     test("should handle path parameters in URL construction", () => {
       const v1Event: APIGatewayProxyEvent = {
         httpMethod: "GET",

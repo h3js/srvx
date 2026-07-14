@@ -1,6 +1,6 @@
 import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { isTrustedProxy, firstForwardedValue } from "../../_trust-proxy.ts";
+import { resolveClientIP, trustedHops } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
@@ -47,7 +47,8 @@ export const NodeRequest: {
     #ip?: string;
     #ipResolved = false;
     #remoteAddress?: string;
-    #trusted?: boolean;
+    #remoteResolved = false;
+    #hops?: number;
 
     constructor(ctx: NodeRequestContext) {
       this.#req = ctx.req;
@@ -66,15 +67,28 @@ export const NodeRequest: {
       return val instanceof NativeRequest;
     }
 
-    // Resolve the trust decision once: the peer address is fixed for the
-    // lifetime of the request, and both `ip` and `_url` need it. `isTrustedProxy`
-    // (and the `socket.remoteAddress` read) would otherwise run twice per request.
-    #resolveTrusted(): boolean {
-      if (this.#trusted === undefined) {
+    // Read the socket peer address once: it is the nearest hop, fixed for the
+    // lifetime of the request, and both `ip` and `_url` need it (the trust
+    // decision and hop walk key off it).
+    #remoteAddr(): string | undefined {
+      if (!this.#remoteResolved) {
+        this.#remoteResolved = true;
         this.#remoteAddress = this.#req.socket?.remoteAddress;
-        this.#trusted = isTrustedProxy(this.#trustProxy, this.#remoteAddress);
       }
-      return this.#trusted;
+      return this.#remoteAddress;
+    }
+
+    // Resolve the trusted hop count once: it gates `X-Forwarded-Proto`/`-Host`
+    // (in `NodeRequestURL`) and mirrors the client-IP walk here.
+    #resolveHops(): number {
+      if (this.#hops === undefined) {
+        this.#hops = trustedHops(
+          this.#trustProxy,
+          this.#remoteAddr(),
+          this.#req.headers["x-forwarded-for"],
+        );
+      }
+      return this.#hops;
     }
 
     get ip(): string | undefined {
@@ -84,17 +98,14 @@ export const NodeRequest: {
         return this.#ip;
       }
       this.#ipResolved = true;
-      const trusted = this.#resolveTrusted();
-      // Only honor `X-Forwarded-For` when the immediate peer is a trusted proxy;
-      // otherwise any client could forge its address. The leftmost entry is the
-      // original client as seen by the outermost trusted proxy.
-      if (trusted) {
-        const forwarded = firstForwardedValue(this.#req.headers["x-forwarded-for"]);
-        if (forwarded) {
-          return (this.#ip = forwarded);
-        }
-      }
-      return (this.#ip = this.#remoteAddress);
+      // Hop-aware: the client is the first `X-Forwarded-For` address (walking
+      // right-to-left from the peer) that is not a trusted proxy. Untrusted peer
+      // -> the header is ignored and the peer is the client.
+      return (this.#ip = resolveClientIP(
+        this.#trustProxy,
+        this.#remoteAddr(),
+        this.#req.headers["x-forwarded-for"],
+      ));
     }
 
     get method(): string {
@@ -107,7 +118,7 @@ export const NodeRequest: {
     get _url() {
       return (this.#url ||= new NodeRequestURL({
         req: this.#req,
-        trusted: this.#resolveTrusted(),
+        hops: this.#resolveHops(),
       }));
     }
 

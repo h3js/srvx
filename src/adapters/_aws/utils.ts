@@ -1,6 +1,6 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { isTrustedProxy, firstForwardedValue } from "../../_trust-proxy.ts";
+import { resolveClientIP, trustedHops, forwardedHopValue } from "../../_trust-proxy.ts";
 import type {
   APIGatewayProxyEvent,
   Context as AWSContext,
@@ -34,12 +34,14 @@ export function awsRequest(
   context: AWSContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
-  // Resolve the immediate-peer address and trust decision once and pass them
-  // down; both the URL and the client IP derivation need them.
+  // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
+  // count once (walking `X-Forwarded-For` right-to-left from it) and pass it
+  // down; both the URL and the client IP derivation are hop-aware.
   const sourceIp = awsEventIP(event);
-  const trusted = isTrustedProxy(trustProxy, sourceIp);
+  const forwardedFor = awsForwardedFor(event);
+  const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
-  const req = new Request(awsEventURL(event, trusted), {
+  const req = new Request(awsEventURL(event, hops), {
     method: awsEventMethod(event),
     headers: awsEventHeaders(event),
     body: awsEventBody(event),
@@ -50,9 +52,13 @@ export function awsRequest(
     awsLambda: { event, context },
   };
 
-  req.ip = awsEventClientIP(event, sourceIp, trusted);
+  req.ip = resolveClientIP(trustProxy, sourceIp, forwardedFor);
 
   return req;
+}
+
+function awsForwardedFor(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string | undefined {
+  return event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"];
 }
 
 function awsEventMethod(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string {
@@ -70,36 +76,18 @@ function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): strin
   );
 }
 
-/**
- * Resolve the client IP, preferring the leftmost `X-Forwarded-For` entry when
- * the immediate peer (the gateway `sourceIp`) is a trusted proxy.
- */
-function awsEventClientIP(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  sourceIp: string | undefined,
-  trusted: boolean,
-): string | undefined {
-  if (trusted) {
-    const forwarded = firstForwardedValue(
-      event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"],
-    );
-    if (forwarded) {
-      return forwarded;
-    }
-  }
-  return sourceIp;
-}
-
-function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, trusted: boolean): URL {
+function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, hops: number): URL {
   const path = (event as APIGatewayProxyEvent).path || (event as APIGatewayProxyEventV2).rawPath;
 
   const query = awsEventQuery(event);
 
-  // Only honor client-supplied `X-Forwarded-*` headers when the proxy is
-  // trusted; otherwise any client could spoof the host or protocol.
-  const forwardedHost = trusted
-    ? firstForwardedValue(event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"])
-    : undefined;
+  // Only honor client-supplied `X-Forwarded-*` headers when the peer is trusted
+  // (`hops > 0`); otherwise any client could spoof the host or protocol. `hops`
+  // selects the outermost trusted proxy's entry from a comma-joined chain.
+  const forwardedHost = forwardedHopValue(
+    event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"],
+    hops,
+  );
   const hostname =
     forwardedHost ||
     event.headers.host ||
@@ -108,9 +96,10 @@ function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, trust
     ".";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = trusted
-    ? firstForwardedValue(event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"])
-    : undefined;
+  const forwardedProto = forwardedHopValue(
+    event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"],
+    hops,
+  );
   const protocol = forwardedProto === "http" ? "http" : "https";
 
   return new URL(`${path}${query ? `?${query}` : ""}`, `${protocol}://${hostname}`);
