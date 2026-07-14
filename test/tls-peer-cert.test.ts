@@ -105,6 +105,21 @@ test("mtls() throws when TLS is not configured", () => {
   ).toThrow(expected);
 });
 
+test("mtls() accepts TLS configured via node server options", () => {
+  // The node adapter also reads cert/key straight from `options.node`, so the
+  // plugin must recognize that path as a valid HTTPS server (not throw).
+  expect(() =>
+    nodeServe(
+      fixture({
+        manual: true,
+        port: 0,
+        node: { cert: tls.cert, key: tls.key },
+        plugins: [mtls({ ca: tls.ca })],
+      }),
+    ),
+  ).not.toThrow();
+});
+
 test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
   // The native `Deno.serve` cannot expose client certificates, so the plugin must
   // fail loudly instead of silently leaving `request.tls` empty.

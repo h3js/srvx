@@ -1,5 +1,5 @@
 import type { NodeHttpHandler, Server, ServerHandler, ServerRequest } from "srvx";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import * as nodeHTTP from "node:http";
 import { resolve } from "node:path";
 import { EventEmitter } from "node:events";
@@ -104,9 +104,17 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
   // Guess entry if not provided
   let entry: string | undefined = opts.entry;
   if (entry) {
-    entry = resolve(opts.dir || ".", entry);
-    if (!existsSync(entry)) {
-      return { notFound: true };
+    // `file://` URLs are already absolute — resolving them as plain paths would
+    // mangle them into `$cwd/file:/...`. Only resolve plain filesystem paths.
+    if (entry.startsWith("file://")) {
+      if (!existsSync(fileURLToPath(entry))) {
+        return { notFound: true };
+      }
+    } else {
+      entry = resolve(opts.dir || ".", entry);
+      if (!existsSync(entry)) {
+        return { notFound: true };
+      }
     }
   } else {
     for (const defEntry of defaultEntries) {
