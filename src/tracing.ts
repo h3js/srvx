@@ -1,4 +1,5 @@
 import type { Server, ServerRequest, ServerPlugin, ServerMiddleware } from "./types.ts";
+import { kMiddlewareInterceptor, type MiddlewareInterceptor } from "./_middleware.ts";
 
 /**
  * @experimental Channel names, event types and config options may change in future releases.
@@ -54,23 +55,26 @@ export function tracingPlugin(opts: { middleware?: boolean; fetch?: boolean } = 
       };
     }
 
-    // Wrap middleware with tracing
+    // Trace middleware.
+    //
+    // Rather than snapshotting and rewrapping `server.options.middleware` here (at
+    // plugin time), install a per-middleware interceptor that runs at dispatch time
+    // over the *live* chain. Internal plugins (`trustProxy`, `error`, graceful
+    // shutdown) unshift their middleware after user plugins run, so a snapshot taken
+    // now would miss them and freeze stale indices. The interceptor sees the final
+    // chain: every middleware is traced and `index` reflects its real position.
     if (opts.middleware !== false) {
       const middlewareChannel = tracingChannel<RequestEvent, RequestEvent>("srvx.middleware");
-      const originalMiddleware = server.options.middleware;
-      const wrappedMiddleware: ServerMiddleware[] = originalMiddleware.map((handler, index) => {
+      const interceptor: MiddlewareInterceptor = (handler, index, request, next) => {
         const middleware = Object.freeze({ index, handler });
-        return (request, next) => {
-          return middlewareChannel.tracePromise(async () => await handler(request, next), {
-            request,
-            server,
-            middleware,
-          });
-        };
-      });
-
-      // Replace middleware array with wrapped versions
-      server.options.middleware.splice(0, server.options.middleware.length, ...wrappedMiddleware);
+        return middlewareChannel.tracePromise(async () => await handler(request, next), {
+          request: request as ServerRequest,
+          server,
+          middleware,
+        });
+      };
+      (server as { [kMiddlewareInterceptor]?: MiddlewareInterceptor })[kMiddlewareInterceptor] =
+        interceptor;
     }
   };
 }

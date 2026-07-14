@@ -280,7 +280,11 @@ export interface Server<Handler = ServerHandler> {
   serve(): void | Promise<Server<Handler>>;
 
   /**
-   * Returns a promise that resolves when the server is ready.
+   * Returns a promise that resolves when the server is listening and ready to accept connections.
+   *
+   * If listening has not been initiated yet — for example when the `manual` option is enabled and
+   * `serve()` has not been called — this resolves immediately with the (not-yet-listening) server.
+   * To guarantee the server is actually listening, call `serve()` and await its returned promise.
    */
   ready(): Promise<Server<Handler>>;
 
@@ -322,6 +326,7 @@ export interface ServerRuntimeContext {
    */
   deno?: {
     info: Deno.ServeHandlerInfo<Deno.NetAddr>;
+    server?: Deno.HttpServer;
   };
 
   /**

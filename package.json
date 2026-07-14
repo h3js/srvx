@@ -16,6 +16,7 @@
   "sideEffects": false,
   "types": "./dist/types.d.mts",
   "exports": {
+    "./package.json": "./package.json",
     "./deno": "./dist/adapters/deno.mjs",
     "./bun": "./dist/adapters/bun.mjs",
     "./node": "./dist/adapters/node.mjs",

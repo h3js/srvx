@@ -396,6 +396,59 @@ describe("tracing channels", () => {
     expect(events).toContain("fetch.end");
   });
 
+  it("should trace internal middleware with indices from the final chain", async () => {
+    // The `error` plugin unshifts its middleware *after* user plugins run, so the
+    // traced chain must reflect the final order: the internal middleware is traced
+    // at index 0 and the user middleware shifts to index 1.
+    const events: Array<{ name: string; index: number }> = [];
+
+    const middlewareChannel = tracingChannel("srvx.middleware");
+
+    const startHandler = (data: any) => {
+      events.push({ name: data.middleware.handler.name, index: data.middleware.index });
+    };
+
+    middlewareChannel.subscribe({
+      start: startHandler,
+      end: noop,
+      asyncStart: noop,
+      asyncEnd: noop,
+      error: noop,
+    });
+
+    cleanupFns.push(() => {
+      middlewareChannel.unsubscribe({
+        start: startHandler,
+        end: noop,
+        asyncStart: noop,
+        asyncEnd: noop,
+        error: noop,
+      });
+    });
+
+    const userMiddleware: ServerMiddleware = async (request, next) => next();
+    Object.defineProperty(userMiddleware, "name", { value: "user" });
+
+    const server = serve({
+      fetch: () => new Response("OK"),
+      middleware: [userMiddleware],
+      error: () => new Response("error", { status: 500 }),
+      plugins: [tracingPlugin()],
+      manual: true,
+    });
+
+    // The error plugin injected an extra (internal) middleware ahead of the user one.
+    expect(server.options.middleware).toHaveLength(2);
+
+    const request = new Request("http://localhost:3000/");
+    await server.fetch(request);
+
+    // Two middleware traced (internal + user), indices reflect the final chain.
+    expect(events.map((e) => e.index)).toEqual([0, 1]);
+    const user = events.find((e) => e.name === "user");
+    expect(user?.index).toBe(1);
+  });
+
   it("should provide result in asyncEnd events", async () => {
     const results: Array<any> = [];
 
