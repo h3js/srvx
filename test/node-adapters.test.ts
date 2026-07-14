@@ -239,6 +239,129 @@ describe("adapters", () => {
 
     expect(settled).not.toBe("hung");
   });
+
+  // F13: head/body split must use the FIRST CRLFCRLF, not the last, otherwise
+  // response bodies that themselves contain "\r\n\r\n" (multipart, proxied HTTP,
+  // binary) get silently truncated.
+  test("response body containing CRLFCRLF arrives intact", async () => {
+    const payload = "before\r\n\r\nafter\r\n\r\nend";
+    const bodyHandler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(payload);
+    };
+    const webHandler = toFetchHandler(bodyHandler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(payload);
+  });
+
+  // F14: null-body statuses (204/304/...) must not throw when constructing the
+  // web Response (which would surface as a 500).
+  test("null-body status 204 does not become a 500", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(204);
+      res.end();
+    };
+    const webHandler = toFetchHandler(handler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
+  test("conditional-GET 304 does not become a 500", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(304);
+      res.end();
+    };
+    const webHandler = toFetchHandler(handler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+  });
+
+  // F15: body listeners attached after an `await` (e.g. async middleware in
+  // front of express.json()) must still receive data + "end", and req.complete
+  // must become true.
+  test("late-attached body listeners still receive data and end", async () => {
+    const handler: NodeHttp1Handler = (req, res) => {
+      return (async () => {
+        // Defer attaching listeners past a microtask/tick.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const chunks: Uint8Array[] = [];
+        const body = await new Promise<string>((resolve) => {
+          req.on("data", (chunk) => chunks.push(chunk));
+          req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        });
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(JSON.stringify({ body, complete: req.complete }));
+      })();
+    };
+    const webHandler = toFetchHandler(handler);
+    const settled = await Promise.race([
+      Promise.resolve(
+        webHandler(new Request("http://localhost/", { method: "POST", body: "hello world" })),
+      ).then((r) => r.json()),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for body")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ body: "hello world", complete: true });
+  });
+
+  // F16: a large upload must apply backpressure rather than buffering the whole
+  // body in memory. A handler that defers reading (e.g. slow async middleware)
+  // must NOT cause the source to flood the internal buffer — with the source
+  // paused on `push() === false`, only about one highWaterMark of data can
+  // accumulate before reading resumes. Without the fix the full upload buffers.
+  test("large upload applies backpressure and arrives completely", async () => {
+    const chunkSize = 64 * 1024;
+    const chunk = "x".repeat(chunkSize);
+    const totalChunks = 32;
+    const expectedLength = chunkSize * totalChunks;
+
+    let bufferedBeforeReading = 0;
+    const handler: NodeHttp1Handler = (req, res) => {
+      return (async () => {
+        // Defer reading so an unthrottled source would have time to flood the
+        // internal buffer with the entire upload.
+        await new Promise((r) => setTimeout(r, 100));
+        bufferedBeforeReading = (req as any).readableLength ?? 0;
+        let received = 0;
+        for await (const c of req as any) {
+          received += (c as Uint8Array).length;
+        }
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(String(received));
+      })();
+    };
+    const webHandler = toFetchHandler(handler);
+
+    // Fast producer: enqueue everything up front without waiting.
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const data = new TextEncoder().encode(chunk);
+        for (let i = 0; i < totalChunks; i++) {
+          controller.enqueue(data);
+        }
+        controller.close();
+      },
+    });
+
+    const res = await webHandler(
+      new Request("http://localhost/", {
+        method: "POST",
+        body: source,
+        // @ts-expect-error duplex is required for a stream body
+        duplex: "half",
+      }),
+    );
+    expect(res.status).toBe(200);
+    // Full body arrives intact.
+    expect(Number(await res.text())).toBe(expectedLength);
+    // The source was throttled: far less than the full upload buffered while the
+    // handler was not reading. (Without the fix this equals expectedLength.)
+    expect(bufferedBeforeReading).toBeLessThan(expectedLength / 2);
+  });
 });
 
 describe("request signal", () => {
