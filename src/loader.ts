@@ -150,7 +150,7 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
         );
       } else if (/"\.(m|c)?tsx"/g.test(message)) {
         throw new Error(
-          `You need a compatible loader for JSX support (Deno, Bun or srvx --register jiti/register)`,
+          `You need a compatible loader for JSX support (Deno, Bun or srvx --import jiti/register)`,
           { cause: error },
         );
       }

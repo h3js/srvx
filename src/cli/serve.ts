@@ -32,11 +32,20 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     const { serveStatic } = await import("srvx/static");
     const { log } = await import("srvx/log");
 
+    // F43: an explicit `--static` pointing at a missing dir must error; the
+    // implicit `public` default may stay silent.
+    const explicitStatic = !!cliOpts.static;
     const staticDir = resolve(
       cliOpts.dir || (loaded.url ? dirname(fileURLToPath(loaded.url)) : "."),
       cliOpts.static || "public",
     );
-    cliOpts.static = existsSync(staticDir) ? staticDir : "";
+    if (existsSync(staticDir)) {
+      cliOpts.static = staticDir;
+    } else if (explicitStatic) {
+      throw new Error(`--static directory not found: ${staticDir}`);
+    } else {
+      cliOpts.static = "";
+    }
 
     if (loaded.notFound && !cliOpts.static) {
       process.send?.({ error: "no-entry" });
@@ -49,13 +58,23 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
       ...loaded.module,
     } as Partial<ServerOptions>;
 
+    // F42: only override the entry module's `tls` when CLI flags actually supply
+    // TLS. A bare `--tls` (no cert/key) must error rather than silently downgrade.
+    let tls = serverOptions.tls;
+    if (cliOpts.tls) {
+      if (!cliOpts.cert || !cliOpts.key) {
+        throw new Error("--tls requires both --cert and --key.");
+      }
+      tls = { cert: cliOpts.cert, key: cliOpts.key };
+    }
+
     printInfo(cliOpts, loaded);
     server = srvxServe({
       ...serverOptions,
       gracefulShutdown: !!cliOpts.prod,
       port: cliOpts.port ?? serverOptions.port,
       hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
-      tls: cliOpts.tls ? { cert: cliOpts.cert, key: cliOpts.key } : undefined,
+      tls,
       error: (error) => {
         console.error(error);
         return renderError(cliOpts, error);
@@ -91,9 +110,10 @@ function renderError(
   status = 500,
   title = "Server Error",
 ): Response {
-  let html = `<!DOCTYPE html><html><head><title>${title}</title></head><body>`;
+  const safeTitle = escapeHtml(title);
+  let html = `<!DOCTYPE html><html><head><title>${safeTitle}</title></head><body>`;
   if (cliOpts.prod) {
-    html += `<h1>${title}</h1><p>Something went wrong while processing your request.</p>`;
+    html += `<h1>${safeTitle}</h1><p>Something went wrong while processing your request.</p>`;
   } else {
     html += /* html */ `
     <style>
@@ -103,7 +123,9 @@ function renderError(
       code { font-family: monospace; }
       #error { display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; }
     </style>
-    <div id="error"><h1>${title}</h1><pre>${error instanceof Error ? error.stack || error.message : String(error)}</pre></div>
+    <div id="error"><h1>${safeTitle}</h1><pre>${escapeHtml(
+      error instanceof Error ? error.stack || error.message : String(error),
+    )}</pre></div>
     `;
   }
 
@@ -111,6 +133,19 @@ function renderError(
     status,
     headers: { "Content-Type": "text/html; charset=utf-8" },
   });
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+// F59: escape untrusted text before interpolating into the dev error page HTML.
+function escapeHtml(str: string): string {
+  return str.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
 }
 
 function printInfo(cliOpts: CLIOptions, loaded: Awaited<ReturnType<typeof loadServerEntry>>) {

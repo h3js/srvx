@@ -10,8 +10,19 @@ import { usage } from "./usage.ts";
 import { srvxMeta } from "./_meta.ts";
 
 export async function main(mainOpts: MainOptions): Promise<void> {
-  const args = process.argv.slice(2);
-  const cliOpts = parseArgs(args);
+  // F60: honor an explicit `args` array (used by tests); fall back to process.argv
+  const args = mainOpts.args ?? process.argv.slice(2);
+
+  let cliOpts: CLIOptions;
+  try {
+    cliOpts = parseArgs(args);
+  } catch (error) {
+    // F44: surface parse/entry-resolution problems as a one-line message + hint
+    const command = mainOpts.usage?.command || "srvx";
+    console.error(c.red((error as Error).message || String(error)));
+    console.error(c.gray(`Run \`${command} --help\` for usage.`));
+    process.exit(1);
+  }
 
   // Handle version flag
   if (cliOpts.version) {
@@ -22,11 +33,20 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   // Handle help flag
   if (cliOpts.help) {
     console.log(usage(mainOpts));
-    process.exit(cliOpts.help ? 0 : 1);
+    process.exit(0);
   }
+
+  // Resolve .env files (used by both serve and fetch modes)
+  const envFiles = [".env", cliOpts.prod ? ".env.production" : ".env.local"].filter((f) =>
+    existsSync(f),
+  );
 
   // Fetch mode
   if (cliOpts.mode === "fetch") {
+    // F44: load env before fetching (the entry/handler may rely on env vars)
+    for (const envFile of [...envFiles].reverse() /* overrides first */) {
+      process.loadEnvFile?.(envFile);
+    }
     try {
       const res = await cliFetch(cliOpts);
       process.exit(res.ok ? 0 : 22);
@@ -44,10 +64,6 @@ export async function main(mainOpts: MainOptions): Promise<void> {
   // Log versions
   console.log(c.gray([...versions(mainOpts), cliOpts.prod ? "prod" : "dev"].join(" · ")));
 
-  // Resolve .env files
-  const envFiles = [".env", cliOpts.prod ? ".env.production" : ".env.local"].filter((f) =>
-    existsSync(f),
-  );
   if (envFiles.length > 0) {
     console.log(
       `${c.gray(`Loading environment variables from ${c.magenta(envFiles.join(", "))}`)}`,
@@ -81,78 +97,69 @@ export async function main(mainOpts: MainOptions): Promise<void> {
 }
 
 function parseArgs(args: string[]): CLIOptions {
-  const pArg0 = args.find((a) => !a.startsWith("-"));
-  const mode = pArg0 === "fetch" || pArg0 === "curl" ? "fetch" : "serve";
-
-  const commonArgs = {
-    help: { type: "boolean" },
+  // Parse with a combined schema so option VALUES are never mistaken for the
+  // subcommand (F40). serve/fetch short flags don't collide, so one pass is safe.
+  const options = {
+    // --- Common flags ---
+    help: { type: "boolean", short: "h" }, // F41: -h is documented in usage
     version: { type: "boolean" },
     dir: { type: "string" },
     entry: { type: "string" },
     host: { type: "string" },
     hostname: { type: "string" },
     tls: { type: "boolean" },
+    url: { type: "string" },
+    // --- Serve mode ---
+    prod: { type: "boolean" },
+    port: { type: "string", short: "p" },
+    static: { type: "string", short: "s" },
+    import: { type: "string" },
+    cert: { type: "string" },
+    key: { type: "string" },
+    // --- Fetch mode ---
+    method: { type: "string", short: "X" },
+    request: { type: "string" }, // curl compatibility
+    header: { type: "string", multiple: true, short: "H" },
+    verbose: { type: "boolean", short: "v" },
+    data: { type: "string", short: "d" },
   } as const;
 
-  if (mode === "serve") {
-    // Serve mode
-    const { values, positionals } = parseNodeArgs({
-      args,
-      allowPositionals: true,
-      options: {
-        ...commonArgs,
-        url: { type: "string" },
-        prod: { type: "boolean" },
-        port: { type: "string", short: "p" },
-        static: { type: "string", short: "s" },
-        import: { type: "string" },
-        cert: { type: "string" },
-        key: { type: "string" },
-      },
-    });
-    if (positionals[0] === "serve") {
-      positionals.shift();
-    }
+  const { values, positionals } = parseNodeArgs({ args, allowPositionals: true, options });
 
-    // Backward compatibility: allow entry or dir as positional argument
-    const maybeEntryOrDir = positionals[0];
-    if (maybeEntryOrDir) {
-      if (values.entry || values.dir) {
-        throw new Error(
-          "Cannot specify entry or dir as positional argument when --entry or --dir is used!",
-        );
-      }
-      const stat = statSync(maybeEntryOrDir);
-      if (stat.isDirectory()) {
-        values.dir = maybeEntryOrDir;
-      } else {
-        values.entry = maybeEntryOrDir;
-      }
-    }
-
-    return { mode, ...values };
-  }
-
-  // Fetch mode
-  const { values, positionals } = parseNodeArgs({
-    args,
-    allowPositionals: true,
-    options: {
-      ...commonArgs,
-      url: { type: "string" },
-      method: { type: "string", short: "X" },
-      request: { type: "string" }, // curl compatibility
-      header: { type: "string", multiple: true, short: "H" },
-      verbose: { type: "boolean", short: "v" },
-      data: { type: "string", short: "d" },
-    },
-  });
-  if (positionals[0] === "fetch" || positionals[0] === "curl") {
+  // Detect mode from the first real positional (the subcommand), then drop it.
+  let mode: "serve" | "fetch" = "serve";
+  const sub = positionals[0];
+  if (sub === "fetch" || sub === "curl") {
+    mode = "fetch";
+    positionals.shift();
+  } else if (sub === "serve") {
     positionals.shift();
   }
-  const method = values.method || values.request;
-  const url = values.url || positionals[0] || "/";
-  return { mode, ...values, url, method };
+
+  if (mode === "fetch") {
+    const method = values.method || values.request;
+    const url = values.url || positionals[0] || "/";
+    return { mode, ...values, url, method };
+  }
+
+  // Serve mode: allow entry or dir as a positional argument
+  const maybeEntryOrDir = positionals[0];
+  if (maybeEntryOrDir) {
+    if (values.entry || values.dir) {
+      throw new Error("Cannot use a positional path together with --entry or --dir.");
+    }
+    // F44: turn a raw statSync ENOENT into a friendly message
+    if (!existsSync(maybeEntryOrDir)) {
+      throw new Error(`No such file or directory: ${maybeEntryOrDir}`);
+    }
+    if (statSync(maybeEntryOrDir).isDirectory()) {
+      values.dir = maybeEntryOrDir;
+    } else {
+      values.entry = maybeEntryOrDir;
+    }
+  }
+
+  return { mode, ...values };
 }
 
 async function startServer(cliOpts: CLIOptions) {
@@ -199,7 +206,9 @@ async function forkCLI(args: string[], runtimeArgs: string[]) {
   };
   process.on("exit", () => cleanup("SIGTERM"));
   process.on("SIGTERM", () => cleanup("SIGTERM", 143));
-  if (args.includes("--watch")) {
+  // F38: watch mode pushes `--watch` into runtimeArgs (not args), so check there;
+  // otherwise the SIGINT handler never installs and the child is orphaned.
+  if (runtimeArgs.includes("--watch")) {
     process.on("SIGINT" /* ctrl+c */, () => cleanup("SIGINT", 130));
   }
 }
