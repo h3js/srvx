@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import { describe, expect, test } from "vitest";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
@@ -568,3 +568,230 @@ describe("FastResponse header dedup", () => {
     expect(cl[0]).toEqual(["content-length", "5"]);
   });
 });
+
+// v1 stabilization: Node-adapter crash/corruption regressions.
+describe("node body crash regressions", () => {
+  // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async
+  // node handler that threw caused an unhandledRejection AND never settled (the
+  // request hung). It must reject like the middleware branch.
+  test("F1: async node handler that throws does not crash or hang", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown) => rejections.push(err);
+    process.on("unhandledRejection", onRejection);
+
+    const throwingHandler: NodeHttp1Handler = async () => {
+      throw new Error("boom");
+    };
+
+    const server = serve({
+      port: 0,
+      // Surface the callNodeHandler rejection as a clean 500 so we can assert it
+      // settled instead of hanging.
+      error: () => new Response("caught", { status: 500 }),
+      fetch: (webReq) => fetchNodeHandler(throwingHandler, webReq),
+    });
+    await server.ready();
+
+    try {
+      const res = await Promise.race([
+        fetch(server.url!),
+        new Promise<Response>((_, reject) =>
+          setTimeout(() => reject(new Error("request hung")), 3000),
+        ),
+      ]);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("caught");
+      // Let any (buggy) unhandledRejection flush before asserting the process survived.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      await server.close(true);
+    }
+  });
+
+  // F2: after the buffered fast path consumes the IncomingMessage, a second
+  // text()/json() re-attached data/end listeners to an ended stream and hung.
+  // It must reject with `TypeError: Body is unusable`.
+  test("F2: second body read rejects with TypeError instead of hanging", async () => {
+    let firstRead: string | undefined;
+    let secondReadOutcome: string | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        firstRead = await req.text();
+        secondReadOutcome = await Promise.race([
+          req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : "other-error"),
+          ),
+          new Promise<string>((r) => setTimeout(() => r("hung"), 2000)),
+        ]);
+        return new Response("ok");
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(res.status).toBe(200);
+    expect(firstRead).toBe("hello");
+    expect(secondReadOutcome).toBe("TypeError");
+    await server.close(true);
+  });
+
+  // F3: the `_request` getter wrapped the already-consumed stream in a native
+  // Request, throwing "... disturbed or locked" synchronously and poisoning
+  // bodyUsed / clone() / mode. These must all work after consumption.
+  test("F3: bodyUsed / clone() / mode work after body consumption", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const bodyUsedBefore = req.bodyUsed;
+        const text = await req.text();
+        const bodyUsedAfter = req.bodyUsed;
+
+        let cloneOk = true;
+        try {
+          req.clone();
+        } catch {
+          cloneOk = false;
+        }
+
+        let mode: string;
+        try {
+          mode = req.mode;
+        } catch {
+          mode = "THREW";
+        }
+
+        return Response.json({ text, bodyUsedBefore, bodyUsedAfter, cloneOk, mode });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      text: "hello",
+      bodyUsedBefore: false,
+      bodyUsedAfter: true,
+      cloneOk: true,
+      mode: "cors",
+    });
+    await server.close(true);
+  });
+
+  // GET/HEAD are always null-body per the fetch spec, regardless of what was on
+  // the wire and regardless of property-access order.
+  for (const order of ["text-first", "body-first"] as const) {
+    test(`GET with a body on the wire is null-body (${order})`, async () => {
+      const server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          const result: Record<string, unknown> = {};
+          if (order === "body-first") {
+            result.bodyNull = req.body === null;
+            result.text = await req.text();
+          } else {
+            result.text = await req.text();
+            result.bodyNull = req.body === null;
+          }
+          // FastResponse with a string body is content-length framed, which the
+          // raw parser below relies on.
+          return new FastResponse(JSON.stringify(result));
+        },
+      });
+      await server.ready();
+
+      // Send a GET with a body on the wire via a raw socket (fetch forbids it).
+      const u = new URL(server.url!);
+      const raw = await rawExchange(
+        Number(u.port),
+        u.hostname,
+        "GET / HTTP/1.1\r\n" +
+          `Host: ${u.hostname}\r\n` +
+          "Content-Length: 5\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "hello",
+      );
+      const responses = parseHttpResponses(raw);
+      expect(responses).toHaveLength(1);
+      expect(JSON.parse(responses[0].body.toString())).toEqual({ bodyNull: true, text: "" });
+      await server.close(true);
+    });
+  }
+
+  // F5: a TypedArray/DataView view of a larger buffer must send only the view's
+  // window. `Buffer.from(view.buffer)` sent the whole ArrayBuffer while
+  // content-length was the view length — wrong bytes out, stray bytes left in the
+  // keep-alive connection (corrupting the next pipelined response).
+  test("F5: DataView view body sends exact bytes and keeps the connection clean", async () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/view") {
+          // 4-byte view (values 3,4,5,6) of a 10-byte buffer.
+          const buffer = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).buffer;
+          const view = new DataView(buffer, 3, 4);
+          return new FastResponse(view);
+        }
+        return new FastResponse("second");
+      },
+    });
+    await server.ready();
+
+    const u = new URL(server.url!);
+    // Two pipelined keep-alive requests on one socket; the second closes it.
+    const raw = await rawExchange(
+      Number(u.port),
+      u.hostname,
+      `GET /view HTTP/1.1\r\nHost: ${u.hostname}\r\n\r\n` +
+        `GET /second HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+    );
+
+    const responses = parseHttpResponses(raw);
+    expect(responses).toHaveLength(2);
+    expect([...responses[0].body]).toEqual([3, 4, 5, 6]);
+    expect(responses[1].body.toString()).toBe("second");
+    await server.close(true);
+  });
+});
+
+// Raw HTTP/1.1 helpers: write `payload`, collect every byte until the server
+// closes the connection (driven by a `Connection: close` on the last request).
+function rawExchange(port: number, host: string, payload: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, host);
+    const chunks: Buffer[] = [];
+    socket.on("data", (d: Buffer) => chunks.push(d));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(Buffer.concat(chunks)));
+    socket.on("connect", () => socket.write(payload));
+    setTimeout(() => {
+      socket.destroy();
+      reject(new Error("rawExchange timed out"));
+    }, 3000).unref?.();
+  });
+}
+
+// Minimal content-length-framed response parser (sufficient for these fixtures).
+function parseHttpResponses(buf: Buffer): { headers: string; body: Buffer }[] {
+  const responses: { headers: string; body: Buffer }[] = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const headerEnd = buf.indexOf("\r\n\r\n", offset);
+    if (headerEnd === -1) break;
+    const headers = buf.toString("latin1", offset, headerEnd);
+    const clMatch = /content-length:\s*(\d+)/i.exec(headers);
+    const bodyStart = headerEnd + 4;
+    const len = clMatch ? Number(clMatch[1]) : 0;
+    responses.push({ headers, body: buf.subarray(bodyStart, bodyStart + len) });
+    offset = bodyStart + len;
+  }
+  return responses;
+}
