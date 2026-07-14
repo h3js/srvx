@@ -19,8 +19,6 @@ jobs:
   tests_node:
     runs-on: ubuntu-latest
     strategy:
-      # Report every Node version. Without this, the first failure cancels the
-      # others and hides whether a break is version-specific.
       fail-fast: false
       matrix:
         node-version: [22, 24, 26]
@@ -30,12 +28,7 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: "${{ matrix.node-version }}", cache: pnpm }
       - run: pnpm install
-      # `srvx` self-resolves to this package (see `resolutions`), whose exports
-      # map points into `dist/`. `src/loader.ts` and `src/cli/serve.ts` import
-      # "srvx/node" / "srvx/static" at runtime, so the suite needs a build.
       - run: pnpm build
-      # Run the whole suite. Deno/Bun suites are excluded here; they run in their
-      # own jobs against the real runtime.
       - run: pnpm vitest run --coverage --exclude '**/{deno,bun}*.test.ts' test/
       - uses: codecov/codecov-action@v3
         if: matrix.node-version == 24
@@ -50,8 +43,6 @@ jobs:
         with: { node-version: lts/*, cache: pnpm }
       # TODO: 2.7.13 broke writeHead headers; 2.7.14 broke fetch body reads.
       # Pinned to last known-good (2.7.12) until upstream stabilises.
-      # The `deno-latest` workflow re-tests this against the newest Deno on a
-      # schedule; when it goes green, restore setup-deno below and drop the pin.
       # - uses: denoland/setup-deno@v2
       - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/download/v2.7.12/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
       - run: pnpm install
