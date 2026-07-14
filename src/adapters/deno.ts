@@ -6,9 +6,10 @@ import {
   resolvePortAndHost,
   resolveTLSOptions,
   toNativeResponse,
+  reportUnhandledListenError,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
-import { gracefulShutdownPlugin } from "../_plugins.ts";
+import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
 import { trustProxyPlugin } from "../_trust-proxy.ts";
 import { limitRequestBody } from "../_body-limit.ts";
 
@@ -34,6 +35,8 @@ class DenoServer implements Server<DenoFetchHandler> {
 
   #listeningPromise?: Promise<void>;
   #listeningInfo?: { hostname: string; port: number };
+  #listenError?: Error;
+  #readyObserved = false;
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -44,6 +47,7 @@ class DenoServer implements Server<DenoFetchHandler> {
 
     trustProxyPlugin(this);
     gracefulShutdownPlugin(this);
+    errorPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -99,7 +103,11 @@ class DenoServer implements Server<DenoFetchHandler> {
     };
 
     if (!options.manual) {
-      this.serve();
+      // `serve()` never throws; a listen error surfaces via `ready()`. If the
+      // caller never awaits `ready()`, re-surface it (see node adapter).
+      this.serve().catch((error) => {
+        reportUnhandledListenError(error, () => this.#readyObserved);
+      });
     }
   }
 
@@ -109,20 +117,27 @@ class DenoServer implements Server<DenoFetchHandler> {
     }
     const onListenPromise = Promise.withResolvers<void>();
     this.#listeningPromise = onListenPromise.promise;
-    this.deno!.server = Deno.serve(
-      {
-        ...this.serveOptions,
-        onListen: (info) => {
-          this.#listeningInfo = info;
-          if (this.options.deno?.onListen) {
-            this.options.deno.onListen(info);
-          }
-          printListening(this.options, this.url);
-          onListenPromise.resolve();
+    try {
+      // Deno.serve throws EADDRINUSE (and other listen errors) synchronously.
+      // Capture it so serve() never throws and ready() rejects instead.
+      this.deno!.server = Deno.serve(
+        {
+          ...this.serveOptions,
+          onListen: (info) => {
+            this.#listeningInfo = info;
+            if (this.options.deno?.onListen) {
+              this.options.deno.onListen(info);
+            }
+            printListening(this.options, this.url);
+            onListenPromise.resolve();
+          },
         },
-      },
-      this.fetch,
-    );
+        this.fetch,
+      );
+    } catch (error) {
+      this.#listenError = error as Error;
+      onListenPromise.reject(error);
+    }
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
@@ -137,6 +152,10 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   ready(): Promise<Server> {
+    this.#readyObserved = true;
+    if (this.#listenError) {
+      return Promise.reject(this.#listenError);
+    }
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 

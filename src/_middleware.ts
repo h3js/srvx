@@ -3,9 +3,18 @@ import type { Server, ServerRequest, ServerHandler, ServerMiddleware } from "./t
 export function wrapFetch(server: Server): ServerHandler {
   const fetchHandler = server.options.fetch;
   const middleware = server.options.middleware || [];
+  // Initialize `request.context` once here (shared by every adapter) so the
+  // documented `request.context.user = ...` API works without each adapter
+  // having to set it. `??=` keeps any context an upstream layer already set.
   return middleware.length === 0
-    ? fetchHandler
-    : (request) => callMiddleware(request, fetchHandler, middleware, 0);
+    ? (request) => {
+        request.context ??= {};
+        return fetchHandler(request);
+      }
+    : (request) => {
+        request.context ??= {};
+        return callMiddleware(request, fetchHandler, middleware, 0);
+      };
 }
 
 function callMiddleware(

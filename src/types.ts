@@ -123,7 +123,7 @@ export interface ServerOptions {
    *
    * @default true (disabled in test and ci environments)
    */
-  gracefulShutdown?: boolean | { gracefulTimeout?: number; forceTimeout?: number };
+  gracefulShutdown?: boolean | { gracefulTimeout?: number };
 
   /**
    * Maximum allowed size (in bytes) for the request body.
@@ -277,7 +277,7 @@ export interface Server<Handler = ServerHandler> {
    * Start listening for incoming requests.
    * When `manual` option is enabled, this method needs to be called explicitly to begin accepting connections.
    */
-  serve(): void | Promise<Server<Handler>>;
+  serve(): Promise<Server<Handler>>;
 
   /**
    * Returns a promise that resolves when the server is ready.
@@ -347,12 +347,6 @@ export interface ServerRuntimeContext {
   };
 
   serviceWorker?: { event: FetchEvent };
-
-  netlify?: { context: any };
-
-  stormkit?: { event: any; context: any };
-
-  vercel?: { context: { waitUntil?: (promise: Promise<any>) => void } };
 }
 
 export interface ServerRequestContext {

@@ -30,6 +30,11 @@ export const NodeResponse: {
 
   const STATUS_CODES = globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
 
+  // Statuses that must have a null body (RFC 9110 §8.6 / Fetch spec null body
+  // status). Native `Response` throws for a non-null body with these; mirror
+  // that instead of silently emitting an illegal body + content-length.
+  const NULL_BODY_STATUS = new Set([101, 204, 205, 304]);
+
   class NodeResponse implements Partial<Response> {
     #body?: BodyInit | null;
     #init?: ResponseInit;
@@ -37,6 +42,10 @@ export const NodeResponse: {
     #response?: globalThis.Response;
 
     constructor(body?: BodyInit | null, init?: ResponseInit) {
+      const status = init?.status;
+      if (body != null && status != null && NULL_BODY_STATUS.has(status)) {
+        throw new TypeError(`Response constructor: Invalid response status code ${status}`);
+      }
       this.#body = body;
       this.#init = init;
     }

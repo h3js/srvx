@@ -6,6 +6,7 @@ import {
   printListening,
   resolvePortAndHost,
   createWaitUntil,
+  reportUnhandledListenError,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
@@ -53,6 +54,7 @@ class NodeServer implements Server {
 
   #listeningPromise?: Promise<void>;
   #listenError?: Error;
+  #readyObserved = false;
 
   #wait?: ReturnType<typeof createWaitUntil>;
 
@@ -138,7 +140,12 @@ class NodeServer implements Server {
     this.node.server = server;
 
     if (!options.manual) {
-      this.serve().catch(() => {});
+      // `serve()` never throws; a listen error surfaces via `ready()`. If the
+      // caller never awaits `ready()`, re-surface it so a dead server isn't left
+      // running silently (see reportUnhandledListenError).
+      this.serve().catch((error) => {
+        reportUnhandledListenError(error, () => this.#readyObserved);
+      });
     }
   }
 
@@ -187,6 +194,7 @@ class NodeServer implements Server {
   }
 
   ready(): Promise<Server> {
+    this.#readyObserved = true;
     if (this.#listenError) {
       return Promise.reject(this.#listenError);
     }

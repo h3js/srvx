@@ -51,7 +51,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
     }
   }
 
-  serve() {
+  serve(): Promise<Server<ServiceWorkerHandler>> {
     if (isBrowserWindow) {
       if (!navigator.serviceWorker) {
         throw new Error("Service worker is not supported in the current window.");
@@ -103,6 +103,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
         self.clients?.claim?.();
       });
     }
+    return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
   ready(): Promise<Server<ServiceWorkerHandler>> {

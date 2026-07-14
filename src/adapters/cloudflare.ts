@@ -53,11 +53,12 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
     }
   }
 
-  serve() {
+  serve(): Promise<Server<CF.ExportedHandlerFetchHandler>> {
     addEventListener("fetch", (event) => {
       // @ts-expect-error
       event.respondWith(this.fetch(event.request, {}, event));
     });
+    return Promise.resolve().then(() => this);
   }
 
   ready(): Promise<Server<CF.ExportedHandlerFetchHandler>> {

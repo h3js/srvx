@@ -89,7 +89,9 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
       handleLambdaEvent(fetchHandler, event, context, this.options.trustProxy);
   }
 
-  serve() {}
+  serve(): Promise<Server<AWSLambdaHandler>> {
+    return Promise.resolve().then(() => this);
+  }
 
   ready(): Promise<Server<AWSLambdaHandler>> {
     return Promise.resolve().then(() => this);

@@ -7,9 +7,10 @@ import {
   resolveTLSOptions,
   createWaitUntil,
   toNativeResponse,
+  reportUnhandledListenError,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
-import { gracefulShutdownPlugin } from "../_plugins.ts";
+import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
 import { trustProxyPlugin } from "../_trust-proxy.ts";
 
 export { FastURL } from "../_url.ts";
@@ -30,6 +31,8 @@ class BunServer implements Server<BunFetchHandler> {
   readonly waitUntil?: Server["waitUntil"];
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
+  #listenError?: Error;
+  #readyObserved = false;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -38,6 +41,7 @@ class BunServer implements Server<BunFetchHandler> {
 
     trustProxyPlugin(this);
     gracefulShutdownPlugin(this);
+    errorPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -98,13 +102,24 @@ class BunServer implements Server<BunFetchHandler> {
     };
 
     if (!options.manual) {
-      this.serve();
+      // `serve()` never throws; a listen error surfaces via `ready()`. If the
+      // caller never awaits `ready()`, re-surface it (see node adapter).
+      this.serve().catch((error) => {
+        reportUnhandledListenError(error, () => this.#readyObserved);
+      });
     }
   }
 
   serve(): Promise<this> {
     if (!this.bun!.server) {
-      this.bun!.server = Bun.serve(this.serveOptions!);
+      try {
+        // Bun.serve throws EADDRINUSE (and other listen errors) synchronously.
+        // Capture it so serve() never throws and ready() rejects instead.
+        this.bun!.server = Bun.serve(this.serveOptions!);
+      } catch (error) {
+        this.#listenError = error as Error;
+        return Promise.reject(error);
+      }
     }
     printListening(this.options, this.url);
     return Promise.resolve(this);
@@ -125,6 +140,10 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   ready(): Promise<this> {
+    this.#readyObserved = true;
+    if (this.#listenError) {
+      return Promise.reject(this.#listenError);
+    }
     return Promise.resolve(this);
   }
 

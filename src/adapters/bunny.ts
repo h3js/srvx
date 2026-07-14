@@ -65,17 +65,18 @@ class BunnyServer implements Server {
     }
   }
 
-  serve() {
+  serve(): Promise<Server> {
     // Check if running in Bunny runtime
     if (typeof Bunny !== "undefined" && Bunny.v1?.serve) {
       // Prevent multiple calls to serve, mostly for Bunny
-      if (this._started) return;
+      if (this._started) return Promise.resolve(this);
       this._started = true;
 
       Bunny.v1.serve(this.fetch);
     } else {
       throw new Error("[srvx] Bunny runtime not detected.");
     }
+    return Promise.resolve(this);
   }
 
   ready(): Promise<Server> {

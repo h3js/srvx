@@ -17,8 +17,6 @@ import { WebServerResponse } from "./response.ts";
  * Otherwise, new Node.js IncomingMessage and ServerResponse objects are created and linked to a custom Duplex stream that bridges the Fetch API streams with Node.js streams.
  *
  * The handler is invoked with these objects, and the response is constructed from the ServerResponse once it is finished.
- *
- * @experimental Behavior might be unstable.
  */
 export async function fetchNodeHandler(
   handler: NodeHttpHandler,

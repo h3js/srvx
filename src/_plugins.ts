@@ -24,7 +24,7 @@ export const gracefulShutdownPlugin: ServerPlugin = (server) => {
     return;
   }
   const gracefulTimeout =
-    config === true || !config?.gracefulTimeout
+    config === true || config?.gracefulTimeout == null
       ? Number.parseInt(process.env.SERVER_SHUTDOWN_TIMEOUT || "") || 5
       : config.gracefulTimeout;
 

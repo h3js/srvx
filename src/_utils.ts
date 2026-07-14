@@ -134,6 +134,30 @@ interface NodeResponseLike {
   _response?: Response;
 }
 
+/**
+ * Surface a listen error (e.g. `EADDRINUSE`) that would otherwise be lost.
+ *
+ * Under the v1 contract `serve()` never throws and `ready()` rejects on a listen
+ * failure. But when the server is auto-started (non-`manual`) and the caller
+ * never awaits `ready()`, a failed listen would silently leave a live process
+ * with a dead server. To avoid that, this schedules the error as an unhandled
+ * promise rejection (Node's default handler then reports/aborts) unless
+ * `isObserved()` reports that `ready()` already claimed it.
+ *
+ * The check is deferred to a macrotask so a synchronous `await server.ready()`
+ * right after `serve()` marks the error observed first (no spurious report).
+ */
+export function reportUnhandledListenError(error: Error, isObserved: () => boolean): void {
+  const timer = globalThis.setTimeout?.(() => {
+    if (!isObserved()) {
+      // No one awaited ready(): re-surface as an unhandled rejection so the
+      // failure is visible instead of leaving a dead server behind.
+      Promise.reject(error);
+    }
+  }, 0);
+  (timer as { unref?: () => void })?.unref?.();
+}
+
 export function createWaitUntil() {
   const promises = new Set<Promise<any> | PromiseLike<any>>();
   return {

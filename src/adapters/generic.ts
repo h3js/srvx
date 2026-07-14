@@ -37,7 +37,9 @@ class GenericServer implements Server {
     };
   }
 
-  serve(): void {}
+  serve(): Promise<Server> {
+    return Promise.resolve(this);
+  }
 
   ready(): Promise<Server> {
     return Promise.resolve(this);

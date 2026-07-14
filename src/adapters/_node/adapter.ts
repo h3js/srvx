@@ -47,8 +47,6 @@ export function toNodeHandler(
 
 /**
  * Converts a Node.js HTTP handler into a Fetch API handler.
- *
- * @experimental Behavior might be unstable and won't work in Bun and Deno currently (tracker: https://github.com/h3js/srvx/issues/132)
  */
 export function toFetchHandler(handler: NodeHttpHandler & AdapterMeta): FetchHandler & AdapterMeta {
   if (handler.__fetchHandler) {
