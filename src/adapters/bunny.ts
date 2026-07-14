@@ -44,7 +44,15 @@ class BunnyServer implements Server {
 
     const fetchHandler = wrapFetch(this);
 
-    const waitUntil = (this.waitUntil = (p: Promise<unknown>) => Bunny.unstable?.waitUntil?.(p));
+    const waitUntil = (this.waitUntil = (p: Promise<unknown>) => {
+      // `Bunny` is a bare global that only exists inside the Bunny runtime.
+      // Referencing it directly (even with optional chaining) throws a
+      // `ReferenceError` when the adapter runs elsewhere (e.g. `manual: true`
+      // in tests or another runtime), so guard with a `typeof` check first.
+      if (typeof Bunny !== "undefined") {
+        Bunny.unstable?.waitUntil?.(p);
+      }
+    });
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
