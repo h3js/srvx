@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { connect, type AddressInfo } from "node:net";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import {
@@ -759,6 +759,190 @@ describe("node body crash regressions", () => {
     expect([...responses[0].body]).toEqual([3, 4, 5, 6]);
     expect(responses[1].body.toString()).toBe("second");
     await server.close(true);
+  });
+});
+
+// v1 stabilization: Node-adapter T3 correctness batch.
+describe("node T3 correctness", () => {
+  const headerPairs = (headers: string[]) => {
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      pairs.push([headers[i], headers[i + 1]]);
+    }
+    return pairs;
+  };
+
+  // A streaming body for a HEAD request must be cancelled immediately, not
+  // pumped to completion (an unbounded SSE stream would pump forever).
+  test("HEAD cancels a streaming body instead of pumping it", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream({
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new TextEncoder().encode("data\n"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(stream);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    // Let the cancellation settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cancelled).toBe(true);
+    // The stream was cancelled up front rather than pumped.
+    expect(pulls).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // statusText defaults to the spec's empty reason phrase, not Node's phrase.
+  test("statusText defaults to empty string, not Node's reason phrase", () => {
+    expect(new FastResponse("x", { status: 200 }).statusText).toBe("");
+    expect(new FastResponse("x", { status: 404 }).statusText).toBe("");
+    expect(new FastResponse("x", { status: 200, statusText: "Custom" }).statusText).toBe("Custom");
+  });
+
+  // An empty-string body still gets the implicit text content-type + length 0,
+  // matching native Response("").
+  test("empty-string body keeps default content-type and content-length", () => {
+    const { headers } = new FastResponse("")._toNodeResponse();
+    const pairs = headerPairs(headers);
+    expect(pairs).toContainEqual(["content-type", "text/plain; charset=UTF-8"]);
+    expect(pairs).toContainEqual(["content-length", "0"]);
+
+    // Sanity: a native Response agrees on the content-type.
+    expect(new Response("").headers.get("content-type")).toBe("text/plain;charset=UTF-8");
+  });
+
+  // text()/json() on a locked/disturbed body stream must reject, not throw
+  // synchronously.
+  test("text() on a locked body stream rejects instead of throwing", async () => {
+    let outcome = "unset";
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        // Disturb the body stream directly (bypassing srvx's own bodyUsed
+        // tracking) so text() hits the `new Response(stream)` path with a
+        // locked/disturbed stream.
+        const reader = req.body!.getReader();
+        await reader.cancel();
+        outcome = await req.text().then(
+          () => "resolved",
+          (error) => (error instanceof TypeError ? "TypeError" : "other-error"),
+        );
+        return new Response(outcome);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.text()).toBe("TypeError");
+    await server.close(true);
+  });
+
+  // A headers reference taken before `_request` materialization must stay live.
+  test("headers reference stays live across _request materialization", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const h = req.headers;
+        // Force materialization of the underlying native Request.
+        void req._request;
+        h.set("x-added-after", "1");
+        return Response.json({
+          sameIdentity: req.headers === h,
+          viaGetter: req.headers.get("x-added-after"),
+          viaRef: h.get("x-added-after"),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(await res.json()).toEqual({
+      sameIdentity: true,
+      viaGetter: "1",
+      viaRef: "1",
+    });
+    await server.close(true);
+  });
+
+  // A synchronous send failure (e.g. an invalid header value hitting writeHead)
+  // must be logged for diagnostics (unless silenced) and returned as a bare 500
+  // without leaking details to the client.
+  test("send error is logged and returns a bare 500", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = serve({
+      port: 0,
+      fetch() {
+        // An invalid header value throws synchronously inside writeHead().
+        return new FastResponse("body", { headers: [["x-bad", "bad\r\ninjected"]] });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe(""); // no error detail leaked to the client
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    await server.close(true);
+  });
+
+  test("send error is not logged when the server is silent", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = serve({
+      port: 0,
+      silent: true,
+      fetch() {
+        return new FastResponse("body", { headers: [["x-bad", "bad\r\ninjected"]] });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    await server.close(true);
+  });
+
+  // The synthetic IncomingMessage built for the web->node bridge must expose
+  // httpVersion / rawHeaders (morgan's :http-version, keep-alive logic).
+  test("synthetic IncomingMessage exposes httpVersion and rawHeaders", async () => {
+    const handler: NodeHttp1Handler = (req, res) => {
+      const idx = req.rawHeaders.findIndex((h) => h.toLowerCase() === "x-test");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          httpVersion: req.httpVersion,
+          major: req.httpVersionMajor,
+          minor: req.httpVersionMinor,
+          rawXTestValue: idx === -1 ? null : req.rawHeaders[idx + 1],
+        }),
+      );
+    };
+
+    const res = await fetchNodeHandler(
+      handler,
+      new Request("http://localhost/", { headers: { "x-test": "abc" } }),
+    );
+    expect(await res.json()).toMatchObject({
+      httpVersion: "1.1",
+      major: 1,
+      minor: 1,
+      rawXTestValue: "abc",
+    });
   });
 });
 

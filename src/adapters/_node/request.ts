@@ -133,10 +133,21 @@ export const NodeRequest: {
     }
 
     get headers(): Headers {
+      // Return the srvx-side Headers object whenever it exists, even after the
+      // native Request has materialized. Materializing `_request` always reads
+      // `this.headers` (so `#headers` is populated) but the native constructor
+      // copies the entries into its own Headers instance. Switching the getter
+      // to `this.#request.headers` there would leave a reference taken earlier
+      // (`const h = req.headers; req._request; h.set(...)`) pointing at a now-
+      // detached object whose mutations are invisible. Keeping `#headers`
+      // canonical keeps those references live.
+      if (this.#headers) {
+        return this.#headers;
+      }
       if (this.#request) {
         return this.#request.headers;
       }
-      return (this.#headers ||= new NodeRequestHeaders(this.#req));
+      return (this.#headers = new NodeRequestHeaders(this.#req));
     }
 
     get _abortController() {
@@ -232,7 +243,14 @@ export const NodeRequest: {
       }
       this.#bodyUsed = true;
       if (this.#bodyStream !== undefined) {
-        return new Response(this.#bodyStream).text();
+        // `new Response(stream)` throws *synchronously* if the stream is already
+        // locked/disturbed (e.g. a consumer took `req.body` and read it
+        // directly). Surface that as a rejected promise, matching native fetch.
+        try {
+          return new Response(this.#bodyStream).text();
+        } catch (error) {
+          return Promise.reject(error);
+        }
       }
       return this.#readBuffered().then((buf) => buf.toString());
     }
@@ -250,7 +268,12 @@ export const NodeRequest: {
       }
       this.#bodyUsed = true;
       if (this.#bodyStream !== undefined) {
-        return new Response(this.#bodyStream).json();
+        // See text(): a locked/disturbed stream must reject, not throw.
+        try {
+          return new Response(this.#bodyStream).json();
+        } catch (error) {
+          return Promise.reject(error);
+        }
       }
       // Parse in a single continuation (readBody -> parse) instead of going
       // through text() — one less promise + microtask hop per body read.
@@ -274,7 +297,9 @@ export const NodeRequest: {
           // @ts-expect-error Undici specific
           duplex: body ? "half" : undefined,
         });
-        this.#headers = undefined;
+        // Keep `#headers` so `get headers()` returns the same object identity
+        // before and after materialization (see the note there). The native
+        // Request holds its own copy; the srvx-side object remains canonical.
         this.#bodyStream = undefined;
       }
 

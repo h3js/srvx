@@ -361,14 +361,26 @@ export interface ServerRequestContext {
 
 export interface ServerRequest extends Request {
   /**
-   * Access to Node.js native instance of request.
+   * The underlying web-standard `Request` backing this request.
+   *
+   * On the Node.js adapter `ServerRequest` is a lazy wrapper that only
+   * materializes a full web `Request` (undici's implementation) when needed;
+   * `_request` exposes that instance. On web runtimes it is the native
+   * `Request`. It is **not** the Node.js `IncomingMessage` — reach that via
+   * `runtime.node.req`.
+   *
+   * Supported API. The underscore is legacy naming, not a privacy marker; its
+   * shape is frozen for the v1 semver guarantee.
    *
    * See https://srvx.h3.dev/guide/node#noderequest
    */
   _request?: Request;
 
   /**
-   * Access to the parsed URL
+   * Access to the parsed URL of this request.
+   *
+   * Supported API. The underscore is legacy naming, not a privacy marker; its
+   * shape is frozen for the v1 semver guarantee.
    */
   _url?: URL;
 

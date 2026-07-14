@@ -28,8 +28,6 @@ export const NodeResponse: {
 } = /* @__PURE__ */ (() => {
   const NativeResponse = globalThis.Response;
 
-  const STATUS_CODES = globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
-
   class NodeResponse implements Partial<Response> {
     #body?: BodyInit | null;
     #init?: ResponseInit;
@@ -50,9 +48,11 @@ export const NodeResponse: {
     }
 
     get statusText(): string {
-      return (
-        this.#response?.statusText || this.#init?.statusText || STATUS_CODES[this.status] || ""
-      );
+      // Default to the spec's empty reason phrase (matching native `Response`,
+      // Bun and Deno) rather than Node's `STATUS_CODES` phrase (e.g. "OK"). Node
+      // still fills in a reason phrase on the wire when we pass "" to
+      // `writeHead`.
+      return this.#response?.statusText || this.#init?.statusText || "";
     }
 
     get headers(): Headers {
@@ -119,7 +119,10 @@ export const NodeResponse: {
       let contentLength: string | number | undefined | null;
       if (this.#response) {
         body = this.#response.body;
-      } else if (this.#body) {
+      } else if (this.#body != null) {
+        // `!= null` (not a truthy check): an empty-string body is falsy but must
+        // still receive the implicit `text/plain` content-type and a
+        // `content-length: 0`, matching native `Response("")`.
         if (this.#body instanceof ReadableStream) {
           body = this.#body;
         } else if (typeof this.#body === "string") {
@@ -187,7 +190,9 @@ export const NodeResponse: {
       if (contentType && !hasContentTypeHeader) {
         headers.push("content-type", contentType);
       }
-      if (contentLength && !hasContentLength) {
+      // `!= null` so a computed `content-length: 0` (e.g. an empty-string body)
+      // is emitted, matching native `Response`.
+      if (contentLength != null && !hasContentLength) {
         headers.push("content-length", String(contentLength));
       }
 
