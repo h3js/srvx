@@ -15,19 +15,26 @@ export type URLInit = {
 // - backslashes (rewritten to `/` for special schemes)
 // - fragment delimiter (#) which the fast path does not split on
 // - path percent-encode set chars: ^ " < > ` { }
+// - control chars, space, and DEL (\x00-\x20, \x7f)
 // - non-ASCII characters
-// (Control chars and space are rejected by Node's HTTP parser, so unreachable.)
+// (HTTP/1's parser rejects control chars and space, but the Node adapter also
+// serves HTTP/2, where a raw `:path` reaches the handler verbatim, so they must
+// trigger normalization too \u2014 native percent-encodes/strips them.)
 const _needsNormRE =
-  /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^#"<>{}`\x80-\uffff]/i;
+  // oxlint-disable-next-line no-control-regex -- control chars/DEL are intentional (HTTP/2-reachable)
+  /(?:(?:^|\/)(?:\.|\.\.|%2e|%2e\.|\.%2e|%2e%2e)(?:\/|$))|[\\^#"<>{}`\x00-\x20\x7f-\uffff]/i;
 
 // Query percent-encode set chars the WHATWG URL parser rewrites but the verbatim
 // fast path would keep raw. Native percent-encodes `" ' < >` in the query (note
 // this set is narrower than the path set: `` ` `` `{` `}` are NOT encoded in the
 // query); `#` starts a fragment the fast path must not fold into search. When any
 // appears in the query \u2014 or, for a raw origin-form string, anywhere (`" < >` also
-// need encoding in the path) \u2014 we deopt to native parsing.
-// (Control chars and space are rejected by Node's HTTP parser, so unreachable.)
-const _searchNeedsNormRE = /[#"'<>]/;
+// need encoding in the path) \u2014 we deopt to native parsing. Over HTTP/2 (also
+// served by the Node adapter) control chars, space, and DEL reach the handler
+// raw, so the class covers `\x00-\x20` and `\x7f-\uffff` (DEL + all non-ASCII)
+// too \u2014 native percent-encodes/strips these.
+// oxlint-disable-next-line no-control-regex -- control chars/DEL are intentional (HTTP/2-reachable)
+const _searchNeedsNormRE = /[#"'<>\x00-\x20\x7f-\uffff]/;
 
 /**
  * URL wrapper with fast paths to access to the following props:
@@ -61,7 +68,10 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
         if (typeof url === "string") {
           const isOriginForm = url[0] === "/";
           if (isOriginForm && !_searchNeedsNormRE.test(url)) {
-            this.#href = url;
+            // Store a full absolute href (scheme + host) so `#getPos()` finds
+            // `://` and the getters resolve against `http://localhost` semantics,
+            // matching the `URLInit` and deopt paths below.
+            this.#href = `http://localhost${url}`;
           } else {
             // Absolute-form, or a target with a fragment (#) / query percent-encode
             // set chars (" ' < >) that need full parsing to match native.

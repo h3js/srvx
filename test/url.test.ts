@@ -54,6 +54,79 @@ describe("FastURL", () => {
     expect(url.searchParams).toEqual(new URLSearchParams("?search"));
   });
 
+  describe("origin-form string (bare path)", () => {
+    // Regression (F12): `new FastURL("/foo?x=1")` is a documented fast path.
+    // It must resolve against `http://localhost` semantics (like the adapter's
+    // URLInit path) instead of deopting to `new URL("/foo?x=1")` with no base,
+    // which throws `TypeError: Invalid URL`. Getters must match native both
+    // before and after a mutation-triggered deopt.
+    const cases = ["/foo?x=1", "/", "/a/b/c", "/p?a=1&b=2", "/only-path"] as const;
+
+    for (const input of cases) {
+      test(`FastURL "${input}" matches native`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.searchParams.toString(), ".searchParams").toBe(std.searchParams.toString());
+        expect(url.href, ".href").toBe(std.href);
+      });
+
+      test(`FastURL "${input}" stays consistent after deopt`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        void url.hostname; // force deopt to native URL
+        expect(url.hostname, ".hostname").toBe("localhost");
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.href, ".href").toBe(std.href);
+      });
+    }
+  });
+
+  describe("HTTP/2-reachable chars (control, space, DEL, non-ASCII)", () => {
+    // Regression (F33): the normalization regexes assumed control chars and
+    // space are rejected by the HTTP parser — true for HTTP/1, FALSE over
+    // HTTP/2 which the Node adapter serves. A raw `:path` like `/p?q=é` reaches
+    // the handler verbatim; native URL percent-encodes/strips these, so the
+    // fast path must deopt to match — both before and after a later deopt.
+    const chars = {
+      "é (non-ASCII)": "é",
+      "DEL (\\x7f)": "\x7f",
+      space: " ",
+    };
+
+    for (const [name, ch] of Object.entries(chars)) {
+      for (const input of [`/a${ch}b`, `/p?x=${ch}y`]) {
+        test(`FastURL string ${name} in "${JSON.stringify(input)}" matches native`, () => {
+          const std = new URL(`http://localhost${input}`);
+          // sanity: native did rewrite the raw char
+          expect(std.href).not.toBe(`http://localhost${input}`);
+
+          const url = new FastURL(input);
+          expect(url.pathname, ".pathname").toBe(std.pathname);
+          expect(url.search, ".search").toBe(std.search);
+          expect(url.href, ".href").toBe(std.href);
+          expect(url.searchParams.toString(), ".searchParams").toBe(std.searchParams.toString());
+        });
+
+        test(`NodeRequestURL ${name} in "${JSON.stringify(input)}" matches native (before & after deopt)`, () => {
+          const std = new URL(`http://localhost${input}`);
+          const url = new NodeRequestURL({
+            req: { url: input, headers: { host: "localhost" } } as any,
+          });
+          expect(url.pathname, ".pathname").toBe(std.pathname);
+          expect(url.search, ".search").toBe(std.search);
+          expect(url.href, ".href").toBe(std.href);
+          void url.hostname; // force deopt to native URL
+          expect(url.pathname, ".pathname (deopt)").toBe(std.pathname);
+          expect(url.search, ".search (deopt)").toBe(std.search);
+          expect(url.href, ".href (deopt)").toBe(std.href);
+        });
+      }
+    }
+  });
+
   describe("WPT tests", () => {
     for (const t of urlTests) {
       if (typeof t === "string") {
