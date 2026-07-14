@@ -13,7 +13,7 @@ importers:
         version: 5.20260710.1
       '@hono/node-server':
         specifier: ^2.0.8
-        version: 2.0.8(hono@4.12.30)
+        version: 2.0.8(hono@4.12.29)
       '@mitata/counters':
         specifier: ^0.0.8
         version: 0.0.8
@@ -112,7 +112,7 @@ importers:
         version: 14.7.3(serverless@4.37.0)
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/elysia:
     devDependencies:
@@ -121,7 +121,7 @@ importers:
         version: 1.4.29(@sinclair/typebox@0.34.49)(@types/bun@1.3.14)(exact-mirror@1.2.2)(file-type@22.0.1)(openapi-types@12.1.3)(typescript@7.0.2)
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/express:
     devDependencies:
@@ -130,7 +130,7 @@ importers:
         version: 5.2.1
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/fastify:
     devDependencies:
@@ -139,31 +139,31 @@ importers:
         version: 5.8.5
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/h3:
     devDependencies:
       h3:
         specifier: beta
-        version: 2.0.0-beta.5(crossws@0.4.10(srvx@0.11.22))
+        version: 2.0.0-beta.5(crossws@0.4.9(srvx@0.11.21))
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/hello-world:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/hono:
     devDependencies:
       hono:
         specifier: latest
-        version: 4.12.30
+        version: 4.12.29
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/jsx:
     devDependencies:
@@ -175,46 +175,46 @@ importers:
         version: 0.1.0
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/node-handler:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/service-worker:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/stackblitz:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/streaming:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/tracing:
     devDependencies:
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
   examples/websocket:
     devDependencies:
       crossws:
         specifier: latest
-        version: 0.4.10(srvx@0.11.22)
+        version: 0.4.9(srvx@0.11.21)
       srvx:
         specifier: latest
-        version: 0.11.22
+        version: 0.11.21
 
 packages:
 
@@ -2097,8 +2097,8 @@ packages:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
 
-  crossws@0.4.10:
-    resolution: {integrity: sha512-pz3oubH/dt12KjqsUB0IuXW4nwRDQ583iDsP4555Cpdqx0NoU7pGlWBcayyFI8f/l/idRpgjMEfwuOxSWJYlIA==}
+  crossws@0.4.9:
+    resolution: {integrity: sha512-iWx+1OMSG2aOHpjyf9AESOzkwsVdS49cXM9dVrI2PDhxU5l2RIWE/KG56gk4BbAnsMoycvniJ9OnOxO9LRzHVA==}
     peerDependencies:
       srvx: '>=0.11.5'
     peerDependenciesMeta:
@@ -2543,8 +2543,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.30:
-    resolution: {integrity: sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==}
+  hono@4.12.29:
+    resolution: {integrity: sha512-1hNiRjawYrLq/4m3DQQjPGFg0VZkk4RjQJDff/excI6Dm9BiL75qxGrd7/c6YOxPdq6AscP3LiXhQ6fKFC1Waw==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -3479,11 +3479,6 @@ packages:
 
   srvx@0.11.21:
     resolution: {integrity: sha512-GWTHjKMeekX8CwJf4VU9Oo6mJpSGaflGMddbCvR+Cmmh9sslRMiGbAoqqZacE0r1ncARh6buCEETr2W52F8b1w==}
-    engines: {node: '>=20.16.0'}
-    hasBin: true
-
-  srvx@0.11.22:
-    resolution: {integrity: sha512-LqZxxBDMKuMAZzFzJnDCkFOrs9MZQZr0LvHiO/SuSZVdQaXD7xQ5UWTUxheJrQPve1qk9MG2B/yttUvJxw8egQ==}
     engines: {node: '>=20.16.0'}
     hasBin: true
 
@@ -4432,9 +4427,9 @@ snapshots:
       '@hapi/bourne': 3.0.0
       '@hapi/hoek': 11.0.7
 
-  '@hono/node-server@2.0.8(hono@4.12.30)':
+  '@hono/node-server@2.0.8(hono@4.12.29)':
     dependencies:
-      hono: 4.12.30
+      hono: 4.12.29
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -5551,9 +5546,9 @@ snapshots:
       shebang-command: 2.0.0
       which: 2.0.2
 
-  crossws@0.4.10(srvx@0.11.22):
+  crossws@0.4.9(srvx@0.11.21):
     optionalDependencies:
-      srvx: 0.11.22
+      srvx: 0.11.21
 
   data-uri-to-buffer@4.0.1: {}
 
@@ -6079,14 +6074,14 @@ snapshots:
 
   gopd@1.2.0: {}
 
-  h3@2.0.0-beta.5(crossws@0.4.10(srvx@0.11.22)):
+  h3@2.0.0-beta.5(crossws@0.4.9(srvx@0.11.21)):
     dependencies:
       cookie-es: 2.0.1
       fetchdts: 0.1.7
       rou3: 0.7.12
       srvx: 0.8.16
     optionalDependencies:
-      crossws: 0.4.10(srvx@0.11.22)
+      crossws: 0.4.9(srvx@0.11.21)
 
   has-flag@4.0.0: {}
 
@@ -6096,7 +6091,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.30: {}
+  hono@4.12.29: {}
 
   html-escaper@2.0.2: {}
 
@@ -7219,8 +7214,6 @@ snapshots:
   split2@4.2.0: {}
 
   srvx@0.11.21: {}
-
-  srvx@0.11.22: {}
 
   srvx@0.8.16: {}
 
