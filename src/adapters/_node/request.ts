@@ -24,6 +24,11 @@ export type NodeRequestContext = {
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
 
+/** Rejection for a second read of an already-consumed body (matches native fetch). */
+function bodyUnusable(): TypeError {
+  return new TypeError("Body is unusable: Body has already been read");
+}
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
@@ -39,6 +44,11 @@ export const NodeRequest: {
     #req: NodeServerRequest;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
+    // Tracks body consumption at the srvx level so a second read rejects with
+    // `TypeError: Body is unusable` (like native fetch) instead of hanging on a
+    // re-listened, already-ended IncomingMessage, and so `bodyUsed` can be
+    // served without materializing a native Request over a disturbed stream.
+    #bodyUsed = false;
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
@@ -159,17 +169,26 @@ export const NodeRequest: {
       return this.#request ? this.#request.signal : this._abortController.signal;
     }
 
+    // Per the fetch spec, GET/HEAD requests always have a null body regardless of
+    // what was on the wire. Raw bytes remain reachable via `runtime.node.req`.
+    #hasBody(): boolean {
+      const method = this.method;
+      return method !== "GET" && method !== "HEAD";
+    }
+
     get body(): ReadableStream | null {
       if (this.#request) {
         return this.#request.body;
       }
       if (this.#bodyStream === undefined) {
-        const method = this.method;
-        const hasBody = !(method === "GET" || method === "HEAD");
-        let stream = hasBody
-          ? // TODO: HTTP2ServerRequest
-            (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
-          : null;
+        // No stream for a null-body (GET/HEAD) request, and never re-wrap an
+        // already-consumed IncomingMessage (the fast path leaves it ended, so a
+        // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
+        let stream =
+          this.#hasBody() && !this.#bodyUsed
+            ? // TODO: HTTP2ServerRequest
+              (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
+            : null;
         // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
         // through (`request.body`, and therefore the native `Request` methods
         // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
@@ -181,6 +200,16 @@ export const NodeRequest: {
       return this.#bodyStream;
     }
 
+    get bodyUsed(): boolean {
+      // Serve from srvx state: after a fast-path read the native Request is never
+      // materialized (or is materialized with a null body), so it would otherwise
+      // report `false` or throw when the underlying stream is disturbed.
+      if (this.#bodyUsed) {
+        return true;
+      }
+      return this.#request ? this.#request.bodyUsed : false;
+    }
+
     // Buffer the raw request body once; consumers add their own single
     // continuation (`.toString()` / `JSON.parse`) so no extra promise or
     // microtask hop is introduced vs. inlining the read.
@@ -188,22 +217,40 @@ export const NodeRequest: {
       return readBody(this.#req, this.#maxRequestBodySize);
     }
 
-    text() {
+    text(): Promise<string> {
+      // A second read of an already-consumed body must reject like native fetch
+      // rather than re-listen to an ended stream (which would hang).
+      if (this.#bodyUsed) {
+        return Promise.reject(bodyUnusable());
+      }
       if (this.#request) {
         return this.#request.text();
       }
+      // GET/HEAD: null body, so `text()` is repeatable and resolves to "".
+      if (!this.#hasBody()) {
+        return Promise.resolve("");
+      }
+      this.#bodyUsed = true;
       if (this.#bodyStream !== undefined) {
-        return this.#bodyStream ? new Response(this.#bodyStream).text() : Promise.resolve("");
+        return new Response(this.#bodyStream).text();
       }
       return this.#readBuffered().then((buf) => buf.toString());
     }
 
-    json() {
+    json(): Promise<any> {
+      if (this.#bodyUsed) {
+        return Promise.reject(bodyUnusable());
+      }
       if (this.#request) {
         return this.#request.json();
       }
+      // GET/HEAD: null body — match a null-body native Request (`JSON.parse("")`).
+      if (!this.#hasBody()) {
+        return Promise.resolve().then(() => JSON.parse(""));
+      }
+      this.#bodyUsed = true;
       if (this.#bodyStream !== undefined) {
-        return this.text().then((text) => JSON.parse(text));
+        return new Response(this.#bodyStream).json();
       }
       // Parse in a single continuation (readBody -> parse) instead of going
       // through text() — one less promise + microtask hop per body read.
@@ -212,7 +259,13 @@ export const NodeRequest: {
 
     get _request(): globalThis.Request {
       if (!this.#request) {
-        const body = this.body;
+        // If the body was already consumed via the buffered/stream fast path the
+        // underlying IncomingMessage is disturbed; wrapping it in a native
+        // Request throws synchronously ("Response body object should not be
+        // disturbed or locked") and poisons `bodyUsed` / `clone()` / `formData()`
+        // / `blob()` / `mode` / `referrer`. Serve a null-body Request instead and
+        // let `bodyUsed` reflect srvx state.
+        const body = this.#bodyUsed ? null : this.body;
         this.#request = new NativeRequest(this.url, {
           method: this.method,
           headers: this.headers,
