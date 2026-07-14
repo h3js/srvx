@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { loadServerEntry } from "../src/loader.ts";
 
 const fixturesDir = resolve(import.meta.dirname, "fixtures");
@@ -71,6 +72,18 @@ describe("loadServerEntry", () => {
 
       const response = await result.fetch!(new Request("http://test/"));
       expect(await response.text()).toBe("explicit-url");
+    });
+
+    it("loads from an explicit file:// URL entry", async () => {
+      const entry = pathToFileURL(resolve(fixturesDir, "fetch-export/server.ts")).href;
+      const result = await loadServerEntry({ entry });
+
+      expect(result.notFound).toBeUndefined();
+      expect(result.fetch).toBeDefined();
+      expect(result.url).toBe(entry);
+
+      const response = await result.fetch!(new Request("http://test/"));
+      expect(await response.text()).toBe("fetch-export");
     });
 
     it("returns notFound when explicit url does not exist", async () => {

@@ -141,12 +141,13 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
         "[srvx] mtls() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
       );
     }
-    // Mutual TLS is meaningless without TLS.
-    if (
-      server.options.protocol === "http" ||
-      !server.options.tls?.cert ||
-      !server.options.tls?.key
-    ) {
+    // Mutual TLS is meaningless without TLS. The node adapter accepts cert/key
+    // either via `tls.cert/key` or directly through node server options
+    // (`node.cert/key`), so mirror that when deciding HTTP vs HTTPS.
+    const nodeOptions = server.options.node as { cert?: unknown; key?: unknown } | undefined;
+    const cert = server.options.tls?.cert ?? nodeOptions?.cert;
+    const key = server.options.tls?.key ?? nodeOptions?.key;
+    if (server.options.protocol === "http" || !cert || !key) {
       throw new Error(
         "[srvx] mtls() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
       );
