@@ -68,29 +68,38 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
           type: "module",
           scope: this.options.serviceWorker?.scope,
         })
-        .then((registration) => {
-          if (registration.active) {
-            location.replace(location.href);
-          } else {
-            registration.addEventListener("updatefound", () => {
-              location.replace(location.href);
-            });
+        .then(() => {
+          // If the page is already controlled by an active service worker,
+          // it can handle requests right away and no reload is needed.
+          if (navigator.serviceWorker.controller) {
+            return;
           }
+          // Otherwise reload once the freshly installed worker takes control
+          // (via `clients.claim()`) so it can handle the current page.
+          navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            () => {
+              location.reload();
+            },
+            { once: true },
+          );
         });
     } else if (isServiceWorker) {
       // Listen for the 'fetch' event to handle requests
-      this.#fetchListener = async (event) => {
-        // skip if event url ends with file with extension
-        if (/\/[^/]*\.[a-zA-Z0-9]+$/.test(new URL(event.request.url).pathname)) {
-          return;
-        }
+      this.#fetchListener = (event) => {
         Object.defineProperty(event.request, "waitUntil", {
           value: event.waitUntil.bind(event),
         });
-        const response = await this.fetch(event.request, event);
-        if (response.status !== 404) {
-          event.respondWith(response);
-        }
+        // `respondWith` must be called synchronously (before the event
+        // dispatch completes), passing a promise that resolves the response.
+        event.respondWith(
+          (async () => {
+            const response = await this.fetch(event.request, event);
+            // Treat a 404 from the handler as "not handled" and fall back
+            // to the network for the original request.
+            return response.status === 404 ? fetch(event.request) : response;
+          })(),
+        );
       };
 
       addEventListener("fetch", this.#fetchListener);

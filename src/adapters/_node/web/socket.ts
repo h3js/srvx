@@ -169,7 +169,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
       this.#_writeBody(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
     } else if (chunk?.length > 0) {
       this.#headersWritten = true;
-      const headerEnd = chunk.lastIndexOf("\r\n\r\n");
+      const headerEnd = chunk.indexOf("\r\n\r\n");
       if (headerEnd === -1) {
         throw new Error("Invalid HTTP headers chunk!");
       }

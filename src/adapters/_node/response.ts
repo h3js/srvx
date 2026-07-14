@@ -133,7 +133,11 @@ export const NodeResponse: {
           body = this.#body;
           contentLength = this.#body.byteLength;
         } else if (this.#body instanceof DataView) {
-          body = Buffer.from(this.#body.buffer);
+          // Only the view's window (byteOffset..byteOffset+byteLength) is part of
+          // the body. `Buffer.from(view.buffer)` would send the whole underlying
+          // ArrayBuffer while content-length is the view length — wrong bytes to
+          // the client and stray bytes left in a keep-alive connection.
+          body = Buffer.from(this.#body.buffer, this.#body.byteOffset, this.#body.byteLength);
           contentLength = this.#body.byteLength;
         } else if (this.#body instanceof Blob) {
           body = this.#body.stream();

@@ -16,6 +16,9 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | null {
   return needDrainSymbol;
 }
 
+// Statuses that must not carry a response body per the Fetch/HTTP spec.
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
   #socketError?: Error;
@@ -116,7 +119,12 @@ export class WebServerResponse extends ServerResponse {
       headers.push([key, value]);
     }
 
-    return new Response(this.#socket._webResBody, {
+    // Null-body statuses (101, 204, 205, 304) cannot have a body; passing a
+    // stream to `new Response()` for these throws, which would otherwise be
+    // caught and surfaced as a 500 (e.g. Express `res.sendStatus(204)` or a
+    // conditional-GET 304 through `toFetchHandler`).
+    const nullBody = NULL_BODY_STATUSES.has(this.statusCode);
+    return new Response(nullBody ? null : this.#socket._webResBody, {
       status: this.statusCode,
       statusText: this.statusMessage,
       headers: headers,
