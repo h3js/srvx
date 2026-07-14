@@ -74,6 +74,11 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
       gracefulShutdown: !!cliOpts.prod,
       port: cliOpts.port ?? serverOptions.port,
       hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
+      // In loader mode the user's `serve({ maxRequestBodySize })` call is
+      // intercepted before it ever listens, so the limit lives only on the inner
+      // server's options — thread it onto the outer server that actually serves.
+      maxRequestBodySize:
+        serverOptions.maxRequestBodySize ?? loaded.srvxServer?.options?.maxRequestBodySize,
       tls,
       error: (error) => {
         console.error(error);

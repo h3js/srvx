@@ -37,7 +37,6 @@ class BunServer implements Server<BunFetchHandler> {
     for (const plugin of options.plugins || []) plugin(this);
 
     trustProxyPlugin(this);
-    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -50,6 +49,10 @@ class BunServer implements Server<BunFetchHandler> {
       loader({ server: this });
       return;
     }
+
+    // Registered after the loader early-return (matching Node) so the outer CLI
+    // server owns the SIGINT/SIGTERM handlers, not the inner intercepted one.
+    gracefulShutdownPlugin(this);
 
     this.#wait = createWaitUntil();
     this.waitUntil = this.#wait.waitUntil;

@@ -35,6 +35,11 @@ class DenoServer implements Server<DenoFetchHandler> {
   #listeningPromise?: Promise<void>;
   #listeningInfo?: { hostname: string; port: number };
 
+  // Deno.serve exposes no `closeAllConnections`-style API; the only way to force
+  // in-flight requests (SSE/WebSocket) closed is to abort the signal it was
+  // started with. Used by `close(true)`.
+  #abortController?: AbortController;
+
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
   constructor(options: ServerOptions) {
@@ -43,7 +48,6 @@ class DenoServer implements Server<DenoFetchHandler> {
     for (const plugin of options.plugins || []) plugin(this);
 
     trustProxyPlugin(this);
-    gracefulShutdownPlugin(this);
 
     const fetchHandler = wrapFetch(this);
 
@@ -56,6 +60,10 @@ class DenoServer implements Server<DenoFetchHandler> {
       loader({ server: this });
       return;
     }
+
+    // Registered after the loader early-return (matching Node) so the outer CLI
+    // server owns the SIGINT/SIGTERM handlers, not the inner intercepted one.
+    gracefulShutdownPlugin(this);
 
     this.#wait = createWaitUntil();
     this.waitUntil = this.#wait.waitUntil;
@@ -109,9 +117,11 @@ class DenoServer implements Server<DenoFetchHandler> {
     }
     const onListenPromise = Promise.withResolvers<void>();
     this.#listeningPromise = onListenPromise.promise;
+    this.#abortController = new AbortController();
     this.deno!.server = Deno.serve(
       {
         ...this.serveOptions,
+        signal: this.#abortController.signal,
         onListen: (info) => {
           this.#listeningInfo = info;
           if (this.options.deno?.onListen) {
@@ -140,7 +150,14 @@ class DenoServer implements Server<DenoFetchHandler> {
     return Promise.resolve(this.#listeningPromise).then(() => this);
   }
 
-  async close(): Promise<void> {
+  async close(closeAll?: boolean): Promise<void> {
+    // `close(true)` must forcibly terminate in-flight connections. Deno.serve has
+    // no per-connection close, so abort the signal it was started with; the
+    // graceful `shutdown()` below then resolves immediately instead of hanging on
+    // an open SSE/WebSocket.
+    if (closeAll) {
+      this.#abortController?.abort();
+    }
     await Promise.all([this.#wait?.wait(), Promise.resolve(this.deno?.server?.shutdown())]);
   }
 }

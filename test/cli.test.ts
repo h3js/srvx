@@ -146,6 +146,26 @@ describe("cli", () => {
       }
     });
 
+    it("F27: threads an inline serve() maxRequestBodySize through the loader", async () => {
+      const port = await getRandomPort("localhost");
+      const entry = resolve(fixtureDir, "..", "cli-max-body", "server.ts");
+      const child = runCli(["--prod", "--entry", entry, "--port", String(port)]);
+      try {
+        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        const ok = await fetch(`http://localhost:${port}/`, { method: "POST", body: "1234" });
+        expect(ok.status).toBe(200);
+        expect(await ok.text()).toBe("1234");
+        const tooBig = await fetch(`http://localhost:${port}/`, {
+          method: "POST",
+          body: "0123456789",
+        });
+        expect(tooBig.status).toBe(413);
+      } finally {
+        child.kill("SIGTERM");
+        await child.catch(() => {});
+      }
+    });
+
     it("F42: `--tls` without cert/key errors instead of downgrading to http", async () => {
       const port = await getRandomPort("localhost");
       const { stderr, exitCode } = await runCli([
