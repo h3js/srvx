@@ -5,14 +5,14 @@ import type { WebIncomingMessage } from "./incoming.ts";
 // Node's OutgoingMessage sets an internal `kNeedDrain` symbol to true when a
 // write returns false, and clears it (emitting "drain") from the HTTP server's
 // socketOnDrain handler. We don't have access to that symbol publicly, so we
-// resolve it from the instance once and cache it. Resolving may fail across
-// Node versions; in that case we fall back to always re-emitting "drain".
-let needDrainSymbol: symbol | null | undefined;
-function getNeedDrainSymbol(res: ServerResponse): symbol | null {
-  if (needDrainSymbol === undefined) {
-    needDrainSymbol =
-      Object.getOwnPropertySymbols(res).find((s) => s.description === "kNeedDrain") ?? null;
-  }
+// resolve it from the instance and cache it. The symbol may not be materialized
+// on the instance yet at first lookup (it is only set the first time a write is
+// backpressured), so a miss must NOT be cached: we keep `undefined` (retry on
+// the next call) until the symbol is actually found. Until then we fall back to
+// always re-emitting "drain".
+let needDrainSymbol: symbol | undefined;
+function getNeedDrainSymbol(res: ServerResponse): symbol | undefined {
+  needDrainSymbol ??= Object.getOwnPropertySymbols(res).find((s) => s.description === "kNeedDrain");
   return needDrainSymbol;
 }
 

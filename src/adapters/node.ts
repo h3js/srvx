@@ -114,6 +114,9 @@ class NodeServer implements Server {
       port,
       host,
       exclusive: !this.options.reusePort,
+      // Enable SO_REUSEPORT for cross-process port sharing (Node >= 22.12).
+      // Older Node versions ignore this option; unsupported platforms throw.
+      reusePort: this.options.reusePort,
       ...tls,
       ...this.options.node,
     };
