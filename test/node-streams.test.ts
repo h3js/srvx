@@ -1,6 +1,8 @@
 import { Readable } from "node:stream";
 import { describe, expect, test } from "vitest";
 import { serve, FastResponse } from "../src/adapters/node.ts";
+import { streamBody } from "../src/adapters/_node/send.ts";
+import type { NodeServerResponse } from "../src/types.ts";
 
 describe("node response stream error handling", () => {
   test("client abort propagates to node readable stream", async () => {
@@ -245,6 +247,34 @@ describe("node response stream error handling", () => {
     const res = await fetch(server.url!);
     expect(res.status).toBe(500);
     await server.close(true);
+  });
+
+  // Regression: when the response is already destroyed on entry to streamBody
+  // (client gone before we start pumping), we cancel the web stream. If the
+  // stream's cancel algorithm rejects (or the stream is locked), the unhandled
+  // rejection would crash the process under `--unhandled-rejections=throw`.
+  // The cancel() call must be guarded like the HEAD path.
+  test("streamBody: destroyed response + cancel-rejecting stream has no unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.prependListener("unhandledRejection", onUnhandled);
+    try {
+      const stream = new ReadableStream({
+        cancel() {
+          throw new Error("cancel failed");
+        },
+      });
+      const destroyedRes = { destroyed: true } as unknown as NodeServerResponse;
+
+      // Should return synchronously (undefined) without leaking a rejection.
+      expect(streamBody(stream, destroyedRes)).toBeUndefined();
+
+      // Let the microtask queue flush so a would-be unhandledRejection fires.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.removeListener("unhandledRejection", onUnhandled);
+    }
   });
 
   test("duck-typed pipe object (e.g. React PipeableStream) works", async () => {

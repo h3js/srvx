@@ -401,6 +401,12 @@ function trackDisturbed(stream: ReadableStream, onDisturb: () => void): Readable
  * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
  */
 export function patchGlobalRequest(): typeof Request {
+  // Idempotent: if the global is already patched, return the installed class
+  // so `patchGlobalRequest() === globalThis.Request` holds on repeated calls.
+  if ((globalThis.Request as any)._srvx) {
+    return globalThis.Request as unknown as typeof Request;
+  }
+
   const NativeRequest = getNativeRequest();
 
   const PatchedRequest = class Request extends NativeRequest {
@@ -420,9 +426,7 @@ export function patchGlobalRequest(): typeof Request {
       super(input, options);
     }
   };
-  if (!(globalThis.Request as any)._srvx) {
-    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
-  }
+  globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
   return PatchedRequest;
 }
 
