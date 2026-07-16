@@ -814,9 +814,8 @@ describe("node body crash regressions", () => {
   });
 
   // The flip side of the above: `bodyUsed` tracks the spec's "disturbed" bit, so
-  // merely *touching* `request.body` must not consume it. Guards the body
-  // stream's `highWaterMark: 0` — with a read-ahead buffer it would pull a chunk
-  // on construction and mark an untouched body as used.
+  // merely *touching* `request.body` must not consume it — `isDisturbed` on the
+  // handed-out stream must stay false until an actual read or cancel.
   test("accessing req.body without reading it does not mark the body used", async () => {
     const server = serve({
       port: 0,
@@ -831,6 +830,29 @@ describe("node body crash regressions", () => {
 
     const res = await fetch(server.url!, { method: "POST", body: "hello" });
     expect(await res.json()).toEqual({ hasBody: true, bodyUsed: false, text: "hello" });
+    await server.close(true);
+  });
+
+  // Cancelling the body disturbs it per the fetch spec, exactly like reading it:
+  // `bodyUsed` flips and later reads reject.
+  test("cancelling req.body marks the body used and rejects later reads", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        await req.body!.cancel();
+        return Response.json({
+          bodyUsed: req.bodyUsed,
+          text: await req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ bodyUsed: true, text: "TypeError" });
     await server.close(true);
   });
 
