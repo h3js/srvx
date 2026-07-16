@@ -762,8 +762,9 @@ describe("node body crash regressions", () => {
   });
 });
 
-// v1 stabilization: Node-adapter T3 correctness batch.
-describe("node T3 correctness", () => {
+// Regressions where the Node adapter diverged from native fetch semantics
+// (Response defaults, HEAD handling, send diagnostics, node-compat bridge).
+describe("node fetch-spec correctness regressions", () => {
   const headerPairs = (headers: string[]) => {
     const pairs: [string, string][] = [];
     for (let i = 0; i < headers.length; i += 2) {
