@@ -538,38 +538,35 @@ describe("reusePort", () => {
     process.platform === "linux" &&
     (major > 22 || (major === 22 && minor >= 12));
 
-  test.skipIf(!supported)(
-    "two servers can bind the same port with reusePort",
-    async () => {
-      // Reserve then release a free port to reuse across both servers.
-      const probe = createServer();
-      await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
-      const { port } = probe.address() as AddressInfo;
-      await new Promise<void>((resolve) => probe.close(() => resolve()));
+  test.skipIf(!supported)("two servers can bind the same port with reusePort", async () => {
+    // Reserve then release a free port to reuse across both servers.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
 
-      const makeServer = () =>
-        serve({
-          port,
-          hostname: "127.0.0.1",
-          reusePort: true,
-          manual: true,
-          fetch: () => new Response("ok"),
-        });
+    const makeServer = () =>
+      serve({
+        port,
+        hostname: "127.0.0.1",
+        reusePort: true,
+        manual: true,
+        fetch: () => new Response("ok"),
+      });
 
-      const a = makeServer();
-      const b = makeServer();
-      try {
-        // Without reusePort, the second listen() on the same port would EADDRINUSE.
-        await a.serve();
-        await b.serve();
-        expect(new URL(a.url!).port).toBe(String(port));
-        expect(new URL(b.url!).port).toBe(String(port));
-      } finally {
-        await a.close();
-        await b.close();
-      }
-    },
-  );
+    const a = makeServer();
+    const b = makeServer();
+    try {
+      // Without reusePort, the second listen() on the same port would EADDRINUSE.
+      await a.serve();
+      await b.serve();
+      expect(new URL(a.url!).port).toBe(String(port));
+      expect(new URL(b.url!).port).toBe(String(port));
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
 });
 
 describe("FastResponse header dedup", () => {
