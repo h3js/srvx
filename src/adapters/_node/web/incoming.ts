@@ -71,7 +71,7 @@ export class WebIncomingMessage extends IncomingMessage {
       // emits "end" at the right time.
       this.complete = true;
       this.push(null);
-      this.off("data", onData);
+      socket.off("data", onData);
     });
   }
 
