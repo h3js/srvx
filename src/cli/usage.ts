@@ -37,34 +37,38 @@ ${c.gray("$")} echo '{"name":"foo"}' | ${c.cyan(command)} fetch -d @- /api ${c.g
 
 ${c.bold("COMMON OPTIONS")}
 
-  ${c.green("--entry")} ${c.yellow("<file>")}           Server entry file to use
-  ${c.green("--dir")} ${c.yellow("<dir>")}              Working directory for resolving entry file
-  ${c.green("-h, --help")}               Show this help message
-  ${c.green("--version")}                Show server and runtime versions
+  ${c.green("--entry")} ${c.yellow("<file>")}            Server entry file to use
+  ${c.green("--dir")} ${c.yellow("<dir>")}               Working directory for resolving entry file
+  ${c.green("-h, --help")}                Show this help message
+  ${c.green("--version")}                 Show server and runtime versions
 
 ${c.bold("SERVE OPTIONS")}
 
-  ${c.green("-p, --port")} ${c.yellow("<port>")}        Port to listen on (default: ${c.yellow("3000")})
-  ${c.green("--host")} ${c.yellow("<host>")}            Host to bind to (default: all interfaces)
-  ${c.green("-s, --static")} ${c.yellow("<dir>")}       Serve static files from the specified directory (default: ${c.yellow("public")})
-  ${c.green("--prod")}                   Run in production mode (no watch, no debug)
-  ${c.green("--import")} ${c.yellow("<loader>")}        ES module to preload
-  ${c.green("--tls")}                    Enable TLS (HTTPS/HTTP2)
-  ${c.green("--cert")} ${c.yellow("<file>")}            TLS certificate file
-  ${c.green("--key")}  ${c.yellow("<file>")}            TLS private key file
+  ${c.green("-p, --port")} ${c.yellow("<port>")}         Port to listen on (default: ${c.yellow("3000")})
+  ${c.green("--host, --hostname")} ${c.yellow("<host>")} Host to bind to (default: all interfaces)
+  ${c.green("-s, --static")} ${c.yellow("<dir>")}        Serve static files from the specified directory (default: ${c.yellow("public")})
+  ${c.green("--prod")}                    Run in production mode (no watch, no debug)
+  ${c.green("--import")} ${c.yellow("<loader>")}         ES module to preload
+  ${c.green("--tls")}                     Enable TLS (HTTPS/HTTP2)
+  ${c.green("--cert")} ${c.yellow("<file>")}             TLS certificate file
+  ${c.green("--key")}  ${c.yellow("<file>")}             TLS private key file
 
 ${c.bold("FETCH OPTIONS")}
 
-  ${c.green("-X, --request")} ${c.yellow("<method>")}   HTTP method (default: ${c.yellow("GET")}, or ${c.yellow("POST")} if body is provided)
-  ${c.green("-H, --header")} ${c.yellow("<header>")}    Add header (format: "Name: Value", can be used multiple times)
-  ${c.green("-d, --data")} ${c.yellow("<data>")}        Request body (use ${c.yellow("@-")} for stdin, ${c.yellow("@file")} for file)
-  ${c.green("-v, --verbose")}            Show request and response headers
+  ${c.green("-X, --method")} ${c.yellow("<method>")}     HTTP method (default: ${c.yellow("GET")}, or ${c.yellow("POST")} if body is provided; ${c.green("--request")} is a curl alias)
+  ${c.green("-H, --header")} ${c.yellow("<header>")}     Add header (format: "Name: Value", can be used multiple times)
+  ${c.green("-d, --data")} ${c.yellow("<data>")}         Request body (use ${c.yellow("@-")} for stdin, ${c.yellow("@file")} for file)
+  ${c.green("--host")} ${c.yellow("<host>")}             Host for a schemeless URL/path (default: ${c.yellow("localhost")})
+  ${c.green("--tls")}                     Use ${c.yellow("https")} for a schemeless URL/path
+  ${c.green("-v, --verbose")}             Show request and response headers
+
+  Exits with code ${c.yellow("22")} on a non-2xx response (like ${c.cyan("curl --fail")}).
 
 ${c.bold("ENVIRONMENT")}
 
-  ${c.green("PORT")}                     Override port
-  ${c.green("HOST")}                     Override host
-  ${c.green("NODE_ENV")}                 Set to ${c.yellow("production")} for production mode.
+  ${c.green("PORT")}                      Default port to listen on
+  ${c.green("HOST")}                      Default host to bind to
+  ${c.green("NODE_ENV")}                  Set to ${c.yellow("production")} for production mode.
 
 ${mainOpts.usage?.docs ? `➤ ${c.url("Documentation", mainOpts.usage.docs)}` : ""}
 ${mainOpts.usage?.issues ? `➤ ${c.url("Report issues", mainOpts.usage.issues)}` : ""}

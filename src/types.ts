@@ -89,7 +89,8 @@ export interface ServerOptions {
   /**
    * The hostname (IP or resolvable host) server listener should bound to.
    *
-   * When not provided, server with listen to all network interfaces by default.
+   * Default is read from the `HOST` environment variable. When neither is
+   * provided, the server will listen to all network interfaces by default.
    *
    * **Important:** If you are running a server that is not expected to be exposed to the network, use `hostname: "localhost"`.
    */
