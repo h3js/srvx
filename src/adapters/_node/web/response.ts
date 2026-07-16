@@ -19,20 +19,67 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | null {
 // Statuses that must not carry a response body per the Fetch/HTTP spec.
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
+// Connection-level headers describing the synthetic wire this response is
+// written to, not the application response itself. Leaking them into the web
+// `Response` breaks the next hop: `connection: close` disables keep-alive for
+// every bridged response re-served over HTTP/1 and prints an UnsupportedWarning
+// per request over HTTP/2, and `transfer-encoding` mislabels a body that is
+// never chunk-framed here. https://datatracker.ietf.org/doc/html/rfc9110#section-7.6.1
+const HOP_BY_HOP_HEADERS = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade"]);
+
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
   #socketError?: Error;
+
+  // Settles once the response head is stored (see the `_storeHeader` patch
+  // below), rejects if the socket dies before that.
+  #headPromise: Promise<void>;
+  #settleHead!: (error?: Error) => void;
 
   constructor(req: WebIncomingMessage, socket: WebRequestSocket) {
     super(req);
     this.assignSocket(socket);
 
+    this.#headPromise = new Promise<void>((resolve, reject) => {
+      this.#settleHead = (error) => (error ? reject(error) : resolve());
+    });
+    // The head can be rejected with nothing awaiting it yet (e.g. the caller
+    // already bailed out on a handler error), which would otherwise take the
+    // process down as an unhandled rejection. Awaiters still see the rejection.
+    this.#headPromise.catch(() => {});
+
+    // `_storeHeader` is where Node serializes the status line and headers into
+    // `_header` — the single funnel for both explicit `writeHead()` and implicit
+    // (first `write()`/`end()`) heads. It is patched as an own property rather
+    // than overridden on the prototype because Express re-parents the response
+    // object, which would drop a prototype override off the chain.
+    const storeHeader = (ServerResponse.prototype as any)._storeHeader;
+    (this as any)._storeHeader = (firstLine: string, headers: unknown) => {
+      storeHeader.call(this, firstLine, headers);
+
+      // A handler setting `transfer-encoding: chunked` explicitly re-enables the
+      // chunk framing that `useChunkedEncodingByDefault = false` turned off,
+      // which corrupts the captured body (the framing bytes land *inside* it).
+      // Nothing here is written to a real wire, so never frame; the header
+      // itself is dropped from the web `Response` as hop-by-hop below.
+      this.chunkedEncoding = false;
+
+      // The head is complete and frozen from here on (`headersSent` is true), so
+      // the web `Response` can be built while the handler is still writing.
+      this.#settleHead();
+    };
+
     // `super(req)` enables chunked transfer-encoding by default because the
     // synthetic request now reports HTTP/1.1. But this response isn't written to
-    // a real wire: `toWebResponse()` captures the raw body buffer from the
-    // bridging socket and re-wraps it in a web `Response`. Chunk framing would
-    // corrupt that captured body, so keep the output un-chunked (close-delimited).
+    // a real wire: `toWebResponse()` re-wraps the body written to the bridging
+    // socket in a web `Response`. Chunk framing would corrupt that body, so keep
+    // the output un-chunked (close-delimited).
     this.useChunkedEncodingByDefault = false;
+
+    // Node stamps a `Date` for the synthetic wire; that is the serving hop's job
+    // (and it re-stamps one), so don't synthesize it here. A `Date` the handler
+    // sets explicitly is still passed through.
+    this.sendDate = false;
 
     this.once("finish", () => {
       socket.end();
@@ -44,9 +91,17 @@ export class WebServerResponse extends ServerResponse {
     // an AbortError) and emits "error"/"close" without the ServerResponse ever
     // emitting "finish" or "error". Attach this listener synchronously so the
     // socket error is consumed (instead of crashing the process as an unhandled
-    // "error" event) and recorded for waitToFinish() to settle on.
+    // "error" event) and recorded to settle the head waiters on.
     socket.once("error", (err) => {
       this.#socketError ??= err;
+      this.#settleHead(err);
+    });
+
+    // A socket that dies before the head is stored will never produce one, and
+    // the response emits neither "finish" nor "error" — settle the head waiters
+    // instead of hanging them. No-op once the head is stored.
+    socket.once("close", () => {
+      this.#settleHead(this.#socketError ?? prematureCloseError());
     });
 
     // Forward socket "drain" events to the response. Node's HTTP server does
@@ -68,50 +123,24 @@ export class WebServerResponse extends ServerResponse {
     });
 
     // Express can override prototype so we have to bind methods
-    this.waitToFinish = this.waitToFinish.bind(this);
+    this.waitForHead = this.waitForHead.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);
   }
 
-  waitToFinish(): Promise<void> {
-    if (this.writableFinished) {
-      return Promise.resolve();
-    }
-    // The socket is destroyed before the response finished flushing (e.g. the
-    // client aborted). `writableEnded` may still be true (end() was called) but
-    // the response will never emit "finish", so resolving here would hand back a
-    // body stream that never closes. Reject instead.
-    if (this.#socketError || this.#socket.destroyed) {
-      return Promise.reject(this.#socketError ?? prematureCloseError());
-    }
-    if (this.writableEnded) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve, reject) => {
-      const socket = this.#socket;
-      const settle = (err?: Error) => {
-        this.removeListener("finish", onFinish);
-        this.removeListener("error", onError);
-        socket.removeListener("error", onError);
-        socket.removeListener("close", onClose);
-        if (err) reject(err);
-        else resolve();
-      };
-      const onFinish = () => settle();
-      const onError = (err: Error) => settle(err);
-      const onClose = () => {
-        if (!this.writableFinished) {
-          settle(this.#socketError ?? prematureCloseError());
-        }
-      };
-      this.on("finish", onFinish);
-      this.on("error", onError);
-      socket.on("error", onError);
-      socket.on("close", onClose);
-    });
+  /**
+   * Resolves as soon as the response head (status + headers) is known — i.e. on
+   * `writeHead()` or the first `write()`/`end()` — without waiting for the body,
+   * so it can be streamed. Rejects if the socket dies before a head is stored.
+   */
+  waitForHead(): Promise<void> {
+    return this.#headPromise;
   }
 
   async toWebResponse(): Promise<Response> {
-    await this.waitToFinish();
+    // Only the head is awaited: the body streams out of the bridging socket as
+    // the handler writes it. Waiting for the response to finish would buffer
+    // every body in full and never resolve at all for an endless one (SSE).
+    await this.#headPromise;
 
     const headers: [string, string][] = [];
 
@@ -122,7 +151,7 @@ export class WebServerResponse extends ServerResponse {
       if (sepIndex === -1) continue;
       const key = httpHeader[i].slice(0, Math.max(0, sepIndex));
       const value = httpHeader[i].slice(Math.max(0, sepIndex + 2));
-      if (!key) continue;
+      if (!key || HOP_BY_HOP_HEADERS.has(key.toLowerCase())) continue;
       headers.push([key, value]);
     }
 

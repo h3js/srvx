@@ -1068,6 +1068,232 @@ describe("node fetch-spec correctness regressions", () => {
   });
 });
 
+// The node->web bridge treated the captured wire bytes/headers of the synthetic
+// ServerResponse as if they were the application's body/headers.
+// https://github.com/h3js/srvx/issues/248
+describe("node->web bridge", () => {
+  const timeout = <T>(value: T, ms = 3000) =>
+    new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
+
+  const settle = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise.then(
+        () => "completed" as const,
+        () => "errored" as const,
+      ),
+      timeout("hung" as const),
+    ]);
+
+  // An explicit `transfer-encoding: chunked` re-enabled the chunk framing that
+  // `useChunkedEncodingByDefault = false` turns off, and the framing bytes ended
+  // up inside the captured body ("5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n").
+  test("explicit transfer-encoding: chunked does not frame the body", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "transfer-encoding": "chunked" });
+      res.write("hello");
+      res.end("world");
+    };
+    const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+    expect(await res.text()).toBe("helloworld");
+    // The body is not chunk-framed, so the header must not claim it is.
+    expect(res.headers.get("transfer-encoding")).toBe(null);
+  });
+
+  // Hop-by-hop headers Node generated for the synthetic wire were copied out of
+  // `_header` verbatim. `connection: close` on every bridged response disables
+  // keep-alive over HTTP/1 and warns per-request over HTTP/2.
+  test("hop-by-hop headers do not leak into the web Response", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain", "x-app": "1" });
+      res.end("ok");
+    };
+    const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+    const names = [...res.headers.keys()];
+    expect(names).not.toContain("connection");
+    expect(names).not.toContain("keep-alive");
+    expect(names).not.toContain("transfer-encoding");
+    expect(names).not.toContain("upgrade");
+    // Node's synthetic Date is the serving hop's business, not the app's.
+    expect(names).not.toContain("date");
+    // Application headers still pass through.
+    expect(res.headers.get("content-type")).toBe("text/plain");
+    expect(res.headers.get("x-app")).toBe("1");
+  });
+
+  test("a Date set by the handler is still passed through", async () => {
+    const date = "Mon, 01 Jan 2024 00:00:00 GMT";
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { date });
+      res.end("ok");
+    };
+    const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+    expect(res.headers.get("date")).toBe(date);
+  });
+
+  // The leaked `connection: close` was written straight through by serve(), so
+  // every bridged response hung up the connection it was served on.
+  test("a bridged response served by srvx does not kill keep-alive", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      // No content-length, so the synthetic response is close-delimited — which
+      // is exactly when Node generates `connection: close` for the bridge.
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+    };
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      // A plain web Request carries no `runtime.node`, so this goes through the
+      // bridge rather than the direct pass-through path.
+      fetch: (req) => fetchNodeHandler(handler, new Request(req.url) as any),
+    });
+    await server.ready();
+    const u = new URL(server.url!);
+
+    // Two pipelined requests on one socket.
+    const raw = await rawExchange(
+      Number(u.port),
+      u.hostname,
+      `GET /one HTTP/1.1\r\nHost: ${u.hostname}\r\n\r\n` +
+        `GET /two HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+    );
+    const text = raw.toString();
+
+    // Both are answered on the one connection; with the leak the server hangs up
+    // after the first and the second request is never answered.
+    expect(text.match(/HTTP\/1\.1 200/g) ?? []).toHaveLength(2);
+    // (the second response closes legitimately — the client asked it to)
+    const [firstHead] = text.split("\r\n\r\n");
+    expect(firstHead).not.toMatch(/connection:\s*close/i);
+    await server.close(true);
+  });
+
+  // toWebResponse() awaited res.end(), so an SSE handler never resolved at all
+  // and every other body was buffered whole before the Response existed.
+  test("an endless SSE response resolves and streams incrementally", async () => {
+    let push!: (data: string) => void;
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      push = (data) => void res.write(data);
+      // typical SSE: never ends
+    };
+
+    const res = await Promise.race([
+      toFetchHandler(handler)(new Request("http://localhost/")),
+      timeout(undefined),
+    ]);
+    expect(res, "the response must not wait for res.end()").toBeDefined();
+    expect(res!.headers.get("content-type")).toBe("text/event-stream");
+
+    const reader = res!.body!.getReader();
+    const read = async () => new TextDecoder().decode((await reader.read()).value);
+    expect(await read()).toBe("data: 1\n\n");
+    // Events written later arrive without the response ever ending.
+    push("data: 2\n\n");
+    expect(await read()).toBe("data: 2\n\n");
+    await reader.cancel();
+  });
+
+  // A fast producer (e.g. static file middleware) used to accumulate the entire
+  // body in the response stream's queue regardless of how fast it was read.
+  test("a fast producer is throttled by the consumer instead of buffering", async () => {
+    const chunkSize = 64 * 1024;
+    const chunk = "x".repeat(chunkSize);
+    const totalChunks = 64;
+    let written = 0;
+
+    const handler: NodeHttp1Handler = (_req, res) => {
+      return (async () => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        for (let i = 0; i < totalChunks; i++) {
+          written++;
+          if (!res.write(chunk)) {
+            await new Promise<void>((resolve) => res.once("drain", () => resolve()));
+          }
+        }
+        res.end();
+      })();
+    };
+
+    const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+    // Let an unthrottled producer race ahead while nothing reads the body.
+    await new Promise((r) => setTimeout(r, 100));
+    const writtenBeforeReading = written;
+
+    // The whole body still arrives once it is read.
+    const body = await Promise.race([res.arrayBuffer(), timeout(undefined)]);
+    expect(body?.byteLength).toBe(chunkSize * totalChunks);
+    // The producer parked on backpressure instead of queueing everything.
+    // (Without the fix this equals totalChunks.)
+    expect(writtenBeforeReading).toBeLessThan(totalChunks / 2);
+  });
+
+  test("cancelling the response body tears down the handler's response", async () => {
+    let onClose!: () => void;
+    const closed = new Promise<void>((resolve) => (onClose = resolve));
+    const handler: NodeHttp1Handler = (_req, res) => {
+      return new Promise<void>((resolve) => {
+        res.on("error", () => {}); // teardown mid-write is expected here
+        res.on("close", () => {
+          onClose();
+          resolve();
+        });
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.write("first");
+      });
+    };
+
+    const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+    await res.body!.cancel();
+
+    expect(await Promise.race([closed.then(() => "closed"), timeout("hung")])).toBe("closed");
+  });
+
+  // Once the head is out a 500 is impossible, so the failure has to surface on
+  // the body stream — without an unhandled rejection taking the process down.
+  test("a handler failing after the head errors the body stream", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown) => rejections.push(error);
+    process.on("unhandledRejection", onRejection);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const handler: NodeHttp1Handler = (_req, res) => {
+      return (async () => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.write("partial");
+        await new Promise((r) => setTimeout(r, 10));
+        throw new Error("boom");
+      })();
+    };
+
+    try {
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.status).toBe(200); // the head was already committed
+      expect(await settle(res.text())).toBe("errored");
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toHaveLength(0);
+      expect(errorSpy).toHaveBeenCalled(); // logged for diagnostics
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("a handler failing before the head is still a 500", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const handler: NodeHttp1Handler = async () => {
+      throw new Error("boom");
+    };
+    const res = await Promise.race([
+      toFetchHandler(handler)(new Request("http://localhost/")),
+      timeout(undefined),
+    ]);
+    expect(res?.status).toBe(500);
+    expect(await res?.text()).toBe("");
+    errorSpy.mockRestore();
+  });
+});
+
 // Raw HTTP/1.1 helpers: write `payload`, collect every byte until the server
 // closes the connection (driven by a `Connection: close` on the last request).
 function rawExchange(port: number, host: string, payload: string): Promise<Buffer> {

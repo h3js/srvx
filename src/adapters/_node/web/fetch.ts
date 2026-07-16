@@ -16,7 +16,7 @@ import { WebServerResponse } from "./response.ts";
  *
  * Otherwise, new Node.js IncomingMessage and ServerResponse objects are created and linked to a custom Duplex stream that bridges the Fetch API streams with Node.js streams.
  *
- * The handler is invoked with these objects, and the response is constructed from the ServerResponse once it is finished.
+ * The handler is invoked with these objects, and the response is constructed from the ServerResponse as soon as its head is available, with the body streaming as the handler writes it.
  *
  * @experimental Behavior might be unstable.
  */
@@ -36,22 +36,43 @@ export async function fetchNodeHandler(
   const nodeReq = new WebIncomingMessage(req, socket);
   const nodeRes = new WebServerResponse(nodeReq, socket);
 
+  const handlerPromise = (async () => handler(nodeReq as any, nodeRes as any))();
+
+  // Once the head is out a 500 is no longer possible, so a late handler failure
+  // can only be surfaced by tearing down the socket, which errors the body
+  // stream the consumer is reading. Before the head, the race below turns the
+  // same failure into a 500 and this is a no-op.
+  handlerPromise.catch((error) => {
+    if (nodeRes.headersSent) {
+      logError(error, req, handler);
+      socket.destroy(error);
+    }
+  });
+
   try {
-    await handler(nodeReq as any, nodeRes as any);
+    // Waiting for the handler to *finish* would hold the response back until the
+    // body is complete: buffering large ones in full and never resolving for an
+    // endless one (SSE). The head is enough to build the Response and stream the
+    // rest. See https://github.com/h3js/srvx/issues/248
+    await Promise.race([handlerPromise, nodeRes.waitForHead()]);
     return await nodeRes.toWebResponse();
   } catch (error: any) {
-    // Client aborts / premature socket closes are routine (the client is already
-    // gone), so don't log them as errors. See https://github.com/h3js/srvx/issues/208
-    const aborted =
-      req.signal?.aborted ||
-      error?.name === "AbortError" ||
-      error?.code === "ERR_STREAM_PREMATURE_CLOSE";
-    if (!aborted) {
-      console.error(error, { cause: { req, handler } });
-    }
+    logError(error, req, handler);
     return new Response(null, {
       status: 500,
       statusText: "Internal Server Error",
     });
+  }
+}
+
+function logError(error: any, req: ServerRequest, handler: NodeHttpHandler): void {
+  // Client aborts / premature socket closes are routine (the client is already
+  // gone), so don't log them as errors. See https://github.com/h3js/srvx/issues/208
+  const aborted =
+    req.signal?.aborted ||
+    error?.name === "AbortError" ||
+    error?.code === "ERR_STREAM_PREMATURE_CLOSE";
+  if (!aborted) {
+    console.error(error, { cause: { req, handler } });
   }
 }

@@ -43,6 +43,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
   #_writeBody!: (chunk: Uint8Array) => void;
   #resBodyController?: ReadableStreamDefaultController<Uint8Array>;
   #resBodyClosed?: boolean;
+  #resumeWrite?: () => void;
   _webResBody: ReadableStream;
   #tos: number = 0;
 
@@ -53,17 +54,38 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
 
     this.#request = request;
 
-    this._webResBody = new ReadableStream({
-      start: (controller) => {
-        this.#resBodyController = controller;
-        this.#_writeBody = controller.enqueue.bind(controller);
-        this.once("finish", () => {
-          this.readyState = "closed";
+    this._webResBody = new ReadableStream<Uint8Array>(
+      {
+        start: (controller) => {
+          this.#resBodyController = controller;
+          this.#_writeBody = controller.enqueue.bind(controller);
+          this.once("finish", () => {
+            this.readyState = "closed";
+            this.#resBodyClosed = true;
+            controller.close();
+          });
+        },
+        // The body is handed to the consumer while the handler is still writing
+        // it (see `toWebResponse()`), so writes park once the queue is full and
+        // resume from here. Without this a handler piping a large file outruns
+        // the consumer and the whole body piles up in the queue.
+        pull: () => {
+          const resume = this.#resumeWrite;
+          this.#resumeWrite = undefined;
+          resume?.();
+        },
+        // The consumer dropped the body (e.g. a HEAD response, or it went away).
+        // Tear down the socket so the handler stops writing into a stream that
+        // can no longer take chunks, instead of throwing on a closed controller.
+        cancel: (reason) => {
           this.#resBodyClosed = true;
-          controller.close();
-        });
+          this.destroy(reason instanceof Error ? reason : undefined);
+        },
       },
-    });
+      // Buffer by bytes like a socket would, rather than the default count-based
+      // strategy, which caps the queue at a single chunk of any size.
+      { highWaterMark: 64 * 1024, size: (chunk) => chunk?.byteLength ?? 0 },
+    );
 
     // Wire request abort handling *after* `super()` so the subclass private
     // fields are initialized before any synchronous `destroy()`. Passing the
@@ -166,7 +188,19 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     callback: (error?: Error | null) => void,
   ): void {
     if (this.#headersWritten) {
+      // The consumer cancelled the body; drop the rest rather than enqueue onto
+      // a closed controller (which throws). The socket is being torn down.
+      if (this.#resBodyClosed) {
+        callback(null);
+        return;
+      }
       this.#_writeBody(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+      // Queue is over its limit: hold the write open so `res.write()` reports
+      // backpressure to the handler until the consumer reads (see `pull` above).
+      if ((this.#resBodyController!.desiredSize ?? 1) <= 0) {
+        this.#resumeWrite = () => callback(null);
+        return;
+      }
     } else if (chunk?.length > 0) {
       this.#headersWritten = true;
       const headerEnd = chunk.indexOf("\r\n\r\n");
@@ -191,6 +225,11 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     if (this.#timeoutTimer) {
       clearTimeout(this.#timeoutTimer);
     }
+    // Drop a write parked on body backpressure without calling it back: the
+    // socket is gone, so completing the write would push data into a destroyed
+    // stream. A handler blocked on it learns from the response's "close"/"error"
+    // event, exactly as it would on a real socket torn down mid-write.
+    this.#resumeWrite = undefined;
     if (this.#reqReader) {
       this.#reqReader.cancel().catch((error) => {
         console.error(error);
