@@ -53,6 +53,10 @@ class NodeServer implements Server {
 
   #listeningPromise?: Promise<void>;
   #listenError?: Error;
+  // Resolves once the server has started listening (rejects if it fails).
+  // Distinct from #listeningPromise so that ready() awaits the *next* listen in
+  // `manual` mode (and after a close/restart) instead of resolving stale.
+  #ready?: PromiseWithResolvers<void>;
 
   #wait?: ReturnType<typeof createWaitUntil>;
 
@@ -139,9 +143,20 @@ class NodeServer implements Server {
 
     this.node.server = server;
 
+    this.#newReady();
+
     if (!options.manual) {
       this.serve().catch(() => {});
     }
+  }
+
+  // (Re)create the deferred that ready() awaits. The rejection is guarded so a
+  // listen failure that nobody observes via ready() does not surface as an
+  // unhandled rejection (serve()/ready() remain the real error surfaces).
+  #newReady(): PromiseWithResolvers<void> {
+    const ready = Promise.withResolvers<void>();
+    ready.promise.catch(() => {});
+    return (this.#ready = ready);
   }
 
   serve(): Promise<this> {
@@ -155,17 +170,20 @@ class NodeServer implements Server {
     }
 
     this.#listenError = undefined;
+    const ready = this.#ready ?? this.#newReady();
     this.#listeningPromise = new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server.off("listening", onListening);
         this.#listenError = error;
         this.#listeningPromise = undefined;
+        ready.reject(error);
         reject(error);
       };
 
       const onListening = () => {
         server.off("error", onError);
         printListening(this.options, this.url);
+        ready.resolve();
         resolve();
       };
 
@@ -192,7 +210,9 @@ class NodeServer implements Server {
     if (this.#listenError) {
       return Promise.reject(this.#listenError);
     }
-    return Promise.resolve(this.#listeningPromise).then(() => this);
+    // Wait until the server has actually started listening. In `manual` mode
+    // (before serve() is called) this stays pending instead of resolving early.
+    return (this.#ready ?? this.#newReady()).promise.then(() => this);
   }
 
   async close(closeAll?: boolean): Promise<void> {
@@ -209,5 +229,11 @@ class NodeServer implements Server {
         server.close((error?: Error) => (error ? reject(error) : resolve()));
       }),
     ]);
+    // Reset lifecycle state so the server can be restarted: a subsequent serve()
+    // calls server.listen() again, and ready() waits for that fresh listen
+    // instead of resolving against the stale (already-settled) one.
+    this.#listeningPromise = undefined;
+    this.#listenError = undefined;
+    this.#newReady();
   }
 }

@@ -515,6 +515,65 @@ describe("node server startup", () => {
       await server.close();
     });
   });
+
+  // close() must reset the internal listening state so a subsequent serve()
+  // actually re-invokes server.listen() instead of returning the stale,
+  // already-resolved promise (which left the server permanently down).
+  test("server can be restarted with serve() after close()", async () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("ok"),
+    });
+
+    await server.ready();
+    const res1 = await fetch(server.url!);
+    expect(res1.status).toBe(200);
+    expect(await res1.text()).toBe("ok");
+
+    await server.close();
+
+    // Restart on a fresh listen (port 0 -> new random port).
+    await server.serve();
+    await server.ready();
+    const res2 = await fetch(server.url!);
+    expect(res2.status).toBe(200);
+    expect(await res2.text()).toBe("ok");
+
+    await server.close();
+  });
+
+  // In manual mode ready() must not resolve until serve() has been called and
+  // the server is actually listening (previously it resolved immediately
+  // because #listeningPromise was still undefined).
+  test("ready() waits for serve() in manual mode", async () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      manual: true,
+      fetch: () => new Response("ok"),
+    });
+
+    let readyResolved = false;
+    const readyPromise = server.ready().then(() => {
+      readyResolved = true;
+    });
+
+    // Give ready() the chance to (incorrectly) resolve before serve() is called.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(readyResolved).toBe(false);
+    expect(server.url).toBeUndefined();
+
+    await server.serve();
+    await readyPromise;
+    expect(readyResolved).toBe(true);
+    expect(server.url).toBeTruthy();
+
+    const res = await fetch(server.url!);
+    expect(await res.text()).toBe("ok");
+
+    await server.close();
+  });
 });
 
 describe("FastResponse header dedup", () => {
