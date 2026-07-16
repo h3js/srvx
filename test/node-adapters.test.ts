@@ -569,6 +569,45 @@ describe("FastResponse header dedup", () => {
   });
 });
 
+// FastResponse must validate `init.status` at construction like native
+// `Response`, which throws a RangeError for anything outside 200-599 (the fast
+// path never builds a native Response, so the check was previously skipped).
+describe("FastResponse status validation", () => {
+  test.each([99, 1000, 0, -1, 600])(
+    "throws RangeError for out-of-range status %i",
+    (status) => {
+      expect(() => new FastResponse(null, { status })).toThrow(RangeError);
+      expect(() => new FastResponse(null, { status })).toThrow(
+        `init["status"] must be in the range of 200 to 599, inclusive.`,
+      );
+    },
+  );
+
+  test.each([200, 204, 404, 500, 599])(
+    "accepts valid status %i and exposes it via .status",
+    (status) => {
+      const res = new FastResponse(null, { status });
+      expect(res.status).toBe(status);
+    },
+  );
+
+  test("defaults to 200 when no status is provided", () => {
+    expect(new FastResponse(null).status).toBe(200);
+    expect(new FastResponse(null, {}).status).toBe(200);
+  });
+
+  test("_toNodeResponse carries the validated status", () => {
+    expect(
+      new FastResponse(null, { status: 404 })._toNodeResponse().status,
+    ).toBe(404);
+  });
+
+  test("matches native Response range behavior for out-of-range status", () => {
+    expect(() => new Response(null, { status: 99 })).toThrow(RangeError);
+    expect(() => new FastResponse(null, { status: 99 })).toThrow(RangeError);
+  });
+});
+
 // v1 stabilization: Node-adapter crash/corruption regressions.
 describe("node body crash regressions", () => {
   // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async

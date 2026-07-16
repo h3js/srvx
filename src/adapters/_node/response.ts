@@ -37,6 +37,26 @@ export const NodeResponse: {
     constructor(body?: BodyInit | null, init?: ResponseInit) {
       this.#body = body;
       this.#init = init;
+      // Native `Response` validates `init.status` at construction and throws a
+      // `RangeError` for anything outside 200-599. Because the fast path never
+      // builds a native `Response`, that check would otherwise be skipped and an
+      // out-of-range status silently reach the wire (or `status: 0` be coerced
+      // to 200 by the getter). Validate once here to match native semantics
+      // while keeping the hot `status` getter free of range checks.
+      if (init !== undefined) {
+        const status = init.status;
+        if (status !== undefined) {
+          // `& 0xffff` reproduces WebIDL's `unsigned short` (ToUint16) coercion
+          // used by native `Response`: it truncates toward zero and wraps mod
+          // 2^16, so e.g. `"204"` -> 204, `599.9` -> 599, `65736` -> 200.
+          const code = (status as number) & 0xffff;
+          if (code < 200 || code > 599) {
+            throw new RangeError(
+              `init["status"] must be in the range of 200 to 599, inclusive.`,
+            );
+          }
+        }
+      }
     }
 
     static [Symbol.hasInstance](val: unknown) {
@@ -44,7 +64,10 @@ export const NodeResponse: {
     }
 
     get status(): number {
-      return this.#response?.status || this.#init?.status || 200;
+      // `??` (not `||`): the constructor has already rejected any out-of-range
+      // status, so a stored value is always a valid 200-599 code that must not
+      // be replaced by the `200` fallback.
+      return this.#response?.status ?? this.#init?.status ?? 200;
     }
 
     get statusText(): string {
