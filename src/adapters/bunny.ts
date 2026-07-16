@@ -44,7 +44,8 @@ class BunnyServer implements Server {
 
     const fetchHandler = wrapFetch(this);
 
-    const waitUntil = (this.waitUntil = (p: Promise<unknown>) => (globalThis as any).Bunny?.unstable?.waitUntil?.(p));
+    const waitUntil = (this.waitUntil = (p: Promise<unknown>) =>
+      (globalThis as any).Bunny?.unstable?.waitUntil?.(p));
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
