@@ -28,12 +28,27 @@ beforeAll(() => {
   writeFileSync(join(dir, "pic.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]));
   writeFileSync(join(dir, "icon.svg"), "<svg></svg>");
   writeFileSync(join(dir, ".env"), "SECRET=1");
+  // Dotfiles that carry an extension, so the extensionless `.html` fallback
+  // cannot 404 them by accident. These fail if the dot denylist regresses.
+  writeFileSync(join(dir, ".env.local"), "SECRET=2");
+  writeFileSync(join(dir, ".npmrc.bak"), "//registry/:_authToken=tok");
 
   mkdirSync(join(dir, "sub"), { recursive: true });
   writeFileSync(join(dir, "sub", "index.html"), "<h1>sub</h1>");
 
   mkdirSync(join(dir, ".secret"), { recursive: true });
   writeFileSync(join(dir, ".secret", "config"), "topsecret");
+
+  // `/.well-known/` (RFC 8615) is exempt from the dot denylist.
+  mkdirSync(join(dir, ".well-known", "acme-challenge"), { recursive: true });
+  // ACME tokens are extensionless and must be served verbatim, not via `.html`.
+  writeFileSync(join(dir, ".well-known", "acme-challenge", "token123"), "acme-proof");
+  writeFileSync(join(dir, ".well-known", "security.txt"), "Contact: mailto:x@y.z");
+  // A dotfile *below* `.well-known` stays denied.
+  writeFileSync(join(dir, ".well-known", ".env"), "SECRET=3");
+  // `.well-known` is only well-known at the root; nested it stays denied.
+  mkdirSync(join(dir, "sub", ".well-known"), { recursive: true });
+  writeFileSync(join(dir, "sub", ".well-known", "nope.txt"), "nested");
 
   // A file outside `dir` that a symlink inside `dir` points at.
   const outside = join(root, "outside");
@@ -140,6 +155,15 @@ describe("serveStatic: traversal & dotfiles", () => {
     expect(await res.text()).toBe(NEXT);
   });
 
+  // `/.env` alone would 404 even without the denylist, because `extname(".env")`
+  // is "" and the fallback looks for `.env.html`. These carry an extension, so
+  // they resolve to a real file and only the denylist can stop them.
+  test.each(["/.env.local", "/.npmrc.bak"])("dotfile %s is denied", async (path) => {
+    const res = await req(path);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe(NEXT);
+  });
+
   test("file inside a dot directory is denied", async () => {
     const res = await req("/.secret/config");
     expect(await res.text()).toBe(NEXT);
@@ -147,6 +171,44 @@ describe("serveStatic: traversal & dotfiles", () => {
 
   test("symlink escaping dir is denied", async () => {
     const res = await req("/link.txt");
+    expect(await res.text()).toBe(NEXT);
+  });
+});
+
+describe("serveStatic: .well-known (RFC 8615)", () => {
+  test("serves an extensionless ACME challenge token verbatim", async () => {
+    const res = await req("/.well-known/acme-challenge/token123");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("acme-proof");
+  });
+
+  test("serves security.txt", async () => {
+    const res = await req("/.well-known/security.txt");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("Contact: mailto:x@y.z");
+  });
+
+  test("does not apply the .html fallback under .well-known", async () => {
+    const res = await req("/.well-known/acme-challenge/missing");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe(NEXT);
+  });
+
+  test("a dotfile below .well-known is still denied", async () => {
+    const res = await req("/.well-known/.env");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe(NEXT);
+  });
+
+  test("traversal out of .well-known is still denied", async () => {
+    const res = await req("/.well-known/..%2f.env.local");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe(NEXT);
+  });
+
+  test("nested .well-known is not exempt", async () => {
+    const res = await req("/sub/.well-known/nope.txt");
+    expect(res.status).toBe(404);
     expect(await res.text()).toBe(NEXT);
   });
 });

@@ -183,17 +183,33 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     // that blocks dotfiles (`.env`, `.env.local`, `.npmrc.bak`, `.git/...`) and
     // dot-segment traversal (`.` / `..`, including once-encoded `%2e` forms
     // which are now decoded), so secrets and parent dirs are never served.
-    if (path.split("/").some((segment) => segment.startsWith("."))) {
-      return next();
+    //
+    // A leading `.well-known` (RFC 8615) is the single exemption: it is a
+    // registered, public-by-design namespace (ACME challenges, `security.txt`,
+    // `assetlinks.json`) that must stay reachable. Only the first segment is
+    // exempt, so everything below it is still denied (`/.well-known/.env`), and
+    // `.well-known` nested anywhere else (`/sub/.well-known/...`) is not
+    // well-known at all and stays denied too.
+    const segments = path.split("/");
+    const isWellKnown = segments[0] === ".well-known";
+    for (let i = isWellKnown ? 1 : 0; i < segments.length; i++) {
+      if (segments[i].startsWith(".")) {
+        return next();
+      }
     }
 
     let paths: string[];
     if (path === "") {
       paths = ["index.html"];
-    } else if (extname(path) === "") {
-      paths = [`${path}.html`, `${path}/index.html`];
-    } else {
+    } else if (isWellKnown || extname(path) !== "") {
+      // Well-known URIs are exact identifiers, so the `.html`/`index.html`
+      // fallback must not apply below `/.well-known/`: ACME challenge tokens
+      // (`/.well-known/acme-challenge/<token>`) are extensionless and would
+      // otherwise resolve to `<token>.html` and 404, silently breaking cert
+      // renewal.
       paths = [path];
+    } else {
+      paths = [`${path}.html`, `${path}/index.html`];
     }
 
     for (const candidate of paths) {
