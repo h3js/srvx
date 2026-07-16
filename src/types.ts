@@ -369,9 +369,6 @@ export interface ServerRequest extends Request {
 
   /**
    * Access to the parsed URL of this request.
-   *
-   * Supported API. The underscore is legacy naming, not a privacy marker; its
-   * shape is frozen for the v1 semver guarantee.
    */
   _url?: URL;
 
