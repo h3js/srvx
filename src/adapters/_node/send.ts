@@ -196,7 +196,7 @@ export function streamBody(
 ): Promise<void> | void {
   // stream is already destroyed
   if (nodeRes.destroyed) {
-    stream.cancel();
+    stream.cancel().catch(() => {});
     return;
   }
 
