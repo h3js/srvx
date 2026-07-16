@@ -27,6 +27,9 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
 
   #fetchListener?: (event: FetchEvent) => void | Promise<void>;
   #listeningPromise?: Promise<any>;
+  // The registration `serve()` created (browser-window mode), so `close()`
+  // unregisters only our own worker instead of every worker on the origin.
+  #registration?: ServiceWorkerRegistration;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -68,7 +71,8 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
           type: "module",
           scope: this.options.serviceWorker?.scope,
         })
-        .then(() => {
+        .then((registration) => {
+          this.#registration = registration;
           // If the page is already controlled by an active service worker,
           // it can handle requests right away and no reload is needed.
           if (navigator.serviceWorker.controller) {
@@ -123,14 +127,11 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
       removeEventListener("fetch", this.#fetchListener!);
     }
 
-    // unregister the service worker
+    // Unregister only the worker this instance registered, not every worker
+    // on the origin.
     if (isBrowserWindow) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        if (registration.active) {
-          await registration.unregister();
-        }
-      }
+      await this.#registration?.unregister();
+      this.#registration = undefined;
     } else if (isServiceWorker) {
       await self.registration.unregister();
     }

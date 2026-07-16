@@ -10,11 +10,29 @@ export function serve(options: ServerOptions): Server<CF.ExportedHandlerFetchHan
   return new CloudflareServer(options);
 }
 
+/**
+ * Cloudflare Workers server adapter.
+ *
+ * The recommended entrypoint is the **module-worker** syntax: export the
+ * server (or its `.fetch` handler) as the module default so the runtime invokes
+ * `fetch(request, env, context)` directly. Only then are `env` bindings (KV, D1,
+ * Durable Objects, secrets, ...) available on `request.runtime.cloudflare.env`.
+ *
+ * For legacy **service-worker** syntax, `serve()` also registers a global
+ * `fetch` event listener. In that mode Cloudflare exposes bindings as globals
+ * rather than through the event, so `env` is unavailable and
+ * `request.runtime.cloudflare.env` is an empty object.
+ */
 class CloudflareServer implements Server<CloudflareFetchHandler> {
   readonly runtime = "cloudflare";
   readonly options: Server["options"];
   readonly serveOptions: CF.ExportedHandler;
   readonly fetch: CF.ExportedHandlerFetchHandler;
+
+  // Retained so `close()` can remove exactly the listener `serve()` added and
+  // repeated `serve()` calls do not stack duplicate listeners (which would
+  // trigger a double `respondWith()` error on Cloudflare).
+  #fetchListener?: (event: FetchEvent) => void;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -31,9 +49,11 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
           enumerable: true,
           value: { name: "cloudflare", cloudflare: { env, context } },
         },
-        // TODO
         ip: {
           enumerable: true,
+          // `configurable` so `trustProxy` can override it, matching the
+          // bun/deno adapters.
+          configurable: true,
           get() {
             return request.headers.get("cf-connecting-ip");
           },
@@ -54,10 +74,20 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
   }
 
   serve() {
-    addEventListener("fetch", (event) => {
-      // @ts-expect-error
-      event.respondWith(this.fetch(event.request, {}, event));
-    });
+    // Service-worker syntax only. Guard against double-registration: calling
+    // `serve()` twice (or `manual: true` then `serve()`) must not stack a
+    // second listener, otherwise both would call `respondWith()` on the same
+    // event and Cloudflare throws.
+    if (this.#fetchListener) {
+      return;
+    }
+    this.#fetchListener = (event) => {
+      // Service-worker events carry no `env`; bindings are only reachable in
+      // module-worker syntax (see the class doc comment).
+      // @ts-expect-error `respondWith` is FetchEvent-only.
+      event.respondWith(this.fetch(event.request, (event as any).env || {}, event));
+    };
+    addEventListener("fetch", this.#fetchListener as EventListener);
   }
 
   ready(): Promise<Server<CF.ExportedHandlerFetchHandler>> {
@@ -65,6 +95,10 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
   }
 
   close() {
+    if (this.#fetchListener) {
+      removeEventListener("fetch", this.#fetchListener as EventListener);
+      this.#fetchListener = undefined;
+    }
     return Promise.resolve();
   }
 }
