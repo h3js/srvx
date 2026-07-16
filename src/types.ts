@@ -89,7 +89,8 @@ export interface ServerOptions {
   /**
    * The hostname (IP or resolvable host) server listener should bound to.
    *
-   * When not provided, server with listen to all network interfaces by default.
+   * Default is read from the `HOST` environment variable. When neither is
+   * provided, the server will listen to all network interfaces by default.
    *
    * **Important:** If you are running a server that is not expected to be exposed to the network, use `hostname: "localhost"`.
    */
@@ -361,14 +362,14 @@ export interface ServerRequestContext {
 
 export interface ServerRequest extends Request {
   /**
-   * Access to Node.js native instance of request.
+   * The underlying web-standard `Request` backing this request.
    *
    * See https://srvx.h3.dev/guide/node#noderequest
    */
   _request?: Request;
 
   /**
-   * Access to the parsed URL
+   * Access to the parsed URL of this request.
    */
   _url?: URL;
 

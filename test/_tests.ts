@@ -179,7 +179,7 @@ export function addTests(opts: {
     });
   });
 
-  // TODO: Investigate writing test for HTTP2/TLS
+  // TODO: Investigate writing test for HTTP2/TLS (https://github.com/h3js/srvx/issues/235)
   test.skipIf(opts.http2)("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
     expect(res.status).toBe(200);
@@ -374,7 +374,7 @@ export function addTests(opts: {
     expect(data.pathname).toBe("/bar/baz");
   });
 
-  // TODO: Write test to make sure it is forbidden for http2/tls
+  // TODO: Write test to make sure it is forbidden for http2/tls (https://github.com/h3js/srvx/issues/236)
   test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));
 

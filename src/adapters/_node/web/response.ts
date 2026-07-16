@@ -27,6 +27,13 @@ export class WebServerResponse extends ServerResponse {
     super(req);
     this.assignSocket(socket);
 
+    // `super(req)` enables chunked transfer-encoding by default because the
+    // synthetic request now reports HTTP/1.1. But this response isn't written to
+    // a real wire: `toWebResponse()` captures the raw body buffer from the
+    // bridging socket and re-wraps it in a web `Response`. Chunk framing would
+    // corrupt that captured body, so keep the output un-chunked (close-delimited).
+    this.useChunkedEncodingByDefault = false;
+
     this.once("finish", () => {
       socket.end();
     });

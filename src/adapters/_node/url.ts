@@ -1,22 +1,23 @@
 import type { NodeServerRequest } from "../../types.ts";
-import { HOST_RE, firstForwardedValue } from "../../_trust-proxy.ts";
+import { HOST_RE, forwardedHopValue } from "../../_trust-proxy.ts";
 import { FastURL } from "../../_url.ts";
 
 export { HOST_RE };
 
 export class NodeRequestURL extends FastURL {
-  constructor({ req, trusted = false }: { req: NodeServerRequest; trusted?: boolean }) {
+  constructor({ req, hops = 0 }: { req: NodeServerRequest; hops?: number }) {
     const path = req.url || "/";
 
     // Only honor client-supplied `X-Forwarded-*` hints when the request comes
-    // through a trusted proxy (`trusted`); otherwise any client could spoof the
+    // through a trusted proxy (`hops > 0`); otherwise any client could spoof the
     // host or `https` on a plaintext connection. The real transport
     // (`encrypted`) and the on-the-wire `Host` header stay authoritative.
+    // `hops` (the trusted hop count) selects the entry contributed by the
+    // outermost trusted proxy from a comma-joined chain, mirroring `request.ip`.
     // A malformed forwarded host is ignored (fall back to the real `Host`),
     // matching the universal trustProxy plugin used on Bun/Deno.
-    const forwardedHost = trusted
-      ? firstForwardedValue(req.headers["x-forwarded-host"])
-      : undefined;
+    const trusted = hops > 0;
+    const forwardedHost = forwardedHopValue(req.headers["x-forwarded-host"], hops);
 
     let host =
       (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
@@ -33,11 +34,9 @@ export class NodeRequestURL extends FastURL {
     }
 
     // A proxy chain can join `X-Forwarded-Proto` into a comma-separated list, so
-    // compare the leftmost entry (via `firstForwardedValue`) rather than the raw
+    // pick the trusted hop entry (via `forwardedHopValue`) rather than the raw
     // header. The HTTP/2 `:scheme` pseudo-header is always a single value.
-    const forwardedProto = trusted
-      ? firstForwardedValue(req.headers["x-forwarded-proto"])
-      : undefined;
+    const forwardedProto = forwardedHopValue(req.headers["x-forwarded-proto"], hops);
     const protocol =
       (req.socket as any)?.encrypted ||
       forwardedProto === "https" ||
