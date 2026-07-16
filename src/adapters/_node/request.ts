@@ -44,10 +44,13 @@ export const NodeRequest: {
     #req: NodeServerRequest;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
-    // Tracks body consumption at the srvx level so a second read rejects with
-    // `TypeError: Body is unusable` (like native fetch) instead of hanging on a
-    // re-listened, already-ended IncomingMessage, and so `bodyUsed` can be
-    // served without materializing a native Request over a disturbed stream.
+    // The fetch spec's "disturbed" bit, tracked at the srvx level: set by the
+    // buffered fast path (text()/json()) and by the first read/cancel of the
+    // stream `body` hands out. Every body read rejects with `TypeError: Body is
+    // unusable` once set (like native fetch) instead of hanging on a re-listened,
+    // already-ended IncomingMessage or resolving empty off the null-body Request
+    // that `_request` serves in this state. Also lets `bodyUsed` answer without
+    // materializing a native Request over a disturbed stream.
     #bodyUsed = false;
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
@@ -200,11 +203,22 @@ export const NodeRequest: {
             ? // TODO: HTTP2ServerRequest
               (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
             : null;
-        // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
-        // through (`request.body`, and therefore the native `Request` methods
-        // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
-        if (stream && this.#maxRequestBodySize !== undefined) {
-          stream = limitBodyStream(stream, this.#maxRequestBodySize);
+        if (stream) {
+          // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
+          // through (`request.body`, and therefore the native `Request` methods
+          // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
+          if (this.#maxRequestBodySize !== undefined) {
+            stream = limitBodyStream(stream, this.#maxRequestBodySize);
+          }
+          stream = trackDisturbed(stream, () => {
+            // Only while srvx still owns the body. Once `_request` holds it, undici
+            // owns the accounting and reports it per-Request: `clone()` tees this
+            // stream, so a pull here may be the *clone* being read, which must not
+            // mark this request's body used.
+            if (!this.#request) {
+              this.#bodyUsed = true;
+            }
+          });
         }
         this.#bodyStream = stream;
       }
@@ -280,6 +294,40 @@ export const NodeRequest: {
       return this.#readBuffered().then((buf) => JSON.parse(buf.toString()));
     }
 
+    arrayBuffer(): Promise<ArrayBuffer> {
+      return this.#consumeNative("arrayBuffer");
+    }
+
+    bytes(): Promise<Uint8Array<ArrayBuffer>> {
+      return this.#consumeNative("bytes");
+    }
+
+    blob(): Promise<Blob> {
+      return this.#consumeNative("blob");
+    }
+
+    formData(): Promise<FormData> {
+      return this.#consumeNative("formData");
+    }
+
+    // Unlike text()/json() these have no buffered fast path — they hand off to the
+    // native Request, which owns the accounting from there. The one case it cannot
+    // see is a body srvx already consumed: `_request` then serves a *null-body*
+    // Request (see `_request`), whose body is pristine, so undici's own
+    // "Body is unusable" guard never fires and the read resolves empty. Guard here.
+    #consumeNative(method: "arrayBuffer" | "bytes" | "blob" | "formData"): Promise<any> {
+      if (this.#bodyUsed) {
+        return Promise.reject(bodyUnusable());
+      }
+      try {
+        return this._request[method]();
+      } catch (error) {
+        // Materializing `_request` throws synchronously if the body stream is
+        // locked (a consumer holds a reader). Reject like native fetch.
+        return Promise.reject(error);
+      }
+    }
+
     get _request(): globalThis.Request {
       if (!this.#request) {
         // If the body was already consumed via the buffered/stream fast path the
@@ -311,6 +359,39 @@ export const NodeRequest: {
 
   return Request as any;
 })();
+
+/**
+ * Wraps a body stream so `onDisturb` fires the first time it is read or cancelled.
+ *
+ * `request.body` is handed straight to the consumer, so reading it bypasses the
+ * `#bodyUsed` flag that `text()` / `json()` set. A `ReadableStream` doesn't expose
+ * the fetch spec's "disturbed" bit, so observing it means wrapping.
+ *
+ * `highWaterMark: 0` is what keeps this honest: with the default of 1 the stream
+ * would pull a chunk as soon as it is constructed, marking a body as used merely
+ * because a handler touched `request.body`.
+ */
+function trackDisturbed(stream: ReadableStream, onDisturb: () => void): ReadableStream {
+  const reader = stream.getReader();
+  return new ReadableStream(
+    {
+      async pull(controller) {
+        onDisturb();
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      },
+      cancel(reason) {
+        onDisturb();
+        return reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
 
 /**
  * Undici uses an incompatible Request constructor depending on private property accessors.
