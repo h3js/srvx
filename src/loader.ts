@@ -66,6 +66,11 @@ export type LoadedServerEntry = {
    *
    * This is resolved from `module.fetch`, `module.default.fetch`,
    * or upgraded from a legacy Node.js handler.
+   *
+   * A bare `export default function` is disambiguated by its declared parameter
+   * count (arity): `< 2` params is treated as a web `fetch` handler, `>= 2` as a
+   * legacy Node `(req, res)` handler. See the note at the resolution site for
+   * the edge cases this heuristic gets wrong and how to opt out.
    */
   fetch?: ServerHandler;
 
@@ -170,6 +175,19 @@ export async function loadServerEntry(opts: LoadOptions): Promise<LoadedServerEn
 
   let fetchHandler =
     mod?.fetch || mod?.default?.fetch || mod?.default?.default?.fetch || interceptedServer?.fetch;
+  // Arity heuristic: a bare `export default function` could be either a web
+  // `fetch` handler `(request) => Response` or a legacy Node handler
+  // `(req, res) => void`. There is no runtime marker distinguishing them, so we
+  // fall back to the declared parameter count: `< 2` params → treat as a web
+  // `fetch` handler, `>= 2` → fall through to the Node-compat path below.
+  //
+  // This is a best-effort guess with two known edge cases it gets wrong:
+  //   - a Node handler that only declares `(req)` (1 param) is misread as fetch;
+  //   - a web handler that declares a second `(request, context)`-style param
+  //     (2 params) is misread as Node-compat.
+  // Handlers using rest/default params (`...args`, `req = x`) report a `length`
+  // of `0`, so they are always treated as fetch. Export an explicit
+  // `{ fetch }` (or `default: { fetch }`) to opt out of the heuristic entirely.
   if (!fetchHandler && typeof mod?.default === "function" && mod.default.length < 2) {
     fetchHandler = mod.default;
   }

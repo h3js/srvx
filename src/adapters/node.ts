@@ -86,8 +86,10 @@ class NodeServer implements Server {
       // node:http ignores the listener's return value — use the detached
       // variant to skip the per-response end-tracking Promise.
       return res instanceof Promise
-        ? res.then((resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes))
-        : sendNodeResponseDetached(nodeRes, res);
+        ? res.then((resolvedRes) =>
+            sendNodeResponseDetached(nodeRes, resolvedRes, this.options.silent),
+          )
+        : sendNodeResponseDetached(nodeRes, res, this.options.silent);
     };
 
     this.node = { handler, server: undefined };
