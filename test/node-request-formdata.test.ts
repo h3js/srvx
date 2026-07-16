@@ -29,7 +29,6 @@ describe.runIf(isNode)("node request body methods survive a patched globalThis.R
     }
   });
 
-
   test("formData/blob/arrayBuffer/bytes work after patchGlobalRequest()", async () => {
     // Patch the global, then load a *fresh* request module copy so its IIFE
     // runs while globalThis.Request is the patched subclass.
