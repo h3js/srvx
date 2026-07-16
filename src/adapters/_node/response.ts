@@ -49,9 +49,9 @@ export const NodeResponse: {
 
     get statusText(): string {
       // Default to the spec's empty reason phrase (matching native `Response`,
-      // Bun and Deno) rather than Node's `STATUS_CODES` phrase (e.g. "OK"). Node
-      // still fills in a reason phrase on the wire when we pass "" to
-      // `writeHead`.
+      // Bun and Deno) rather than Node's `STATUS_CODES` phrase (e.g. "OK").
+      // Node uses an explicit "" verbatim in `writeHead`, so the wire status
+      // line carries an empty reason phrase too (legal per RFC 9112).
       return this.#response?.statusText || this.#init?.statusText || "";
     }
 

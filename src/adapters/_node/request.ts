@@ -145,6 +145,8 @@ export const NodeRequest: {
         return this.#headers;
       }
       if (this.#request) {
+        // Unreachable in practice: materializing `_request` reads `this.headers`
+        // first, so `#headers` is always set. Kept as defense in depth.
         return this.#request.headers;
       }
       return (this.#headers = new NodeRequestHeaders(this.#req));
@@ -299,7 +301,9 @@ export const NodeRequest: {
         });
         // Keep `#headers` so `get headers()` returns the same object identity
         // before and after materialization (see the note there). The native
-        // Request holds its own copy; the srvx-side object remains canonical.
+        // Request holds its own snapshot copy: mutations made after this point
+        // show up in `req.headers` but not in `#request.headers` — and thus not
+        // in `clone()` or `formData()`, which delegate to the native Request.
         this.#bodyStream = undefined;
       }
 
