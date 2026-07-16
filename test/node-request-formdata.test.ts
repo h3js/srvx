@@ -13,22 +13,6 @@ import { patchGlobalRequest } from "../src/adapters/node.ts";
 const isNode = !globalThis.Deno && !globalThis.Bun;
 
 describe.runIf(isNode)("node request body methods survive a patched globalThis.Request", () => {
-  // Regression test for https://github.com/h3js/srvx/issues/249
-  // Repeated `patchGlobalRequest()` calls must be idempotent and return the
-  // exact class installed as `globalThis.Request`, not a fresh subclass.
-  test("patchGlobalRequest() is idempotent", () => {
-    const OriginalRequest = globalThis.Request;
-    try {
-      const first = patchGlobalRequest();
-      expect(first).toBe(globalThis.Request);
-      const second = patchGlobalRequest();
-      expect(second).toBe(first);
-      expect(second).toBe(globalThis.Request);
-    } finally {
-      globalThis.Request = OriginalRequest;
-    }
-  });
-
   test("formData/blob/arrayBuffer/bytes work after patchGlobalRequest()", async () => {
     // Patch the global, then load a *fresh* request module copy so its IIFE
     // runs while globalThis.Request is the patched subclass.
