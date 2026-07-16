@@ -576,6 +576,58 @@ describe("node server startup", () => {
   });
 });
 
+describe("reusePort", () => {
+  test("maps reusePort to the SO_REUSEPORT listen option", () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      reusePort: true,
+      manual: true,
+      fetch: () => new Response(""),
+    });
+    const serveOptions = (server as { serveOptions?: Record<string, unknown> }).serveOptions;
+    expect(serveOptions).toMatchObject({ reusePort: true, exclusive: false });
+  });
+
+  // SO_REUSEPORT is only supported on Linux (and a few BSDs) with Node >= 22.12.
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  const supported =
+    !globalThis.Deno &&
+    !globalThis.Bun &&
+    process.platform === "linux" &&
+    (major > 22 || (major === 22 && minor >= 12));
+
+  test.skipIf(!supported)("two servers can bind the same port with reusePort", async () => {
+    // Reserve then release a free port to reuse across both servers.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const makeServer = () =>
+      serve({
+        port,
+        hostname: "127.0.0.1",
+        reusePort: true,
+        manual: true,
+        fetch: () => new Response("ok"),
+      });
+
+    const a = makeServer();
+    const b = makeServer();
+    try {
+      // Without reusePort, the second listen() on the same port would EADDRINUSE.
+      await a.serve();
+      await b.serve();
+      expect(new URL(a.url!).port).toBe(String(port));
+      expect(new URL(b.url!).port).toBe(String(port));
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+});
+
 describe("FastResponse header dedup", () => {
   // `_toNodeResponse().headers` is a flat rawHeaders-style list; header names
   // are normalized to lowercase (matching native Response semantics).
