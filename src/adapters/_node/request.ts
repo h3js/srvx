@@ -5,7 +5,7 @@ import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
 import { createBodyTooLargeError, limitBodyStream } from "../../_body-limit.ts";
-import { isDisturbed, Readable } from "node:stream";
+import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
   req: NodeServerRequest;
@@ -229,12 +229,17 @@ export const NodeRequest: {
     // (text()/json()); a consumer reading or cancelling the stream `body` handed
     // out bypasses it, so consult the stream's own disturbed bit via
     // `isDisturbed` (the same primitive undici's guards use — a `ReadableStream`
-    // doesn't expose it) and latch the answer. Latching matters: `_request`
-    // calls this *before* releasing `#bodyStream` to the native Request, past
-    // which undici owns the accounting — its tee reads this stream on `clone()`,
-    // which must not count as a read of this request's body.
+    // doesn't expose it; the `Readable` static alias is used because `@types/node`
+    // doesn't declare the module-level export) and latch the answer. Latching
+    // matters: `_request` calls this *before* releasing `#bodyStream` to the
+    // native Request, past which undici owns the accounting — its tee reads this
+    // stream on `clone()`, which must not count as a read of this request's body.
     #isBodyUsed(): boolean {
-      if (!this.#bodyUsed && this.#bodyStream && isDisturbed(this.#bodyStream)) {
+      if (
+        !this.#bodyUsed &&
+        this.#bodyStream &&
+        Readable.isDisturbed(this.#bodyStream as unknown as NodeJS.ReadableStream)
+      ) {
         this.#bodyUsed = true;
       }
       return this.#bodyUsed;
