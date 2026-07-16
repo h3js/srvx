@@ -1,8 +1,6 @@
 {
   "version": "5",
   "specifiers": {
-    "npm:@cloudflare/workers-types@^4.20260701.1": "4.20260702.1",
-    "npm:@hono/node-server@^2.0.6": "2.0.8_hono@4.12.27",
     "npm:@mitata/counters@^0.0.8": "0.0.8",
     "npm:@mjackson/node-fetch-server@0.7": "0.7.0",
     "npm:@types/aws-lambda@^8.10.162": "8.10.162",
@@ -10,29 +8,19 @@
     "npm:@types/deno@^2.7.0": "2.7.0",
     "npm:@types/express@^5.0.6": "5.0.6",
     "npm:@types/node-forge@^1.3.14": "1.3.14",
-    "npm:@types/node@^26.1.0": "26.1.0",
     "npm:@types/serviceworker@^0.0.199": "0.0.199",
-    "npm:@typescript/native-preview@latest": "7.0.0-dev.20260702.3",
-    "npm:@vitest/coverage-v8@^4.1.9": "4.1.9_vitest@4.1.9_@types+node@26.1.0_vite@8.1.3__@types+node@26.1.0",
     "npm:@whatwg-node/server@0.11": "0.11.0",
     "npm:automd@~0.4.3": "0.4.3",
     "npm:changelogen@~0.6.2": "0.6.2",
     "npm:eslint-config-unjs@~0.6.2": "0.6.2_eslint@10.6.0_typescript@6.0.3",
     "npm:execa@^9.6.1": "9.6.1",
     "npm:express@^5.2.1": "5.2.1",
-    "npm:fastify@^5.9.0": "5.9.0",
     "npm:get-port-please@^3.2.0": "3.2.0",
     "npm:mdbox@~0.1.1": "0.1.1",
     "npm:mitata@^1.0.34": "1.0.34",
     "npm:node-forge@^1.4.0": "1.4.0",
-    "npm:obuild@~0.4.37": "0.4.37_@typescript+native-preview@7.0.0-dev.20260702.3_typescript@6.0.3",
-    "npm:oxfmt@0.57": "0.57.0",
-    "npm:oxlint@^1.72.0": "1.72.0",
-    "npm:srvx@~0.11.18": "0.11.19",
     "npm:tslib@^2.8.1": "2.8.1",
-    "npm:typescript@^6.0.3": "6.0.3",
-    "npm:undici@8.3": "8.3.0",
-    "npm:vitest@^4.1.9": "4.1.9_@types+node@26.1.0_@vitest+coverage-v8@4.1.9_vite@8.1.3__@types+node@26.1.0"
+    "npm:undici@8.3": "8.3.0"
   },
   "npm": {
     "@babel/generator@8.0.0": {
@@ -3324,8 +3312,8 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
-        "npm:@cloudflare/workers-types@^4.20260701.1",
-        "npm:@hono/node-server@^2.0.6",
+        "npm:@cloudflare/workers-types@5",
+        "npm:@hono/node-server@^2.0.8",
         "npm:@mitata/counters@^0.0.8",
         "npm:@mjackson/node-fetch-server@0.7",
         "npm:@types/aws-lambda@^8.10.162",
@@ -3333,29 +3321,28 @@
         "npm:@types/deno@^2.7.0",
         "npm:@types/express@^5.0.6",
         "npm:@types/node-forge@^1.3.14",
-        "npm:@types/node@^26.1.0",
+        "npm:@types/node@^26.1.1",
         "npm:@types/serviceworker@^0.0.199",
-        "npm:@typescript/native-preview@latest",
-        "npm:@vitest/coverage-v8@^4.1.9",
+        "npm:@vitest/coverage-v8@^4.1.10",
         "npm:@whatwg-node/server@0.11",
         "npm:automd@~0.4.3",
         "npm:changelogen@~0.6.2",
         "npm:eslint-config-unjs@~0.6.2",
         "npm:execa@^9.6.1",
         "npm:express@^5.2.1",
-        "npm:fastify@^5.9.0",
+        "npm:fastify@^5.10.0",
         "npm:get-port-please@^3.2.0",
         "npm:mdbox@~0.1.1",
         "npm:mitata@^1.0.34",
         "npm:node-forge@^1.4.0",
-        "npm:obuild@~0.4.37",
-        "npm:oxfmt@0.57",
-        "npm:oxlint@^1.72.0",
-        "npm:srvx@~0.11.18",
+        "npm:obuild@~0.4.38",
+        "npm:oxfmt@>=0.58.0",
+        "npm:oxlint@^1.73.0",
+        "npm:srvx@~0.11.21",
         "npm:tslib@^2.8.1",
-        "npm:typescript@^6.0.3",
+        "npm:typescript@^7.0.2",
         "npm:undici@8.3",
-        "npm:vitest@^4.1.9"
+        "npm:vitest@^4.1.10"
       ]
     }
   }

@@ -1,4 +1,4 @@
-import { sendNodeResponseDetached } from "./_node/send.ts";
+import { sendErrorResponse, sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
 import {
   fmtURL,
@@ -82,12 +82,22 @@ class NodeServer implements Server {
         trustProxy: this.options.trustProxy,
       });
       request.waitUntil = this.#wait?.waitUntil;
-      const res = fetchHandler(request);
+      let res: Response | Promise<Response>;
+      try {
+        res = fetchHandler(request);
+      } catch (error) {
+        // Sync throw with no `error` option: answer 500 instead of letting it
+        // escape as an `uncaughtException` (see sendErrorResponse).
+        return sendErrorResponse(nodeRes, error, this.options.silent);
+      }
       // node:http ignores the listener's return value — use the detached
       // variant to skip the per-response end-tracking Promise.
       return res instanceof Promise
-        ? res.then((resolvedRes) =>
-            sendNodeResponseDetached(nodeRes, resolvedRes, this.options.silent),
+        ? res.then(
+            (resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes, this.options.silent),
+            // Rejection handler (not `.catch`) so send failures, which
+            // `sendNodeResponseDetached` already answers, aren't handled twice.
+            (error) => sendErrorResponse(nodeRes, error, this.options.silent),
           )
         : sendNodeResponseDetached(nodeRes, res, this.options.silent);
     };
