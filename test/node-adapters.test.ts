@@ -573,15 +573,12 @@ describe("FastResponse header dedup", () => {
 // `Response`, which throws a RangeError for anything outside 200-599 (the fast
 // path never builds a native Response, so the check was previously skipped).
 describe("FastResponse status validation", () => {
-  test.each([99, 1000, 0, -1, 600])(
-    "throws RangeError for out-of-range status %i",
-    (status) => {
-      expect(() => new FastResponse(null, { status })).toThrow(RangeError);
-      expect(() => new FastResponse(null, { status })).toThrow(
-        `init["status"] must be in the range of 200 to 599, inclusive.`,
-      );
-    },
-  );
+  test.each([99, 1000, 0, -1, 600])("throws RangeError for out-of-range status %i", (status) => {
+    expect(() => new FastResponse(null, { status })).toThrow(RangeError);
+    expect(() => new FastResponse(null, { status })).toThrow(
+      `init["status"] must be in the range of 200 to 599, inclusive.`,
+    );
+  });
 
   test.each([200, 204, 404, 500, 599])(
     "accepts valid status %i and exposes it via .status",
@@ -597,9 +594,7 @@ describe("FastResponse status validation", () => {
   });
 
   test("_toNodeResponse carries the validated status", () => {
-    expect(
-      new FastResponse(null, { status: 404 })._toNodeResponse().status,
-    ).toBe(404);
+    expect(new FastResponse(null, { status: 404 })._toNodeResponse().status).toBe(404);
   });
 
   test("matches native Response range behavior for out-of-range status", () => {

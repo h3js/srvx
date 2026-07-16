@@ -51,9 +51,7 @@ export const NodeResponse: {
           // 2^16, so e.g. `"204"` -> 204, `599.9` -> 599, `65736` -> 200.
           const code = (status as number) & 0xffff;
           if (code < 200 || code > 599) {
-            throw new RangeError(
-              `init["status"] must be in the range of 200 to 599, inclusive.`,
-            );
+            throw new RangeError(`init["status"] must be in the range of 200 to 599, inclusive.`);
           }
         }
       }
