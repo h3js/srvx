@@ -133,23 +133,10 @@ export const NodeRequest: {
     }
 
     get headers(): Headers {
-      // Return the srvx-side Headers object whenever it exists, even after the
-      // native Request has materialized. Materializing `_request` always reads
-      // `this.headers` (so `#headers` is populated) but the native constructor
-      // copies the entries into its own Headers instance. Switching the getter
-      // to `this.#request.headers` there would leave a reference taken earlier
-      // (`const h = req.headers; req._request; h.set(...)`) pointing at a now-
-      // detached object whose mutations are invisible. Keeping `#headers`
-      // canonical keeps those references live.
-      if (this.#headers) {
-        return this.#headers;
-      }
       if (this.#request) {
-        // Unreachable in practice: materializing `_request` reads `this.headers`
-        // first, so `#headers` is always set. Kept as defense in depth.
         return this.#request.headers;
       }
-      return (this.#headers = new NodeRequestHeaders(this.#req));
+      return (this.#headers ||= new NodeRequestHeaders(this.#req));
     }
 
     get _abortController() {
@@ -299,11 +286,7 @@ export const NodeRequest: {
           // @ts-expect-error Undici specific
           duplex: body ? "half" : undefined,
         });
-        // Keep `#headers` so `get headers()` returns the same object identity
-        // before and after materialization (see the note there). The native
-        // Request holds its own snapshot copy: mutations made after this point
-        // show up in `req.headers` but not in `#request.headers` — and thus not
-        // in `clone()` or `formData()`, which delegate to the native Request.
+        this.#headers = undefined;
         this.#bodyStream = undefined;
       }
 

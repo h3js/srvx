@@ -850,33 +850,6 @@ describe("node T3 correctness", () => {
     await server.close(true);
   });
 
-  // A headers reference taken before `_request` materialization must stay live.
-  test("headers reference stays live across _request materialization", async () => {
-    const server = serve({
-      port: 0,
-      async fetch(req) {
-        const h = req.headers;
-        // Force materialization of the underlying native Request.
-        void req._request;
-        h.set("x-added-after", "1");
-        return Response.json({
-          sameIdentity: req.headers === h,
-          viaGetter: req.headers.get("x-added-after"),
-          viaRef: h.get("x-added-after"),
-        });
-      },
-    });
-    await server.ready();
-
-    const res = await fetch(server.url!);
-    expect(await res.json()).toEqual({
-      sameIdentity: true,
-      viaGetter: "1",
-      viaRef: "1",
-    });
-    await server.close(true);
-  });
-
   // A synchronous send failure (e.g. an invalid header value hitting writeHead)
   // must be logged for diagnostics (unless silenced) and returned as a bare 500
   // without leaking details to the client.
