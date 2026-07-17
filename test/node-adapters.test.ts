@@ -1209,6 +1209,89 @@ describe("node fetch-spec correctness regressions", () => {
     await server.close(true);
   });
 
+  // A headers reference taken before `_request` materialization must stay live:
+  // `req.headers` keeps its identity and mutations through the old reference
+  // remain visible (https://github.com/h3js/srvx/issues/245).
+  test("headers reference stays live across _request materialization", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const h = req.headers;
+        // Force materialization of the underlying native Request.
+        void req._request;
+        h.set("x-added-after", "1");
+        return Response.json({
+          sameIdentity: req.headers === h,
+          viaGetter: req.headers.get("x-added-after"),
+          viaRef: h.get("x-added-after"),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(await res.json()).toEqual({
+      sameIdentity: true,
+      viaGetter: "1",
+      viaRef: "1",
+    });
+    await server.close(true);
+  });
+
+  // The dual of the identity test — the case that sank the #243 approach:
+  // after materialization there is a single header store, so mutations through
+  // `req.headers` must be visible to the native views (`_request.headers`,
+  // `clone()`, and `formData()`'s content-type sniff), and vice versa.
+  test("headers mutations after _request materialization reach both views", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const native = req._request!; // materialize first
+        req.headers.set("x-via-wrapper", "1");
+        native.headers.set("x-via-native", "1");
+        return Response.json({
+          nativeSeesWrapperSet: native.headers.get("x-via-wrapper"),
+          cloneSeesWrapperSet: req.clone().headers.get("x-via-wrapper"),
+          wrapperSeesNativeSet: req.headers.get("x-via-native"),
+          preMaterializationHeader: native.headers.get("x-early"),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { headers: { "x-early": "yes" } });
+    expect(await res.json()).toEqual({
+      nativeSeesWrapperSet: "1",
+      cloneSeesWrapperSet: "1",
+      wrapperSeesNativeSet: "1",
+      preMaterializationHeader: "yes",
+    });
+    await server.close(true);
+  });
+
+  // formData() sniffs content-type off the native request; a content-type set
+  // via `req.headers` before the native Request exists must be honored.
+  test("formData() sees content-type set through req.headers", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        // Overwrite the incoming content-type before materialization.
+        req.headers.set("content-type", "application/x-www-form-urlencoded");
+        const form = await req.formData();
+        return Response.json({ value: form.get("a") });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "a=1",
+    });
+    expect(await res.json()).toEqual({ value: "1" });
+    await server.close(true);
+  });
+
   // A synchronous send failure (e.g. an invalid header value hitting writeHead)
   // must be logged for diagnostics (unless silenced) and returned as a bare 500
   // without leaking details to the client.
