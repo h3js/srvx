@@ -20,6 +20,8 @@ ${c.gray("$")} ${c.cyan(command)} serve --prod                 ${c.gray("# Start
 ${c.gray("$")} ${c.cyan(command)} serve --port=8080            ${c.gray("# Listen on port 8080")}
 ${c.gray("$")} ${c.cyan(command)} serve --host=localhost       ${c.gray("# Bind to localhost only")}
 ${c.gray("$")} ${c.cyan(command)} serve --static=./dist        ${c.gray("# Serve static files (no entry needed)")}
+${c.gray("$")} ${c.cyan(command)} serve --static=./dist --no-dir-listing ${c.gray("# ...without the dev directory listing")}
+${c.gray("$")} ${c.cyan(command)} serve --prod --dir-listing   ${c.gray("# Enable the directory listing in production")}
 ${c.gray("$")} ${c.cyan(command)} serve --import=jiti/register ${c.gray(`# Enable ${c.url("jiti", "https://github.com/unjs/jiti")} loader`)}
 ${c.gray("$")} ${c.cyan(command)} serve --tls --cert=cert.pem --key=key.pem  ${c.gray("# Enable TLS (HTTPS/HTTP2)")}
 
@@ -47,6 +49,8 @@ ${c.bold("SERVE OPTIONS")}
   ${c.green("-p, --port")} ${c.yellow("<port>")}         Port to listen on (default: ${c.yellow("3000")})
   ${c.green("--host, --hostname")} ${c.yellow("<host>")} Host to bind to (default: all interfaces)
   ${c.green("-s, --static")} ${c.yellow("<dir>")}        Serve static files from the specified directory (default: ${c.yellow("public")})
+  ${c.green("--dir-listing")}             Serve a directory listing for index-less directories (default: on in dev, off with ${c.green("--prod")})
+  ${c.green("--no-dir-listing")}          Disable the directory listing (e.g. in dev)
   ${c.green("--prod")}                    Run in production mode (no watch, no debug)
   ${c.green("--import")} ${c.yellow("<loader>")}         ES module to preload
   ${c.green("--tls")}                     Enable TLS (HTTPS/HTTP2)
