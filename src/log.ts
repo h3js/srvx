@@ -7,9 +7,8 @@ type Paint = (text: string) => string;
 
 const plain: Paint = (text) => text;
 
-// Indexed by the leading digit of the status: 1xx blue, 2xx green, 3xx yellow,
-// anything else (4xx, 5xx and out-of-range codes) red.
-const statusColors: readonly Paint[] = [c.red, c.blue, c.green, c.yellow, c.red, c.red];
+const paintForStatus = (code: number): Paint =>
+  code < 200 ? c.blue : code < 300 ? c.green : code < 400 ? c.yellow : c.red;
 
 /**
  * ANSI escapes are noise once output is piped into a file or a log collector,
@@ -104,9 +103,10 @@ function hookExit(): void {
 
 export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) => {
   const colors = colorsEnabled();
-  const gray = colors ? c.gray : plain;
-  const bold = colors ? c.bold : plain;
-  const blue = colors ? c.blue : plain;
+  const paint = (fn: Paint): Paint => (colors ? fn : plain);
+  const gray = paint(c.gray);
+  const bold = paint(c.bold);
+  const blue = paint(c.blue);
 
   // `toLocaleTimeString()` is Intl-backed and costs more than the rest of the
   // line put together, yet its second-resolution output only changes once a
@@ -129,8 +129,7 @@ export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) =
   const status = (code: number): string => {
     let text = statusCache.get(code);
     if (text === undefined) {
-      const paint = colors ? (statusColors[(code / 100) | 0] ?? c.red) : plain;
-      text = `[${paint(code + "")}]`;
+      text = `[${paint(paintForStatus(code))(code + "")}]`;
       statusCache.set(code, text);
     }
     return text;
