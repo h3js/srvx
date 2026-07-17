@@ -302,6 +302,66 @@ describe("adapters", () => {
     }
   });
 
+  // https://github.com/h3js/srvx/issues/248
+  // Hop-by-hop headers (RFC 9110 §7.6.1) describe a single transport hop, not
+  // the message. Node auto-generates `Connection` on the synthetic wire and a
+  // handler may set any of them explicitly; none may leak into the web Response
+  // that `toWebResponse()` synthesizes.
+  describe("hop-by-hop headers do not leak into the web Response", () => {
+    test("auto-generated Connection: close is stripped", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello");
+      expect(res.headers.get("connection")).toBe(null);
+      // End-to-end headers are untouched.
+      expect(res.headers.get("content-type")).toBe("text/plain");
+    });
+
+    const hopByHop: [string, string][] = [
+      ["connection", "keep-alive"],
+      ["keep-alive", "timeout=5"],
+      ["proxy-authenticate", "Basic"],
+      ["proxy-authorization", "Basic abc"],
+      ["te", "trailers"],
+      ["transfer-encoding", "chunked"],
+      ["upgrade", "h2c"],
+    ];
+    for (const [name, value] of hopByHop) {
+      test(`explicit ${name} is stripped`, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          res.writeHead(200, { [name]: value, "content-type": "text/plain" });
+          res.end("hello");
+        };
+        const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("hello");
+        expect(res.headers.get(name)).toBe(null);
+        expect(res.headers.get("content-type")).toBe("text/plain");
+      });
+    }
+
+    // Any field-name listed in `Connection` is itself hop-by-hop and must go too.
+    test("field-names listed in Connection are stripped", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        res.writeHead(200, {
+          connection: "close, x-secret",
+          "x-secret": "leak",
+          "content-type": "text/plain",
+        });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("connection")).toBe(null);
+      expect(res.headers.get("x-secret")).toBe(null);
+      expect(res.headers.get("content-type")).toBe("text/plain");
+    });
+  });
+
   // F14: null-body statuses (204/304/...) must not throw when constructing the
   // web Response (which would surface as a 500).
   test("null-body status 204 does not become a 500", async () => {

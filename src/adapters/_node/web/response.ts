@@ -19,6 +19,25 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | undefined {
 // Statuses that must not carry a response body per the Fetch/HTTP spec.
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
+// Hop-by-hop headers (RFC 9110 §7.6.1). They describe a single transport hop,
+// not the message, so they must never be carried into the web `Response` the
+// bridge synthesizes. Node auto-generates `Connection` (and `Keep-Alive`) on the
+// synthetic wire, and a handler may set any of these explicitly — all of them
+// would otherwise leak out of `toWebResponse()`. `Transfer-Encoding` is also
+// stripped earlier at the write choke points because it changes body framing;
+// here it is covered again as a header-output defense.
+// See https://github.com/h3js/srvx/issues/248
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
   #socketError?: Error;
@@ -144,13 +163,31 @@ export class WebServerResponse extends ServerResponse {
 
     // this.getHeaders() is unreliable because it misses direct writeHead() calls
     const httpHeader = (this as any)._header?.split("\r\n");
+    // Any field-name listed in the `Connection` header is itself hop-by-hop
+    // (RFC 9110 §7.6.1), so collect those from a first pass and drop them too.
+    const connectionTokens = new Set<string>();
     for (let i = 1; httpHeader && i < httpHeader.length; i++) {
       const sepIndex = httpHeader[i].indexOf(": ");
       if (sepIndex === -1) continue;
       const key = httpHeader[i].slice(0, Math.max(0, sepIndex));
       const value = httpHeader[i].slice(Math.max(0, sepIndex + 2));
       if (!key) continue;
+      const lowerKey = key.toLowerCase();
+      if (lowerKey === "connection") {
+        for (const token of value.split(",")) {
+          const t = token.trim().toLowerCase();
+          if (t) connectionTokens.add(t);
+        }
+      }
+      if (HOP_BY_HOP_HEADERS.has(lowerKey)) continue;
       headers.push([key, value]);
+    }
+    if (connectionTokens.size > 0) {
+      for (let i = headers.length - 1; i >= 0; i--) {
+        if (connectionTokens.has(headers[i][0].toLowerCase())) {
+          headers.splice(i, 1);
+        }
+      }
     }
 
     // Null-body statuses (101, 204, 205, 304) cannot have a body; passing a
