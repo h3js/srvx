@@ -362,6 +362,80 @@ describe("adapters", () => {
     // handler was not reading. (Without the fix this equals expectedLength.)
     expect(bufferedBeforeReading).toBeLessThan(expectedLength / 2);
   });
+
+  // Connect-style `(req, res, next)` middleware on the synthetic bridge path
+  // (no real Node req/res) must receive a working `next`. Without it, invoking
+  // `next` threw ("next is not a function") and surfaced as a 500.
+  test("connect-style middleware that ends the response works", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      // @ts-expect-error http1/http2 union
+      res.writeHead(201, { "content-type": "text/plain" });
+      res.end("middleware ok");
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe("middleware ok");
+  });
+
+  test("connect-style middleware calling next() does not 500", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      res.setHeader("x-mw", "1");
+      // No downstream handler: finalize with the current response state.
+      next();
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
+        status: r.status,
+        header: r.headers.get("x-mw"),
+      })),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for next()")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ status: 200, header: "1" });
+  });
+
+  test("connect-style middleware calling next(err) propagates as an error", async () => {
+    const error = new Error("boom");
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      next(error);
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    // Silence the expected error log from fetchNodeHandler's catch.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws async propagates as an error", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => Promise.reject(new Error("async boom"));
+    const webHandler = toFetchHandler(middleware as any);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe("request signal", () => {
@@ -790,6 +864,176 @@ describe("node body crash regressions", () => {
       cloneOk: true,
       mode: "cors",
     });
+    await server.close(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/247
+  // Only text()/json() guarded against a second read. The rest of the body
+  // methods are inherited from the native Request, which `_request` hands a
+  // *null* body once srvx has consumed the real one — so undici's own guard saw
+  // a pristine body and they resolved empty, silently masking double-read bugs
+  // that throw on every other runtime.
+  test("every body method rejects after the body is consumed", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        await req.text();
+        const outcomes: Record<string, string> = { bodyUsed: String(req.bodyUsed) };
+        for (const method of [
+          "arrayBuffer",
+          "bytes",
+          "blob",
+          "formData",
+          "text",
+          "json",
+        ] as const) {
+          outcomes[method] = await (req[method]() as Promise<unknown>).then(
+            () => "resolved",
+            (error) =>
+              error instanceof TypeError && /unusable/.test(error.message)
+                ? "TypeError: unusable"
+                : `other: ${error}`,
+          );
+        }
+        return Response.json(outcomes);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({
+      bodyUsed: "true",
+      arrayBuffer: "TypeError: unusable",
+      bytes: "TypeError: unusable",
+      blob: "TypeError: unusable",
+      formData: "TypeError: unusable",
+      text: "TypeError: unusable",
+      json: "TypeError: unusable",
+    });
+    await server.close(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/247 (related)
+  // Draining `req.body` never flipped `bodyUsed`, so a later read still looked
+  // like a first read: it reached the `_request` getter, which threw
+  // "... disturbed or locked" *synchronously* out of the handler.
+  test("streaming the body directly marks it used and rejects later reads", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        let streamed = "";
+        for await (const chunk of req.body!) {
+          streamed += new TextDecoder().decode(chunk as Uint8Array);
+        }
+        return Response.json({
+          streamed,
+          bodyUsed: req.bodyUsed,
+          arrayBuffer: await req.arrayBuffer().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({
+      streamed: "hello",
+      bodyUsed: true,
+      arrayBuffer: "TypeError",
+    });
+    await server.close(true);
+  });
+
+  // The flip side of the above: `bodyUsed` tracks the spec's "disturbed" bit, so
+  // merely *touching* `request.body` must not consume it — `isDisturbed` on the
+  // handed-out stream must stay false until an actual read or cancel.
+  test("accessing req.body without reading it does not mark the body used", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const hasBody = req.body !== null;
+        const bodyUsed = req.bodyUsed;
+        // The body is undisturbed, so a buffered read must still work.
+        return Response.json({ hasBody, bodyUsed, text: await req.text() });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ hasBody: true, bodyUsed: false, text: "hello" });
+    await server.close(true);
+  });
+
+  // Cancelling the body disturbs it per the fetch spec, exactly like reading it:
+  // `bodyUsed` flips and later reads reject.
+  test("cancelling req.body marks the body used and rejects later reads", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        await req.body!.cancel();
+        return Response.json({
+          bodyUsed: req.bodyUsed,
+          text: await req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ bodyUsed: true, text: "TypeError" });
+    await server.close(true);
+  });
+
+  // `clone()` tees the body, so reading the clone must leave the original
+  // readable — the "disturbed" tracking on the underlying stream must not
+  // mistake a pull driven by the clone for a read of this request's body.
+  test("reading a clone leaves the original body readable", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const fromClone = await req.clone().text();
+        return Response.json({
+          fromClone,
+          fromOriginal: await req.text().then(
+            (text) => `resolved(${text})`,
+            (error) => `${error}`,
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ fromClone: "hello", fromOriginal: "resolved(hello)" });
+    await server.close(true);
+  });
+
+  // The native Request owns the accounting once it holds the real body: a first
+  // arrayBuffer() must read it, and only the second read rejects.
+  test("arrayBuffer() reads the body once and rejects on a second read", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const first = new TextDecoder().decode(await req.arrayBuffer());
+        return Response.json({
+          first,
+          bodyUsed: req.bodyUsed,
+          second: await req.arrayBuffer().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ first: "hello", bodyUsed: true, second: "TypeError" });
     await server.close(true);
   });
 
