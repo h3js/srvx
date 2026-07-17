@@ -55,10 +55,9 @@ const SINKS = [
 ];
 
 const oha = (duration) =>
-  execSync(
-    `oha http://localhost:3000 --no-tui --output-format json -c ${CONNS} -z ${duration}`,
-    { encoding: "utf8" },
-  );
+  execSync(`oha http://localhost:3000 --no-tui --output-format json -c ${CONNS} -z ${duration}`, {
+    encoding: "utf8",
+  });
 
 async function waitReady(retries = 100) {
   for (let i = 0; i < retries; i++) {
@@ -130,7 +129,9 @@ for (const { sink, impl } of cells) {
 function markdownTable(headers, rows, align) {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const pad = (s, i) => (align[i] === "right" ? s.padStart(widths[i]) : s.padEnd(widths[i]));
-  const sep = widths.map((w, i) => (align[i] === "right" ? "-".repeat(w - 1) + ":" : "-".repeat(w)));
+  const sep = widths.map((w, i) =>
+    align[i] === "right" ? "-".repeat(w - 1) + ":" : "-".repeat(w),
+  );
   const line = (cells) => `| ${cells.map((c, i) => pad(c, i)).join(" | ")} |`;
   return [line(headers), `| ${sep.join(" | ")} |`, ...rows.map(line)].join("\n");
 }
@@ -140,17 +141,13 @@ const rows = SINKS.map(({ name }) => {
   const withLog = rps[name].log;
   // Overhead = throughput given up by adding the logger, relative to no logger.
   const overhead = ((none - withLog) / none) * 100;
-  return [
-    name,
-    none.toLocaleString(),
-    withLog.toLocaleString(),
-    `-${overhead.toFixed(1)}%`,
-  ];
+  return [name, none.toLocaleString(), withLog.toLocaleString(), `-${overhead.toFixed(1)}%`];
 });
 
-const table = markdownTable(
-  ["sink", "no logger", "log()", "overhead"],
-  rows,
-  ["left", "right", "right", "right"],
-);
+const table = markdownTable(["sink", "no logger", "log()", "overhead"], rows, [
+  "left",
+  "right",
+  "right",
+  "right",
+]);
 console.log("\n" + table + "\n");

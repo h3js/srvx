@@ -19,11 +19,11 @@ a single write. A single keep-alive connection serialises the requests and hides
 this, so the benchmark drives a real server with `oha` at `CONNS` connections
 rather than looping in-process.
 
-| sink      | what it represents                                                    |
-| --------- | --------------------------------------------------------------------- |
-| `devnull` | logs discarded — isolates the formatting/CPU cost from any real I/O    |
-| `pipe`    | logs streamed to a reader (a log collector); closest to production    |
-| `file`    | logs appended to a file on disk                                       |
+| sink      | what it represents                                                  |
+| --------- | ------------------------------------------------------------------- |
+| `devnull` | logs discarded — isolates the formatting/CPU cost from any real I/O |
+| `pipe`    | logs streamed to a reader (a log collector); closest to production  |
+| `file`    | logs appended to a file on disk                                     |
 
 `overhead` is the throughput given up by adding the logger, relative to the
 no-logger baseline for that same sink. The run order of the cells is shuffled so
