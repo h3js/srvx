@@ -255,6 +255,53 @@ describe("adapters", () => {
     expect(await res.text()).toBe(payload);
   });
 
+  // https://github.com/h3js/srvx/issues/248
+  // An explicit `Transfer-Encoding: chunked` must not chunk-frame the bridged
+  // body. The synthetic response is close-delimited (its raw bytes are captured
+  // and re-wrapped in a web Response), so framing would surface as literal chunk
+  // metadata in the body ("5\r\nhello\r\n...") and leak a hop-by-hop header.
+  describe("explicit Transfer-Encoding: chunked does not corrupt the body", () => {
+    const cases: { name: string; setHeaders: (res: any) => void }[] = [
+      {
+        name: "writeHead object form",
+        setHeaders: (res) => res.writeHead(200, { "transfer-encoding": "chunked" }),
+      },
+      {
+        name: "writeHead with statusMessage",
+        setHeaders: (res) => res.writeHead(200, "OK", { "Transfer-Encoding": "chunked" }),
+      },
+      {
+        name: "writeHead flat array form",
+        setHeaders: (res) => res.writeHead(200, ["transfer-encoding", "chunked"] as any),
+      },
+      {
+        name: "writeHead nested array form",
+        setHeaders: (res) => res.writeHead(200, [["transfer-encoding", "chunked"]] as any),
+      },
+      {
+        name: "setHeader",
+        setHeaders: (res) => res.setHeader("Transfer-Encoding", "chunked"),
+      },
+    ];
+
+    for (const { name, setHeaders } of cases) {
+      test(name, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          setHeaders(res as any);
+          res.write("hello");
+          res.end("world");
+        };
+        const webHandler = toFetchHandler(handler);
+        const res = await webHandler(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        // Body arrives verbatim, without chunk framing.
+        expect(await res.text()).toBe("helloworld");
+        // The hop-by-hop framing header does not leak into the web Response.
+        expect(res.headers.get("transfer-encoding")).toBe(null);
+      });
+    }
+  });
+
   // F14: null-body statuses (204/304/...) must not throw when constructing the
   // web Response (which would surface as a 500).
   test("null-body status 204 does not become a 500", async () => {
