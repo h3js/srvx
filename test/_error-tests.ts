@@ -10,10 +10,10 @@ const testDir = fileURLToPath(new URL(".", import.meta.url));
  * option) under the given runtime and assert that an unhandled handler throw
  * does not take the process down and the client still gets a response.
  *
- * Deno and Bun both surface an uncaught handler error as `500` and keep
- * serving. Node's in-process behavior differs (the throw escapes as an
- * `uncaughtException` that would crash the process) and is documented
- * separately in `node-error-paths.test.ts`.
+ * All three runtimes answer an uncaught handler error with a `500` and keep
+ * serving -- Deno and Bun via their runtime-level catch, Node via the adapter
+ * (#244). Only a spawned process can prove the "does not crash" half; the
+ * in-process assertions for Node live in `node-error-paths.test.ts`.
  */
 export function addExecUnhandledThrowTests(cmd: string): void {
   let childProc: ExecaRes;
