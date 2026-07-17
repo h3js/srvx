@@ -38,17 +38,63 @@ export function sendNodeResponse(
 export function sendNodeResponseDetached(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
+  silent?: boolean,
 ): Promise<void> | void {
   try {
     return _sendNodeResponse(nodeRes, webRes, true);
   } catch (error) {
-    handleSendError(nodeRes, error);
+    handleSendError(nodeRes, error, silent);
   }
 }
 
-function handleSendError(nodeRes: NodeServerResponse, _error: unknown): void {
+function handleSendError(nodeRes: NodeServerResponse, error: unknown, silent?: boolean): void {
+  // A synchronous throw here is almost always a serialization bug (e.g. an
+  // invalid header name/value passed to `writeHead`). Without a diagnostic the
+  // client just sees a bare 500 with no way to trace the cause. Surface the
+  // underlying error on the server (unless silenced) while keeping the client
+  // response detail-free.
+  if (!silent) {
+    console.error("[srvx] Failed to send response:", error);
+  }
+  failResponse(nodeRes);
+}
+
+/**
+ * Answers an error that escaped the fetch handler with a bare 500.
+ *
+ * Bun and Deno both back their handler with a runtime-level catch that answers
+ * 500 and keeps serving; node:http has no equivalent, so an escaping error
+ * becomes a process-level `uncaughtException`/`unhandledRejection` (fatal for
+ * an unguarded process) and leaves the client socket hanging until it times
+ * out. Catching here keeps the default path consistent across runtimes.
+ *
+ * Mostly reached when no `error` option is set, since `errorPlugin` otherwise
+ * handles the error as middleware first — but it also backstops an `error`
+ * handler that throws itself.
+ *
+ * @internal
+ */
+export function sendErrorResponse(
+  nodeRes: NodeServerResponse,
+  error: unknown,
+  silent?: boolean,
+): void {
+  // Mirrors the Bun/Deno default of logging the cause server-side; the client
+  // response stays detail-free.
+  if (!silent) {
+    console.error("[srvx] Unhandled error in fetch handler:", error);
+  }
+  failResponse(nodeRes);
+}
+
+function failResponse(nodeRes: NodeServerResponse): void {
+  if (nodeRes.writableEnded) {
+    // Response already complete (e.g. the handler wrote directly to
+    // `req.runtime.node.res` and then failed) — nothing left to answer with.
+    return;
+  }
   if (nodeRes.headersSent) {
-    // Response already committed — the only recovery is to tear down the socket.
+    // Status line already committed — the only recovery is to tear down the socket.
     nodeRes.destroy();
   } else {
     nodeRes.statusCode = 500;
@@ -187,8 +233,17 @@ export function streamBody(
 ): Promise<void> | void {
   // stream is already destroyed
   if (nodeRes.destroyed) {
-    stream.cancel();
+    stream.cancel().catch(() => {});
     return;
+  }
+
+  // HEAD responses must carry no body. Cancel the stream immediately instead of
+  // pumping it to completion — an unbounded body (e.g. an SSE stream) would
+  // otherwise pump forever. Headers are already written by the caller; just end
+  // the response. Matches Deno/Bun, which discard the body for HEAD.
+  if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
+    stream.cancel().catch(() => {});
+    return endNodeResponse(nodeRes);
   }
 
   const reader = stream.getReader();

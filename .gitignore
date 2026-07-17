@@ -12,3 +12,4 @@ dist
 *.pem
 .tmp
 tsconfig.tsbuildinfo
+deno.lock
