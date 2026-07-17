@@ -119,8 +119,11 @@ const notFound = () => new Response("next()", { status: 404 });
 const fetchStatic = (path: string, opts: Partial<ServeStaticOptions> = {}, init?: RequestInit) =>
   serveStatic({ dir, ...opts })(req(path, init), notFound) as Promise<Response>;
 
-const fetchEncoded = (path: string, acceptEncoding: string, opts: Partial<ServeStaticOptions> = {}) =>
-  fetchStatic(path, opts, { headers: { "accept-encoding": acceptEncoding } });
+const fetchEncoded = (
+  path: string,
+  acceptEncoding: string,
+  opts: Partial<ServeStaticOptions> = {},
+) => fetchStatic(path, opts, { headers: { "accept-encoding": acceptEncoding } });
 
 // Every denial falls through to the app rather than being answered here, so the
 // sentinel body from `notFound()` is what proves the middleware declined. It is
@@ -242,9 +245,12 @@ describe("serveStatic", () => {
         ["/alias-dotdir/config.txt", "GIT_CONFIG"],
       ];
 
-      test.each(DOT_ALIASES)("does not serve %s, which resolves onto a denied dot path", async (path) => {
-        await expectNext(await fetchStatic(path!));
-      });
+      test.each(DOT_ALIASES)(
+        "does not serve %s, which resolves onto a denied dot path",
+        async (path) => {
+          await expectNext(await fetchStatic(path!));
+        },
+      );
 
       test.each(DOT_ALIASES)("serves %s with dotfiles: true", async (path, contents) => {
         // The policy is what hides these, not containment: both links resolve
@@ -335,19 +341,51 @@ describe("serveStatic", () => {
       body: string;
       path?: string;
     }[] = [
-      { why: "prefers brotli when both variants exist", accept: "gzip, br", enc: "br", body: "BROTLI_JS" },
-      { why: "falls back to gzip when brotli is not accepted", accept: "gzip", enc: "gzip", body: "GZIP_JS" },
-      { why: "falls back to the plain file when no variant is accepted", accept: "", enc: null, body: "PLAIN_JS" },
+      {
+        why: "prefers brotli when both variants exist",
+        accept: "gzip, br",
+        enc: "br",
+        body: "BROTLI_JS",
+      },
+      {
+        why: "falls back to gzip when brotli is not accepted",
+        accept: "gzip",
+        enc: "gzip",
+        body: "GZIP_JS",
+      },
+      {
+        why: "falls back to the plain file when no variant is accepted",
+        accept: "",
+        enc: null,
+        body: "PLAIN_JS",
+      },
       { why: "honors q=0 as a refusal", accept: "br;q=0, gzip", enc: "gzip", body: "GZIP_JS" },
       { why: "honors an explicit q ranking", accept: "br;q=1.0", enc: "br", body: "BROTLI_JS" },
       { why: "treats a malformed q as a refusal", accept: "br;q=abc", enc: null, body: "PLAIN_JS" },
       { why: "supports the * wildcard", accept: "*", enc: "br", body: "BROTLI_JS" },
       // "x-gzip" must not satisfy "gzip", nor "brotli" satisfy "br".
-      { why: "does not match an encoding as a substring", accept: "x-gzip, brotli", enc: null, body: "PLAIN_JS" },
+      {
+        why: "does not match an encoding as a substring",
+        accept: "x-gzip, brotli",
+        enc: null,
+        body: "PLAIN_JS",
+      },
       // An empty token must be skipped rather than parsed as an encoding.
       { why: "ignores empty tokens", accept: ", , br", enc: "br", body: "BROTLI_JS" },
-      { why: "skips a missing variant and uses the next accepted one", accept: "br, gzip", enc: "gzip", body: "GZIP_ONLY_GZ", path: "/only-gz.js" },
-      { why: "falls back to the plain file when no variant exists on disk", accept: "br", enc: null, body: "<h1>index</h1>", path: "/index.html" },
+      {
+        why: "skips a missing variant and uses the next accepted one",
+        accept: "br, gzip",
+        enc: "gzip",
+        body: "GZIP_ONLY_GZ",
+        path: "/only-gz.js",
+      },
+      {
+        why: "falls back to the plain file when no variant exists on disk",
+        accept: "br",
+        enc: null,
+        body: "<h1>index</h1>",
+        path: "/index.html",
+      },
     ];
 
     test.each(VARIANT_CASES)("$why", async ({ accept, enc, body, path = "/app.js" }) => {
@@ -387,14 +425,17 @@ describe("serveStatic", () => {
       // rather than fatal — the identity file below it still serves.
       ["/escape-variant.js", "PLAIN_VARIANT", "TOPSECRET"],
       ["/alias-variant.js", "PLAIN_ALIAS_VARIANT", "DOTENV"],
-    ])("falls back to the plain file when %s's variant is not servable", async (path, body, secret) => {
-      const res = await fetchEncoded(path!, "br");
-      expect(res.status).toBe(200);
-      expect(res.headers.get("content-encoding")).toBe(null);
-      const text = await res.text();
-      expect(text).toBe(body);
-      expect(text).not.toContain(secret);
-    });
+    ])(
+      "falls back to the plain file when %s's variant is not servable",
+      async (path, body, secret) => {
+        const res = await fetchEncoded(path!, "br");
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-encoding")).toBe(null);
+        const text = await res.text();
+        expect(text).toBe(body);
+        expect(text).not.toContain(secret);
+      },
+    );
   });
 
   describe("extension-less paths", () => {
