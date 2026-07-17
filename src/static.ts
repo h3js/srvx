@@ -99,6 +99,20 @@ export interface ServeStaticOptions {
   immutable?: boolean;
 
   /**
+   * Answer a single byte-range GET request with `206 Partial Content`, and
+   * advertise `Accept-Ranges: bytes` on responses that could serve one.
+   *
+   * A range request is served the identity bytes only — content negotiation is
+   * skipped — since a range over an on-the-fly (chunked) encoding is not
+   * expressible, and range consumers (media seek, download resumption) target
+   * already-compressed types. `false` disables it: no `206`/`416`, and the
+   * header is never sent.
+   *
+   * @default true
+   */
+  ranges?: boolean;
+
+  /**
    * A function to modify the HTML content before serving it.
    */
   renderHTML?: (ctx: {
@@ -221,6 +235,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 
   const lastModified = options.lastModified ?? true;
   const etag = options.etag ?? true;
+  const ranges = options.ranges ?? true;
 
   // Depends only on the options, so it is built once. Empty when `maxAge` is
   // unset — the header is fully opt-in.
@@ -345,6 +360,15 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     }
     // Parsed lazily: unmatched routes (all non-static traffic) never need it.
     let acceptEncodings: EncodingSpec[] | undefined;
+    // A range request bypasses negotiation entirely (identity bytes only): a
+    // range over a chunked on-the-fly encoding is not expressible, and range
+    // consumers — media seek, download resumption — target already-compressed
+    // types. GET only, as RFC 9110 defines range handling for GET alone, so HEAD
+    // (and any other configured method) ignores the header. Only a `bytes=` unit
+    // is a range request; an unknown unit is treated as if no header were sent
+    // and leaves negotiation untouched.
+    const rangeHeader = ranges && req.method === "GET" ? req.headers.get("range") : null;
+    const rangeRequest = rangeHeader !== null && rangeHeader.startsWith("bytes=");
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
@@ -370,7 +394,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       let encoding = "";
       let servePath = filePath;
       let file: ServableFile | null = null;
-      if (compressible) {
+      if (compressible && !rangeRequest) {
         acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), served);
         for (const spec of acceptEncodings) {
           if (!spec.ext) {
@@ -405,6 +429,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       let compressor: ((sizeHint: number) => Transform) | undefined;
       if (
         compressible &&
+        !rangeRequest &&
         !encoding &&
         file.size >= COMPRESS_MIN_SIZE &&
         file.size <= COMPRESS_MAX_SIZE
@@ -454,6 +479,14 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       }
       if (encoding) {
         headers["Content-Encoding"] = encoding;
+      }
+      // Advertise range support (RFC 9110 §14.3) on any identity response — a
+      // HEAD mirrors GET's headers, so an identity HEAD carries it too. An
+      // encoded response (a disk variant or an on-the-fly compressor, both of
+      // which set `encoding`) omits it: a range is served identity-only, and a
+      // range over chunked output is not expressible in the first place.
+      if (ranges && !encoding) {
+        headers["Accept-Ranges"] = "bytes";
       }
       if (varyOnEncoding && compressible) {
         // Also set on the identity response: shared caches must key on the
@@ -525,6 +558,47 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         }
         return new FastResponse(null, { status: conditionalStatus, headers: conditionalHeaders });
       }
+      // Range evaluation runs only after the conditionals above pass (RFC 9110
+      // §13.2.2): a 304/412 outranks a 206. `rangeRequest` is already GET-only
+      // and identity-only (negotiation was skipped), so `headers` here is the
+      // full 200's, minus a body.
+      if (rangeRequest) {
+        // `If-Range` (RFC 9110 §13.1.5) guards the range against a changed
+        // representation. Its entity-tag form demands a *strong* comparison, and
+        // our tags are weak, so it never matches — the range is dropped for a
+        // full 200. The HTTP-date form is a strong comparison that matches only
+        // the exact second we emit as `Last-Modified`; validated against
+        // `lastModifiedMs` regardless of the `lastModified` option, since an
+        // exact-second match can only reproduce a date the server itself sent.
+        const ifRange = req.headers.get("if-range");
+        if (ifRange === null || matchesIfRange(ifRange, lastModifiedMs)) {
+          const parsed = parseRange(rangeHeader!, file.size);
+          if (parsed === "unsatisfiable") {
+            await file.handle.close().catch(() => {});
+            // A 416 is a plain error: like the 412 path it drops the
+            // representation headers and validators, keeping only the
+            // `Content-Range` that reports the valid extent (`*`/size).
+            return new FastResponse(null, {
+              status: 416,
+              headers: { "Content-Range": `bytes */${file.size}` },
+            });
+          }
+          if (parsed) {
+            // Node's `end` is inclusive, matching the byte range's own bounds.
+            const stream = file.handle.createReadStream({ start: parsed.start, end: parsed.end });
+            return new FastResponse(stream as any, {
+              status: 206,
+              headers: {
+                ...headers,
+                "Content-Range": `bytes ${parsed.start}-${parsed.end}/${file.size}`,
+                "Content-Length": (parsed.end - parsed.start + 1).toString(),
+              },
+            });
+          }
+          // `parsed === null`: malformed, multi-range, or otherwise ignorable —
+          // fall through to the full 200 below.
+        }
+      }
       if (req.method === "HEAD") {
         // Node discards a HEAD body at the http layer, so skip the read — and
         // with it the compression a GET would pay for. The headers still
@@ -583,10 +657,13 @@ function isCompressible(mimeType: string): boolean {
 }
 
 // A weak validator over the served representation. Weak (`W/`), not strong: an
-// on-the-fly encode is not byte-stable across runs, and a strong tag's one real
-// advantage — byte-range requests — is something this middleware does not answer.
-// Size and mtime pin the file; the encoding is folded in so a gzip and a brotli
-// response under one URL never collide, which a cache keying on `Vary` relies on.
+// on-the-fly encode is not byte-stable across runs. The one cost is `If-Range`,
+// whose entity-tag form requires a strong comparison — a range request carrying
+// one of these tags never matches, so the client falls back to a full 200 — but
+// that is the right trade for a tag derived from size and mtime rather than the
+// bytes. Size and mtime pin the file; the encoding is folded in so a gzip and a
+// brotli response under one URL never collide, which a cache keying on `Vary`
+// relies on.
 function computeETag(size: number, mtimeMs: number, encoding: string): string {
   const tag = `${size.toString(16)}-${Math.trunc(mtimeMs).toString(16)}`;
   return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
@@ -616,6 +693,84 @@ function matchesIfModifiedSince(header: string | null, lastModifiedMs: number): 
   }
   const since = Date.parse(header);
   return !Number.isNaN(since) && lastModifiedMs <= since;
+}
+
+// RFC 9110 §13.1.5 — whether an `If-Range` lets the range apply. The entity-tag
+// form (a value opening with `"` or `W/`) requires a strong comparison, which
+// our weak tags can never pass, so it always drops the range to a full 200. The
+// HTTP-date form is a strong date comparison: it matches only when the date is
+// the exact second we emit as `Last-Modified` (`lastModifiedMs`, already floored
+// to the second). An unparseable value is a mismatch. A failure here is never an
+// error status — it just serves the whole representation.
+function matchesIfRange(header: string, lastModifiedMs: number): boolean {
+  const value = header.trim();
+  if (value.startsWith('"') || value.startsWith("W/")) {
+    return false;
+  }
+  return Date.parse(value) === lastModifiedMs;
+}
+
+// Parse a single `Range: bytes=...` against `size` (the fd's `fstat`, the bytes
+// actually served — not the earlier `stat` probe). Returns the inclusive
+// `{ start, end }` to serve, `"unsatisfiable"` for a `416`, or `null` to ignore
+// the header and serve a full `200` (malformed syntax, a non-`bytes` unit, or a
+// syntactically valid multi-range, which RFC 9110 §14.2 lets a server answer in
+// full). RFC 9110 §14.1.2.
+function parseRange(
+  header: string,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  // The caller only reaches here on a `bytes=` header, but re-check so the
+  // helper stands alone. A non-`bytes` unit is not a range request at all.
+  if (!header.startsWith("bytes=")) {
+    return null;
+  }
+  const spec = header.slice(6);
+  // A single range only: a comma means a multi-range set, ignored wholesale.
+  if (spec.includes(",")) {
+    return null;
+  }
+  const dash = spec.indexOf("-");
+  if (dash === -1) {
+    return null;
+  }
+  const startStr = spec.slice(0, dash);
+  const endStr = spec.slice(dash + 1);
+  // Suffix form `-N`: the final N bytes. `-0` asks for zero bytes and is
+  // unsatisfiable; N past the file size is the whole file. An empty file cannot
+  // satisfy any range.
+  if (startStr === "") {
+    if (!/^\d+$/.test(endStr)) {
+      return null;
+    }
+    const n = Number(endStr);
+    if (n === 0 || size === 0) {
+      return "unsatisfiable";
+    }
+    return { start: n >= size ? 0 : size - n, end: size - 1 };
+  }
+  if (!/^\d+$/.test(startStr)) {
+    return null;
+  }
+  const start = Number(startStr);
+  // `A-` runs to the end; `A-B` clamps B to the last byte. `A > B` is malformed.
+  let end: number;
+  if (endStr === "") {
+    end = size - 1;
+  } else if (/^\d+$/.test(endStr)) {
+    end = Number(endStr);
+    if (end < start) {
+      return null;
+    }
+    if (end > size - 1) {
+      end = size - 1;
+    }
+  } else {
+    return null;
+  }
+  // Satisfiable only when the start falls within the file (which also rejects
+  // every range on an empty file).
+  return start >= size ? "unsatisfiable" : { start, end };
 }
 
 /**
