@@ -151,6 +151,14 @@ beforeAll(async () => {
   await writeFile(join(dir, "files", "b.txt"), "B");
   await writeFile(join(dir, "files", ".hidden"), "HIDDEN");
 
+  // Symlink entries a listing must resolve like a direct request: a contained
+  // link to a file, a contained link to a directory (classified by its target),
+  // one escaping the root, and one aliasing a denied dot path.
+  await symlink(join(dir, "files", "a.txt"), join(dir, "files", "good-link.txt"));
+  await symlink(join(dir, "files", "nested"), join(dir, "files", "dir-link"));
+  await symlink(join(tmp, "outside", "secret.txt"), join(dir, "files", "escape-link.txt"));
+  await symlink(join(dir, ".env"), join(dir, "files", "dot-alias.txt"));
+
   // A root that is itself a symlink must keep working.
   linkedDir = join(tmp, "public-link");
   await symlink(dir, linkedDir);
@@ -309,8 +317,8 @@ describe("serveStatic", () => {
       expect(html).toContain('href="/files/b.txt"');
       // A nested directory is linked with a trailing slash.
       expect(html).toContain('href="/files/nested/"');
-      // A parent link climbs one segment.
-      expect(html).toContain('href="../"');
+      // The parent link is absolute — one segment up from `/files/`.
+      expect(html).toContain('href="/"');
     });
 
     test("follows the OS dark theme", async () => {
@@ -337,6 +345,26 @@ describe("serveStatic", () => {
     test("hides denied dot segments from the listing", async () => {
       const html = await (await fetchStatic("/files/", { dirListing: true })).text();
       expect(html).not.toContain(".hidden");
+    });
+
+    test("resolves symlink entries by their target and hides unservable ones", async () => {
+      const html = await (await fetchStatic("/files/", { dirListing: true })).text();
+      // A contained symlink to a file is listed as a file.
+      expect(html).toContain('href="/files/good-link.txt"');
+      // A contained symlink to a directory is classified by its target — listed
+      // as a directory (trailing slash), not as the (non-directory) link.
+      expect(html).toContain('href="/files/dir-link/"');
+      // A symlink escaping the root, or aliasing a denied dot path, is hidden —
+      // just as a direct request for it is refused.
+      expect(html).not.toContain("escape-link");
+      expect(html).not.toContain("dot-alias");
+    });
+
+    test("parent link is absolute for an extension-less nested directory", async () => {
+      // `nested/` has no index; requested without a trailing slash, `../` must
+      // point to `/files/`, not `/`.
+      const html = await (await fetchStatic("/files/nested", { dirListing: true })).text();
+      expect(html).toContain('href="/files/"');
     });
 
     test("an index always wins over a listing", async () => {

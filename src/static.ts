@@ -354,16 +354,39 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     if (!realWithSep.startsWith(root) || isDeniedDotPath(realWithSep.slice(root.length))) {
       return null;
     }
-    // `withFileTypes` reads the type from the same `readdir` syscall, so the
-    // trailing-slash decoration below costs no extra `stat` per entry. A
-    // non-directory (or an unreadable one) throws and falls through to `null`.
     const dirents = await readdir(realPath, { withFileTypes: true }).catch(() => null);
     if (dirents === null) {
       return null;
     }
-    const entries = dirents
-      .filter((d) => !isDeniedDotPath(d.name))
-      .map((d) => ({ name: d.name, dir: d.isDirectory() }));
+    const entries: { name: string; dir: boolean }[] = [];
+    for (const d of dirents) {
+      if (isDeniedDotPath(d.name)) {
+        continue;
+      }
+      // A non-symlink child is contained by construction, and `withFileTypes`
+      // already typed it from the `readdir` syscall — no extra work.
+      if (!d.isSymbolicLink()) {
+        entries.push({ name: d.name, dir: d.isDirectory() });
+        continue;
+      }
+      // A symlink is re-checked exactly as a direct request would be: its
+      // canonical target must stay under the root and off a denied dot path, or
+      // it is dropped rather than named. It is then classified by that target —
+      // so a link to a directory lists as one — never by the link itself, whose
+      // `isDirectory()` is always false.
+      const target = await realpath(join(realPath, d.name)).catch(() => null);
+      if (
+        target === null ||
+        !target.startsWith(root) ||
+        isDeniedDotPath(target.slice(root.length))
+      ) {
+        continue;
+      }
+      const targetStat = await stat(target).catch(() => null);
+      if (targetStat) {
+        entries.push({ name: d.name, dir: targetStat.isDirectory() });
+      }
+    }
     // Directories first, then by name — a conventional, stable listing order.
     entries.sort((a, b) => (a.dir === b.dir ? (a.name < b.name ? -1 : 1) : a.dir ? -1 : 1));
     return entries;
@@ -690,7 +713,10 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     if (dirListing && (path === "" || trailingSlash || extname(path) === "")) {
       const entries = await readListing(path);
       if (entries) {
-        const base = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
+        // Exactly one trailing slash: entry and parent links are absolute paths
+        // built off this base, so a request served without a trailing slash
+        // (`/docs/api`) still yields correct links.
+        const base = url.pathname.replace(/\/+$/, "") + "/";
         const headers = {
           "Content-Type": "text/html; charset=utf-8",
           // A generated listing should never be indexed; mirrors the `robots`
@@ -745,10 +771,14 @@ function renderDirListing(
 ): string {
   const heading = escapeHtml("/" + (displayPath ? displayPath + "/" : ""));
   const items: string[] = [];
-  // A parent link everywhere but the root. `base` ends in `/`, so relative `../`
-  // climbs one segment. Shown as a folder, since it navigates up to one.
+  // A parent link everywhere but the root, shown as a folder since it navigates
+  // up to one. Absolute like the entry links: a relative `../` would resolve
+  // against the browser's document URL, which drops a segment for an
+  // extension-less request served without a trailing slash. Deriving the parent
+  // from `base` (`/docs/api/` → `/docs/`) is correct either way.
   if (displayPath !== "") {
-    items.push(row("../", "../", true));
+    const parent = base.slice(0, base.slice(0, -1).lastIndexOf("/") + 1);
+    items.push(row(parent, "../", true));
   }
   for (const entry of entries) {
     const suffix = entry.dir ? "/" : "";
