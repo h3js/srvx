@@ -1,9 +1,9 @@
 import type { ServerMiddleware } from "./types.ts";
 import type { Stats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 
 import { extname, join, resolve, sep } from "node:path";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { open, realpath, stat } from "node:fs/promises";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
 
@@ -128,6 +128,8 @@ const parseAcceptEncoding = (
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
 const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
 
+type ServableFile = { handle: FileHandle; size: number };
+
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const dir = asPrefix(resolve(options.dir));
   const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
@@ -165,18 +167,39 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     return fileStat?.isFile() ? fileStat : null;
   };
 
-  // The real security boundary. The handler's checks are lexical while
-  // `stat()` follows symlinks, so a link inside `dir` could escape the root
-  // (`escape.txt` -> `/etc/passwd`) or alias a denied dot path to an allowed
-  // name (`public.txt` -> `.env`). Re-assert both invariants against the
-  // resolved path; links that stay inside `dir` on an allowed path still work.
-  const isServable = async (candidate: string): Promise<boolean> => {
-    const realPath = await realpath(candidate).catch(() => null);
-    if (realPath === null) {
-      return false;
+  // The real security boundary, and the only way a served file is opened. The
+  // handler's checks are lexical while the filesystem follows symlinks, so a
+  // link inside `dir` could escape the root (`escape.txt` -> `/etc/passwd`) or
+  // alias a denied dot path to an allowed name (`public.txt` -> `.env`): both
+  // invariants are re-asserted against the resolved path. Links that stay
+  // inside `dir` on an allowed path still work.
+  //
+  // The bytes served come from the fd opened here, and the final inode
+  // comparison pins that fd to the path that passed the checks — with a
+  // check-then-`createReadStream(path)` sequence, a symlink swap in between
+  // would serve a file the checks never saw.
+  const openServable = async (candidate: string): Promise<ServableFile | null> => {
+    const handle = await open(candidate).catch(() => null);
+    if (handle === null) {
+      return null;
     }
-    const root = await getRealDir();
-    return realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length));
+    try {
+      const fileStat = await handle.stat();
+      const realPath = fileStat.isFile() ? await realpath(candidate).catch(() => null) : null;
+      if (realPath !== null) {
+        const root = await getRealDir();
+        if (realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length))) {
+          const realStat = await stat(realPath).catch(() => null);
+          if (realStat && realStat.ino === fileStat.ino && realStat.dev === fileStat.dev) {
+            return { handle, size: fileStat.size };
+          }
+        }
+      }
+    } catch {
+      // fall through to close
+    }
+    await handle.close().catch(() => {});
+    return null;
   };
 
   return async (req, next) => {
@@ -184,7 +207,14 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       return next();
     }
     const url = (req._url ??= new FastURL(req.url));
-    let path = url.pathname.slice(1).replace(/\/$/, "");
+    let path = url.pathname.slice(1);
+    // `/sub/` names a directory, so only its index is probed: serving `sub.html`
+    // or a file named `sub` there would mint a second URL for them, with
+    // relative links inside resolving against the wrong base.
+    const trailingSlash = path.endsWith("/");
+    if (trailingSlash) {
+      path = path.replace(/\/+$/, "");
+    }
     if (path.includes("%")) {
       // Decode the wire encoding exactly once, or names a client must encode
       // (`café.txt`) are unreachable. `decodeURI` (not `decodeURIComponent`)
@@ -202,6 +232,8 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     let paths: string[];
     if (path === "") {
       paths = ["index.html"];
+    } else if (trailingSlash) {
+      paths = [`${path}/index.html`];
     } else if (extname(path) === "") {
       // TODO: consider answering `/sub` with a redirect to `/sub/` instead of
       // serving `sub/index.html` in place (nginx sends 301): without the
@@ -239,29 +271,41 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 
       let encoding = "";
       let servePath = filePath;
-      let fileStat = identityStat;
+      let file: ServableFile | null = null;
       if (compressible) {
         acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), encodings);
         for (const [name, ext] of acceptEncodings) {
           const variantPath = filePath + ext;
-          const variantStat = await statFile(variantPath);
+          // `stat` before `open`: a missing variant should cost one syscall,
+          // and opening a non-file (a FIFO) can block.
+          if (!(await statFile(variantPath))) {
+            continue;
+          }
           // An unservable variant (escapes the root, or resolves onto a denied
           // dot path) is skipped, not fatal: the identity file can still serve.
-          if (variantStat && (await isServable(variantPath))) {
+          const variant = await openServable(variantPath);
+          if (variant) {
             encoding = name;
             servePath = variantPath;
-            fileStat = variantStat;
+            file = variant;
             break;
           }
         }
       }
       // Only the bytes actually sent need checking; a winning variant already was.
-      if (!encoding && !(await isServable(filePath))) {
+      file ??= await openServable(filePath);
+      if (!file) {
         continue;
       }
       if (renderHTML) {
+        let html: string;
+        try {
+          html = await file.handle.readFile("utf8");
+        } finally {
+          await file.handle.close().catch(() => {});
+        }
         const rendered = await renderHTML({
-          html: await readFile(servePath, "utf8"),
+          html,
           filename: servePath,
           request: req,
         });
@@ -281,7 +325,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // is the encoding (`.br`), not the media type. Text carries an explicit
       // charset so browsers do not decode non-ASCII with a guessed fallback.
       const headers: Record<string, string> = {
-        "Content-Length": fileStat.size.toString(),
+        "Content-Length": file.size.toString(),
         "Content-Type": contentType.startsWith("text/")
           ? `${contentType}; charset=utf-8`
           : contentType,
@@ -295,10 +339,12 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         headers["Vary"] = "Accept-Encoding";
       }
       if (req.method === "HEAD") {
-        // Node discards a HEAD body at the http layer; skip the file I/O.
+        // Node discards a HEAD body at the http layer; skip the read entirely.
+        await file.handle.close().catch(() => {});
         return new FastResponse(null, { headers });
       }
-      return new FastResponse(createReadStream(servePath) as any, { headers });
+      // The stream closes the handle when it ends or errors (`autoClose`).
+      return new FastResponse(file.handle.createReadStream() as any, { headers });
     }
     return next();
   };

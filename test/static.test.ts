@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
@@ -116,8 +116,28 @@ const req = (path: string, init?: RequestInit) =>
   new Request(`http://localhost${path}`, init) as unknown as ServerRequest;
 const notFound = () => new Response("next()", { status: 404 });
 
+// Served bodies are backed by an open file handle that a real server drains to
+// the socket. Tests that only look at the status or headers must still release
+// it, or the run leaks handles until GC — so every response is registered and
+// any unconsumed body cancelled after each test.
+const responses: Response[] = [];
+const track = async (res: Promise<Response>) => {
+  const resolved = await res;
+  responses.push(resolved);
+  return resolved;
+};
+afterEach(async () => {
+  for (const res of responses.splice(0)) {
+    if (!res.bodyUsed) {
+      // Drained, not `body.cancel()`-ed: undici does not propagate a cancel
+      // to a wrapped Node readable, so only a read releases the handle.
+      await res.arrayBuffer().catch(() => {});
+    }
+  }
+});
+
 const fetchStatic = (path: string, opts: Partial<ServeStaticOptions> = {}, init?: RequestInit) =>
-  serveStatic({ dir, ...opts })(req(path, init), notFound) as Promise<Response>;
+  track(serveStatic({ dir, ...opts })(req(path, init), notFound) as Promise<Response>);
 
 const fetchEncoded = (
   path: string,
@@ -146,7 +166,7 @@ const rawReq = (path: string) => {
 };
 
 const fetchRaw = (path: string) =>
-  serveStatic({ dir })(rawReq(path), notFound) as Promise<Response>;
+  track(serveStatic({ dir })(rawReq(path), notFound) as Promise<Response>);
 
 describe("serveStatic", () => {
   test("serves a file", async () => {
@@ -201,13 +221,21 @@ describe("serveStatic", () => {
       await expect(res.text()).resolves.toContain("sub index");
     });
 
-    test.each(["/sub/", "/app.js/"])("ignores a trailing slash on %s", async (path) => {
-      // The strip matters most for a file: `stat("app.js/")` is ENOTDIR, so
-      // without it the route 404s. A directory would resolve either way, since
-      // `join()` collapses the `sub//index.html` candidate.
+    test.each(["/sub/", "/sub//"])("serves <dir>/index.html for %s", async (path) => {
       const res = await fetchStatic(path);
       expect(res.status, path).toBe(200);
+      await expect(res.text()).resolves.toContain("sub index");
     });
+
+    test.each(["/app.js/", "/sub/inside.txt/", "/about/"])(
+      "only probes the index for a slash-terminated URL (%s)",
+      async (path) => {
+        // `/app.js/` must not serve `app.js`, nor `/about/` serve `about.html`:
+        // a directory URL names the index or nothing, or the same file gains a
+        // second URL whose relative links resolve against the wrong base.
+        await expectNext(await fetchStatic(path));
+      },
+    );
   });
 
   describe("symlinks", () => {
