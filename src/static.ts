@@ -33,22 +33,24 @@ export interface ServeStaticOptions {
   dotfiles?: boolean | string[];
 
   /**
-   * Map of `Content-Encoding` to the file extension of its precompressed variant on disk.
+   * Serve precompressed variants from disk. Off by default: most deployments ship none,
+   * so probing for one is a `stat` that always misses, on every compressible request.
    *
-   * For `/app.js` with `Accept-Encoding: br`, `app.js.br` is served if it exists. Keys are
-   * tried in order, so list the preferred encoding first. Pass `{}` to skip the lookup
-   * entirely — `compress` is unaffected, so on-the-fly encoding still applies.
+   * `true` uses `{ br: ".br", gzip: ".gz" }`; a map sets the extension per encoding (keys
+   * tried in order, so list the preferred encoding first). For `/app.js` with
+   * `Accept-Encoding: br`, `app.js.br` is served if it exists. A variant always wins over
+   * on-the-fly `compress`, as it costs no CPU. `false` (the default) skips the lookup.
    *
-   * @default { br: ".br", gzip: ".gz" }
+   * @default false
    */
-  encodings?: Record<string, string>;
+  encodings?: boolean | Record<string, string>;
 
   /**
-   * Compress a response on the fly when no precompressed variant is found.
+   * Compress a response on the fly when no precompressed variant is served.
    *
    * Applies to compressible types only, and only to files between 1 KiB and 10 MiB —
-   * precompress anything larger. A variant from `encodings` always wins, as it costs no
-   * CPU. Pass `false` to serve only what is already on disk.
+   * precompress anything larger. Pass `false` to serve only what is already on disk (with
+   * `encodings` off too, nothing is ever compressed).
    *
    * @default true
    */
@@ -172,12 +174,12 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const isDeniedDotPath = (relPath: string): boolean =>
     !allowAllDots && relPath.split(sep).some((s) => s[0] === "." && !allowedDots.has(s));
 
-  const encodings = options.encodings || DEFAULT_ENCODINGS;
+  const encodings = options.encodings === true ? DEFAULT_ENCODINGS : options.encodings || {};
   const compress = options.compress ?? true;
 
-  // Encodings served, in server-preference order. `encodings` leads: its order is
-  // the documented preference, and a variant on disk costs no CPU. An encoding
-  // reachable only by compressing follows, so `encodings: {}` with `compress` is
+  // Encodings served, in server-preference order. Disk variants lead: their order
+  // is the documented preference, and a variant costs no CPU. An encoding reachable
+  // only by compressing follows, so the default (no `encodings`, `compress` on) is
   // "never probe the disk, always encode on the fly" rather than a dead option.
   const served: EncodingSpec[] = [
     ...Object.entries(encodings).map(([name, ext]) => ({

@@ -180,6 +180,14 @@ const fetchEncoded = (
   opts: Partial<ServeStaticOptions> = {},
 ) => fetchStatic(path, opts, { headers: { "accept-encoding": acceptEncoding } });
 
+// The precompressed-variant lookup is opt-in (off by default), so any test that
+// exercises it enables it. On-the-fly compression keeps its own default.
+const fetchVariant = (
+  path: string,
+  acceptEncoding: string,
+  opts: Partial<ServeStaticOptions> = {},
+) => fetchEncoded(path, acceptEncoding, { encodings: true, ...opts });
+
 // Every denial falls through to the app rather than being answered here, so the
 // sentinel body from `notFound()` is what proves the middleware declined. It is
 // strictly stronger than asserting the secret is absent.
@@ -359,7 +367,7 @@ describe("serveStatic", () => {
       execFileSync("mkfifo", [fifo]);
       try {
         // The identity file still serves; only the variant is unusable.
-        const res = await fetchEncoded("/piped.js", "br");
+        const res = await fetchVariant("/piped.js", "br");
         expect(res.status).toBe(200);
         expect(res.headers.get("content-encoding")).toBe(null);
         await expect(res.text()).resolves.toBe("PIPED_JS");
@@ -430,10 +438,11 @@ describe("serveStatic", () => {
     });
   });
 
-  describe("precompressed lookup", () => {
+  describe("precompressed lookup (opt-in via encodings)", () => {
     // (file, Accept-Encoding) -> which bytes are served. `/app.js` has both a
     // `.br` and a `.gz` beside it; `/only-gz.js` only a `.gz`; `/index.html`
-    // neither.
+    // neither. All fixtures are under the 1 KiB floor, so on-the-fly compression
+    // never fires here and the served bytes reflect the variant lookup alone.
     const VARIANT_CASES: {
       why: string;
       accept: string;
@@ -489,25 +498,34 @@ describe("serveStatic", () => {
     ];
 
     test.each(VARIANT_CASES)("$why", async ({ accept, enc, body, path = "/app.js" }) => {
-      const res = await fetchEncoded(path, accept);
+      const res = await fetchVariant(path, accept);
       expect(res.headers.get("content-encoding")).toBe(enc);
       await expect(res.text()).resolves.toBe(body);
     });
 
-    test("sets Vary: Accept-Encoding whenever variants are configured", async () => {
-      expect((await fetchEncoded("/app.js", "br")).headers.get("vary")).toBe("Accept-Encoding");
+    test("is off by default, so a variant on disk is not served", async () => {
+      // `/app.js` (8 bytes) has a `.br` beside it, but without `encodings` the
+      // lookup never runs and the file is under the on-the-fly floor, so the
+      // plain bytes are what come back.
+      const res = await fetchEncoded("/app.js", "br");
+      expect(res.headers.get("content-encoding")).toBe(null);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("sets Vary: Accept-Encoding on a variant response and its identity", async () => {
+      expect((await fetchVariant("/app.js", "br")).headers.get("vary")).toBe("Accept-Encoding");
       // Also on the uncompressed response: caches must key on the header.
-      expect((await fetchEncoded("/index.html", "")).headers.get("vary")).toBe("Accept-Encoding");
+      expect((await fetchVariant("/index.html", "")).headers.get("vary")).toBe("Accept-Encoding");
     });
 
     test("sets Content-Length to the served variant's size", async () => {
-      const res = await fetchEncoded("/app.js", "br");
+      const res = await fetchVariant("/app.js", "br");
       expect(res.headers.get("content-length")).toBe(String("BROTLI_JS".length));
     });
 
     test("skips the lookup with encodings: {}", async () => {
-      // `/app.js` is under the size floor for on-the-fly compression, so with no
-      // variant lookup there is nothing left to serve but the plain bytes.
+      // `{}` is as explicit an off as the default. `/app.js` is under the floor,
+      // so with no lookup there is nothing left to serve but the plain bytes.
       const res = await fetchEncoded("/app.js", "br", { encodings: {} });
       expect(res.headers.get("content-encoding")).toBe(null);
       await expect(res.text()).resolves.toBe("PLAIN_JS");
@@ -517,7 +535,7 @@ describe("serveStatic", () => {
       // The identity file gates the lookup, so an orphan `.br` is not a route.
       // Nothing is lost: a client accepting no encoding could not be served it
       // anyway, so shipping one without its source is already a broken deploy.
-      await expectNext(await fetchEncoded("/orphan.js", "br"));
+      await expectNext(await fetchVariant("/orphan.js", "br"));
     });
 
     test.each([
@@ -529,7 +547,7 @@ describe("serveStatic", () => {
     ])(
       "falls back to the plain file when %s's variant is not servable",
       async (path, body, secret) => {
-        const res = await fetchEncoded(path!, "br");
+        const res = await fetchVariant(path!, "br");
         expect(res.status).toBe(200);
         expect(res.headers.get("content-encoding")).toBe(null);
         const text = await res.text();
@@ -579,8 +597,8 @@ describe("serveStatic", () => {
       // accepted and ranks first, but a variant costs no CPU, so the `.gz` wins
       // — and its marker contents are what prove it was not encoded here. Both
       // the variant and the file under it are over the floor, so nothing but
-      // precedence decides this.
-      const res = await fetchEncoded("/big-gz.js", "br, gzip");
+      // precedence decides this. The lookup is opt-in, hence `encodings: true`.
+      const res = await fetchVariant("/big-gz.js", "br, gzip");
       expect(res.headers.get("content-encoding")).toBe("gzip");
       await expect(res.text()).resolves.toBe(BIG_GZ_MARKER);
     });
@@ -721,7 +739,7 @@ describe("serveStatic", () => {
 
     test("declares a charset alongside Content-Encoding", async () => {
       // The charset describes the decoded bytes, so a variant keeps it.
-      const res = await fetchEncoded("/app.js", "br");
+      const res = await fetchVariant("/app.js", "br");
       expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
       expect(res.headers.get("content-encoding")).toBe("br");
     });
@@ -739,7 +757,7 @@ describe("serveStatic", () => {
     test("reports the variant's headers without a body", async () => {
       const res = await fetchStatic(
         "/app.js",
-        {},
+        { encodings: true },
         { method: "HEAD", headers: { "accept-encoding": "br" } },
       );
       expect(res.headers.get("content-encoding")).toBe("br");
