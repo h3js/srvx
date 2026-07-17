@@ -360,15 +360,15 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     }
     // Parsed lazily: unmatched routes (all non-static traffic) never need it.
     let acceptEncodings: EncodingSpec[] | undefined;
-    // A range request bypasses negotiation entirely (identity bytes only): a
-    // range over a chunked on-the-fly encoding is not expressible, and range
-    // consumers — media seek, download resumption — target already-compressed
-    // types. GET only, as RFC 9110 defines range handling for GET alone, so HEAD
-    // (and any other configured method) ignores the header. Only a `bytes=` unit
-    // is a range request; an unknown unit is treated as if no header were sent
-    // and leaves negotiation untouched.
-    const rangeHeader = ranges && req.method === "GET" ? req.headers.get("range") : null;
-    const rangeRequest = rangeHeader !== null && rangeHeader.startsWith("bytes=");
+    // The `Range` header when this is a range request, `""` otherwise. A range
+    // request bypasses negotiation entirely (identity bytes only): a range over
+    // a chunked on-the-fly encoding is not expressible, and range consumers —
+    // media seek, download resumption — target already-compressed types. GET
+    // only, as RFC 9110 defines range handling for GET alone, so HEAD (and any
+    // other configured method) ignores the header. Only a `bytes=` unit is a
+    // range request; an unknown unit is treated as if no header were sent and
+    // leaves negotiation untouched.
+    let rangeRequest: string | undefined;
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
@@ -390,6 +390,13 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // routes are excluded too: a variant on disk would not match the rendered
       // output, and the rendered `Response` is the caller's to encode.
       const compressible = !renderHTML && isCompressible(contentType);
+      // Resolved lazily, like `acceptEncodings`: the Node adapter materializes
+      // its headers wrapper on the first `.get()`, and pure-miss traffic (every
+      // non-static route falling through to `next()`) touches no header at all.
+      if (rangeRequest === undefined) {
+        const header = ranges && req.method === "GET" ? req.headers.get("range") : null;
+        rangeRequest = header !== null && header.startsWith("bytes=") ? header : "";
+      }
 
       let encoding = "";
       let servePath = filePath;
@@ -572,7 +579,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         // exact-second match can only reproduce a date the server itself sent.
         const ifRange = req.headers.get("if-range");
         if (ifRange === null || matchesIfRange(ifRange, lastModifiedMs)) {
-          const parsed = parseRange(rangeHeader!, file.size);
+          const parsed = parseRange(rangeRequest, file.size);
           if (parsed === "unsatisfiable") {
             await file.handle.close().catch(() => {});
             // A 416 is a plain error: like the 412 path it drops the
@@ -721,27 +728,21 @@ function parseRange(
   header: string,
   size: number,
 ): { start: number; end: number } | "unsatisfiable" | null {
-  // The caller only reaches here on a `bytes=` header, but re-check so the
-  // helper stands alone. A non-`bytes` unit is not a range request at all.
-  if (!header.startsWith("bytes=")) {
+  // One anchored pattern is the whole grammar: the `bytes=` unit (re-checked so
+  // the helper stands alone), then digits-or-empty on each side of the dash. A
+  // non-`bytes` unit, malformed syntax, and a multi-range set (a comma can't
+  // match `\d*`) all fall out as a non-match.
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header);
+  if (!match) {
     return null;
   }
-  const spec = header.slice(6);
-  // A single range only: a comma means a multi-range set, ignored wholesale.
-  if (spec.includes(",")) {
-    return null;
-  }
-  const dash = spec.indexOf("-");
-  if (dash === -1) {
-    return null;
-  }
-  const startStr = spec.slice(0, dash);
-  const endStr = spec.slice(dash + 1);
+  const startStr = match[1]!;
+  const endStr = match[2]!;
   // Suffix form `-N`: the final N bytes. `-0` asks for zero bytes and is
   // unsatisfiable; N past the file size is the whole file. An empty file cannot
-  // satisfy any range.
+  // satisfy any range. (A bare `bytes=-`, both sides empty, is malformed.)
   if (startStr === "") {
-    if (!/^\d+$/.test(endStr)) {
+    if (endStr === "") {
       return null;
     }
     const n = Number(endStr);
@@ -750,24 +751,17 @@ function parseRange(
     }
     return { start: n >= size ? 0 : size - n, end: size - 1 };
   }
-  if (!/^\d+$/.test(startStr)) {
-    return null;
-  }
   const start = Number(startStr);
   // `A-` runs to the end; `A-B` clamps B to the last byte. `A > B` is malformed.
-  let end: number;
-  if (endStr === "") {
-    end = size - 1;
-  } else if (/^\d+$/.test(endStr)) {
-    end = Number(endStr);
-    if (end < start) {
+  let end = size - 1;
+  if (endStr !== "") {
+    const to = Number(endStr);
+    if (to < start) {
       return null;
     }
-    if (end > size - 1) {
-      end = size - 1;
+    if (to < end) {
+      end = to;
     }
-  } else {
-    return null;
   }
   // Satisfiable only when the start falls within the file (which also rejects
   // every range on an empty file).
