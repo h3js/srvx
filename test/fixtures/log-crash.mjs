@@ -4,6 +4,19 @@
 import { log } from "../../src/log.ts";
 
 const scenario = process.argv[2];
+
+if (scenario === "once-cleanup") {
+  // Registered BEFORE the logger's hook exists: a `once` wrapper removes
+  // itself before running, so if the logger's sole-listener check saw the
+  // count after that, it would re-raise and kill this cleanup mid-flight.
+  process.once("SIGTERM", () => {
+    setTimeout(() => {
+      process.stdout.write("cleanup done\n");
+      process.exit(0);
+    }, 50);
+  });
+}
+
 const middleware = log();
 for (let i = 0; i < 3; i++) {
   await middleware(new Request(`http://localhost/${i}`), () => new Response(""));
@@ -12,10 +25,11 @@ for (let i = 0; i < 3; i++) {
 // The batched flush runs a check phase later, so everything above is still
 // buffered at this point.
 switch (scenario) {
+  case "sighup":
   case "sigterm":
-  case "sigint": {
-    // No other listener: the signal hook must flush and re-raise.
-    process.kill(process.pid, scenario === "sigint" ? "SIGINT" : "SIGTERM");
+  case "sigint":
+  case "once-cleanup": {
+    process.kill(process.pid, scenario === "once-cleanup" ? "SIGTERM" : scenario.toUpperCase());
     break;
   }
   case "handled-sigterm": {

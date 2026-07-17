@@ -4,8 +4,9 @@ import type { ServerMiddleware } from "./types.ts";
 export interface LogOptions {
   /**
    * Batch lines and write once per event-loop turn (default: `true`). Set to
-   * `false` to hand each line to stdout synchronously: slower under load, but
-   * nothing is buffered in the process if it dies before a flush.
+   * `false` to hand each line to stdout in the request's own turn: slower
+   * under load, but a hard kill can only drop the write still in flight,
+   * never a batch waiting for its flush turn.
    */
   batch?: boolean;
 }
@@ -81,16 +82,14 @@ function enqueue(line: string): void {
  */
 function writeNow(line: string): void {
   pending += line;
-  if (!draining) {
-    flush();
-  }
+  flush();
 }
 
 function flush(): void {
   scheduled = false;
-  // `draining` is never true here: `enqueue` won't schedule a flush and
-  // `writeNow` won't call one while draining; `onDrain` clears it first.
-  if (!pending) {
+  // A flush scheduled by `enqueue` can still fire mid-drain when a `writeNow`
+  // hit backpressure after it was queued; only buffer until `onDrain` resumes.
+  if (draining || !pending) {
     return;
   }
   const chunk = pending;
@@ -161,16 +160,20 @@ function hookExit(): void {
   exitHooked = true;
   proc.on("exit", flushSync);
 
-  // A default-handled SIGTERM/SIGINT terminates the process without emitting
-  // `exit`, silently dropping whatever is buffered. That only happens when no
-  // listener exists at all — srvx's graceful shutdown normally registers one —
+  // A default-handled SIGHUP/SIGTERM/SIGINT terminates the process without
+  // emitting `exit`, silently dropping whatever is buffered. That only happens
+  // when no listener exists at all — srvx's graceful shutdown registers one —
   // so a listener is installed per signal that, when it turns out to be the
   // only one, flushes and re-raises with the default disposition restored:
   // the process still dies by the signal, with `exit` semantics untouched.
   if (!proc.listenerCount || !proc.kill) {
     return;
   }
-  for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  for (const [sig, signum] of [
+    ["SIGHUP", 1],
+    ["SIGINT", 2],
+    ["SIGTERM", 15],
+  ] as const) {
     const onSignal = (): void => {
       // Another listener owns the shutdown (e.g. graceful shutdown): the
       // process keeps running and the regular flush path delivers `pending`.
@@ -185,10 +188,18 @@ function hookExit(): void {
       } catch {
         // Re-raising is unsupported (e.g. Windows edge cases): exit with the
         // conventional 128 + signal number code instead of hanging alive.
-        proc.exit(sig === "SIGINT" ? 130 : 143);
+        proc.exit(128 + signum);
       }
     };
-    proc.on(sig, onSignal);
+    // Prepended so this runs before any `once` wrapper removes itself: a
+    // `process.once(sig, cleanup)` registered earlier would otherwise already
+    // be gone from the count when appended-last `onSignal` runs, and the
+    // sole-listener check would re-raise mid-cleanup.
+    if (proc.prependListener) {
+      proc.prependListener(sig, onSignal);
+    } else {
+      proc.on(sig, onSignal);
+    }
   }
 }
 

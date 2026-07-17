@@ -271,6 +271,52 @@ describe("log", () => {
     }
   });
 
+  it("keeps a scheduled batched flush from writing mid-drain", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const isTTY = process.stdout.isTTY;
+    const write = process.stdout.write;
+    const restoreListeners = snapshotProcessListeners();
+    const writes: string[] = [];
+    let accepting = false;
+
+    try {
+      process.stdout.isTTY = false;
+      vi.resetModules();
+      const { log } = await import("../src/log.ts");
+
+      process.stdout.write = ((chunk: any) => {
+        writes.push(String(chunk));
+        return accepting;
+      }) as typeof write;
+
+      const batched = log();
+      const unbatched = log({ batch: false });
+
+      // The batched line schedules a flush; the unbatched one then writes both
+      // and starts a drain wait before that scheduled flush has fired.
+      await batched(request("http://localhost/a"), respond(200));
+      await unbatched(request("http://localhost/b"), respond(200));
+      expect(writes).toHaveLength(1);
+
+      // The stale scheduled flush fires now — it must not feed the full stream.
+      await batched(request("http://localhost/c"), respond(200));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(writes).toHaveLength(1);
+
+      accepting = true;
+      process.stdout.emit("drain");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toContain("http://localhost/c");
+    } finally {
+      process.stdout.write = write;
+      process.stdout.isTTY = isTTY;
+      restoreListeners();
+    }
+  });
+
   it("buffers unbatched lines while the stream drains", async () => {
     vi.stubEnv("NODE_ENV", "production");
 
@@ -321,7 +367,7 @@ describe.skipIf(process.platform === "win32")("log crash flush", () => {
 
   const run = (
     scenario: string,
-  ): Promise<{ urls: string[]; code: number | null; signal: NodeJS.Signals | null }> =>
+  ): Promise<{ urls: string[]; out: string; code: number | null; signal: NodeJS.Signals | null }> =>
     new Promise((resolve, reject) => {
       const child = spawn(
         process.execPath,
@@ -344,7 +390,7 @@ describe.skipIf(process.platform === "win32")("log crash flush", () => {
           reject(new Error(`fixture stderr: ${err}`));
           return;
         }
-        resolve({ urls: [...out.matchAll(/GET (\S+)/g)].map((m) => m[1]!), code, signal });
+        resolve({ urls: [...out.matchAll(/GET (\S+)/g)].map((m) => m[1]!), out, code, signal });
       });
     });
 
@@ -361,6 +407,21 @@ describe.skipIf(process.platform === "win32")("log crash flush", () => {
     const result = await run("sigint");
     expect(result.urls).toEqual(allThree);
     expect(result.signal).toBe("SIGINT");
+  });
+
+  it("flushes buffered lines when a default-handled SIGHUP terminates the process", async () => {
+    const result = await run("sighup");
+    expect(result.urls).toEqual(allThree);
+    expect(result.signal).toBe("SIGHUP");
+  });
+
+  it("defers to a once-listener registered before the logger", async () => {
+    // `once` wrappers self-remove before running; the logger's handler must
+    // still count them (it runs first) instead of re-raising mid-cleanup.
+    const result = await run("once-cleanup");
+    expect(result.urls).toEqual(allThree);
+    expect(result.out).toContain("cleanup done");
+    expect(result.code).toBe(0);
   });
 
   it("defers to other signal listeners instead of killing the process", async () => {
