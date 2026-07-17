@@ -9,7 +9,7 @@ import type { ServerMiddleware, ServerRequest } from "../src/types.ts";
  * the max-listeners warning threshold.
  */
 function snapshotProcessListeners(): () => void {
-  const events = ["exit", "SIGTERM", "SIGINT"] as const;
+  const events = ["exit", "SIGHUP", "SIGTERM", "SIGINT"] as const;
   const before = new Map(events.map((event) => [event, new Set(process.listeners(event))]));
   return () => {
     for (const event of events) {
