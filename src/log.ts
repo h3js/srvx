@@ -68,15 +68,18 @@ function enqueue(line: string): void {
 
 function flush(): void {
   scheduled = false;
-  if (draining || !pending) {
+  // `draining` is never true here: `enqueue` won't schedule a flush while
+  // draining, and `onDrain` clears it before rescheduling.
+  if (!pending) {
     return;
   }
   const chunk = pending;
   pending = "";
   try {
     if (!write(chunk) && stdout?.once) {
-      // Buffer is over the high-water mark: stop writing until it drains so a
-      // slow stdout applies backpressure instead of growing without bound.
+      // Buffer is over the high-water mark: stop feeding the stream until it
+      // drains rather than piling more onto an already-full stdout. Lines keep
+      // accumulating in `pending` meanwhile; `onDrain` resumes the flush.
       draining = true;
       stdout.once("drain", onDrain);
     }
@@ -158,17 +161,7 @@ export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) =
     return cachedTime;
   };
 
-  // Bounded by the ~60 status codes `Response` accepts, and real traffic reuses
-  // a handful of them, so this caches the number-to-string and the escapes.
-  const statusCache = new Map<number, string>();
-  const status = (code: number): string => {
-    let text = statusCache.get(code);
-    if (text === undefined) {
-      text = `[${paint(paintForStatus(code))(code + "")}]`;
-      statusCache.set(code, text);
-    }
-    return text;
-  };
+  const status = (code: number): string => `[${paint(paintForStatus(code))(code + "")}]`;
 
   hookExit();
 

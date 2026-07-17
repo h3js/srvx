@@ -1,15 +1,21 @@
-// Measures the throughput cost of the `srvx/log` middleware.
+// Measures the throughput cost of request logging, and how much the current
+// `srvx/log` middleware improves on the previous `console.log`-per-request one.
 //
-// `log()` buffers lines and flushes once per event-loop turn, so its overhead
-// only shows up under real concurrency (many requests completing in the same
-// turn share one write). An in-process loop can't reproduce that — a single
-// keep-alive connection serialises the requests — so this drives a real server
-// with `oha`, exactly like `test/bench-node`.
+// `log()` buffers lines and flushes once per event-loop turn, so many requests
+// completing in the same turn share a single write. That only pays off under
+// real concurrency — a single keep-alive connection serialises the requests and
+// hides it — so this drives a real server with `oha`, like `test/bench-node`.
 //
-// Two things move the number and both are worth isolating, hence the matrix:
-//   impl  none → no logger (baseline)   |  log → the middleware
-//   sink  devnull | pipe | file         → where the logged lines land
-// `pipe` (logs streamed to a collector) is the most representative of production.
+// Matrix:
+//   impl  none → no logger (baseline)
+//         before → the pre-batching console.log logger (`_before.mjs`)
+//         log → the current `srvx/log` middleware
+//   sink  terminal → a real TTY (colored, synchronous writes that block on the
+//                    terminal's rendering — the worst case, and where batching
+//                    helps most). Only run when the benchmark is attached to a
+//                    terminal; skipped when its own output is piped (e.g. CI).
+//         pipe → streamed to a reader that keeps up (a log collector). No colors.
+//         devnull → discarded; isolates CPU/formatting cost from any real I/O.
 //
 //   pnpm bench:log
 //
@@ -45,14 +51,20 @@ const DURATION = process.env.DURATION || "5sec";
 // Measured runs per cell; the median is reported to shrug off outliers.
 const TRIES = Number(process.env.TRIES || 3);
 
-const IMPLS = ["none", "log"];
-// `null` means /dev/null (discard), which isolates the logger's CPU/formatting
-// cost from any real I/O; `pipe` and `file` add back the two realistic sinks.
+const IMPLS = ["none", "before", "log"];
+
 const SINKS = [
+  // The child inherits the runner's own stdout, so when that is a terminal the
+  // child sees a TTY: colors on, writes synchronous. Dropped when the runner's
+  // output is not a TTY (there is no terminal to inherit).
+  process.stdout.isTTY && { name: "terminal", stdio: "inherit" },
+  { name: "pipe", stdio: "pipe" },
   { name: "devnull", open: () => openSync("/dev/null", "w") },
-  { name: "pipe", open: () => "pipe" },
-  { name: "file", open: () => openSync(fileURLToPath(new URL("bench.log", import.meta.url)), "w") },
-];
+].filter(Boolean);
+
+if (!process.stdout.isTTY) {
+  console.log("(not attached to a terminal — skipping the `terminal` sink)\n");
+}
 
 const oha = (duration) =>
   execSync(`oha http://localhost:3000 --no-tui --output-format json -c ${CONNS} -z ${duration}`, {
@@ -70,21 +82,21 @@ async function waitReady(retries = 100) {
   throw new Error("server did not become ready");
 }
 
-// One measured cell: spawn a server with `impl`, stream its stdout to `sink`,
+// One measured cell: spawn a server with `impl`, point its stdout at `sink`,
 // hammer it, and return the median rps. The child is always reaped so it can't
 // hold port 3000 into the next cell.
 async function measure(impl, sink) {
-  const fd = sink.open();
-  const drainForPipe = fd === "pipe";
+  const fd = sink.open?.() ?? null; // devnull opens a real fd; others don't
+  const stdout = fd ?? sink.stdio; // "inherit" | "pipe" | <fd>
   const child = spawn(process.execPath, [fileURLToPath(new URL("_server.mjs", import.meta.url))], {
     env: { ...process.env, IMPL: impl },
     // stdout → the sink under test; stderr inherited so the readiness line and
     // any crash surface in the console.
-    stdio: ["ignore", drainForPipe ? "pipe" : fd, "inherit"],
+    stdio: ["ignore", stdout, "inherit"],
   });
   // A real pipe blocks the writer once the OS buffer fills, so it must be
   // drained to mimic a downstream reader (e.g. a log collector) keeping up.
-  if (drainForPipe) child.stdout.resume();
+  if (sink.stdio === "pipe") child.stdout.resume();
 
   try {
     const res = await waitReady();
@@ -106,7 +118,7 @@ async function measure(impl, sink) {
   } finally {
     child.kill("SIGKILL");
     await once(child, "exit"); // free port 3000 before the next cell
-    if (typeof fd === "number") closeSync(fd);
+    if (fd !== null) closeSync(fd);
   }
 }
 
@@ -137,17 +149,25 @@ function markdownTable(headers, rows, align) {
 }
 
 const rows = SINKS.map(({ name }) => {
-  const none = rps[name].none;
-  const withLog = rps[name].log;
-  // Overhead = throughput given up by adding the logger, relative to no logger.
-  const overhead = ((none - withLog) / none) * 100;
-  return [name, none.toLocaleString(), withLog.toLocaleString(), `-${overhead.toFixed(1)}%`];
+  const { none, before, log } = rps[name];
+  // Overhead = throughput given up versus no logger, for that same sink.
+  const overhead = (v) => `-${(((none - v) / none) * 100).toFixed(1)}%`;
+  // The headline: how much faster the current logger is than the old one.
+  const gain = ((log - before) / before) * 100;
+  return [
+    name,
+    none.toLocaleString(),
+    before.toLocaleString(),
+    log.toLocaleString(),
+    overhead(before),
+    overhead(log),
+    `${gain >= 0 ? "+" : ""}${gain.toFixed(1)}%`,
+  ];
 });
 
-const table = markdownTable(["sink", "no logger", "log()", "overhead"], rows, [
-  "left",
-  "right",
-  "right",
-  "right",
-]);
+const table = markdownTable(
+  ["sink", "no logger", "before", "log()", "before Δ", "log() Δ", "log vs before"],
+  rows,
+  ["left", "right", "right", "right", "right", "right", "right"],
+);
 console.log("\n" + table + "\n");
