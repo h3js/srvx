@@ -313,6 +313,11 @@ describe("serveStatic", () => {
       expect(html).toContain('href="../"');
     });
 
+    test("follows the OS dark theme", async () => {
+      const html = await (await fetchStatic("/files/", { dirListing: true })).text();
+      expect(html).toContain("prefers-color-scheme:dark");
+    });
+
     test("hides denied dot segments from the listing", async () => {
       const html = await (await fetchStatic("/files/", { dirListing: true })).text();
       expect(html).not.toContain(".hidden");

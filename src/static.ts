@@ -750,7 +750,10 @@ function renderDirListing(
     `<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:60rem}` +
     `h1{font-size:1.2rem;font-weight:600}ul{list-style:none;padding:0}` +
     `li{padding:.15rem 0}a{text-decoration:none;color:#0366d6}` +
-    `a:hover{text-decoration:underline}</style></head>` +
+    `a:hover{text-decoration:underline}` +
+    // Follow the OS theme — a plain palette swap, no toggle.
+    `@media(prefers-color-scheme:dark){body{background:#0d1117;color:#c9d1d9}` +
+    `a{color:#58a6ff}}</style></head>` +
     `<body><h1>Index of ${heading}</h1><ul>${items.join("")}</ul></body></html>`
   );
 }
