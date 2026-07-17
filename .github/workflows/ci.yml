@@ -49,10 +49,6 @@ jobs:
       - run: pnpm vitest run --coverage test/deno.test.ts test/deno-max-body-size.test.ts test/url.test.ts
       - run: pnpm add -D undici@^7.25.0
       - run: deno run test:node-compat:deno
-  # node-adapters (fetch(nodeHandler)) needs a newer Deno than the node-compat
-  # job above: it passes on latest v2 (with 7 known cases skipped) but fails
-  # broadly on 2.7.12. Runs on unpinned latest Deno v2 in its own job so it does
-  # not force a version bump on `tests_deno`.
   tests_deno_node_adapters:
     runs-on: ubuntu-latest
     steps:
