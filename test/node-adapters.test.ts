@@ -362,6 +362,80 @@ describe("adapters", () => {
     // handler was not reading. (Without the fix this equals expectedLength.)
     expect(bufferedBeforeReading).toBeLessThan(expectedLength / 2);
   });
+
+  // Connect-style `(req, res, next)` middleware on the synthetic bridge path
+  // (no real Node req/res) must receive a working `next`. Without it, invoking
+  // `next` threw ("next is not a function") and surfaced as a 500.
+  test("connect-style middleware that ends the response works", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      // @ts-expect-error http1/http2 union
+      res.writeHead(201, { "content-type": "text/plain" });
+      res.end("middleware ok");
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe("middleware ok");
+  });
+
+  test("connect-style middleware calling next() does not 500", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      res.setHeader("x-mw", "1");
+      // No downstream handler: finalize with the current response state.
+      next();
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
+        status: r.status,
+        header: r.headers.get("x-mw"),
+      })),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for next()")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ status: 200, header: "1" });
+  });
+
+  test("connect-style middleware calling next(err) propagates as an error", async () => {
+    const error = new Error("boom");
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      next(error);
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    // Silence the expected error log from fetchNodeHandler's catch.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws async propagates as an error", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => Promise.reject(new Error("async boom"));
+    const webHandler = toFetchHandler(middleware as any);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe("request signal", () => {
