@@ -324,6 +324,16 @@ describe("serveStatic", () => {
       await expect(res.text()).resolves.toContain('name="robots" content="noindex, nofollow"');
     });
 
+    test("locks the listing down with security headers", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true });
+      // A self-contained page: no scripts, no external origins.
+      expect(res.headers.get("content-security-policy")).toBe(
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+      );
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    });
+
     test("hides denied dot segments from the listing", async () => {
       const html = await (await fetchStatic("/files/", { dirListing: true })).text();
       expect(html).not.toContain(".hidden");

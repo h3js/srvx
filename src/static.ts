@@ -696,6 +696,18 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           // A generated listing should never be indexed; mirrors the `robots`
           // meta tag for crawlers that only read headers.
           "X-Robots-Tag": "noindex, nofollow",
+          // Defense-in-depth for a page that interpolates filenames. The listing
+          // is fully self-contained — inline CSS, no scripts, images, or fonts —
+          // so it is pinned to exactly that: even a hypothetical escaping slip
+          // could neither run a script nor reach an external origin. `base-uri`
+          // and `frame-ancestors` close off `<base>` injection and clickjacking.
+          "Content-Security-Policy":
+            "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          // Never let the HTML be MIME-sniffed into another type.
+          "X-Content-Type-Options": "nosniff",
+          // The URL reveals directory structure; keep it out of the `Referer`
+          // on any outbound navigation.
+          "Referrer-Policy": "no-referrer",
         };
         // HEAD mirrors GET's headers without the body.
         const body = req.method === "HEAD" ? null : renderDirListing(base, path, entries);
