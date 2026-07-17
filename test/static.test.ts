@@ -25,6 +25,9 @@ const BIG_GZ_MARKER = `GZIP_BIG_FROM_DISK ${"z".repeat(2048)}`;
 // The ceiling past which a file is served as-is rather than compressed per request.
 const COMPRESS_MAX_SIZE = 10 * 1024 * 1024;
 
+// Ten bytes, each its own index, so a served slice reads back as its offsets.
+const RANGE_BODY = "0123456789";
+
 beforeAll(async () => {
   tmp = await mkdtemp(join(tmpdir(), "srvx-static-"));
 
@@ -89,6 +92,9 @@ beforeAll(async () => {
   // Compressible-sized bodies behind a type and a route that must not encode.
   await writeFile(join(dir, "big.png"), BIG_JS);
   await writeFile(join(dir, "big.html"), `<h1>${"x".repeat(2048)}</h1>`);
+
+  // A 10-byte body whose every slice is legible, for byte-range assertions.
+  await writeFile(join(dir, "range.txt"), RANGE_BODY);
 
   // Extension-less files, reachable at their exact name.
   await writeFile(join(dir, "LICENSE"), "LICENSE_BODY");
@@ -1130,6 +1136,210 @@ describe("serveStatic", () => {
 
     test.each(["/foo%", "/%ZZ"])("rejects the malformed encoding %s with 400", async (path) => {
       expect((await fetchStatic(path)).status, path).toBe(400);
+    });
+  });
+
+  describe("byte ranges", () => {
+    const fetchRange = (path: string, range: string, opts: Partial<ServeStaticOptions> = {}) =>
+      fetchStatic(path, opts, { headers: { range } });
+
+    test("serves a leading slice as 206", async () => {
+      const res = await fetchRange("/range.txt", "bytes=0-4");
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(`bytes 0-4/${RANGE_BODY.length}`);
+      expect(res.headers.get("content-length")).toBe("5");
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      await expect(res.text()).resolves.toBe("01234");
+    });
+
+    test("serves an open-ended range to the end", async () => {
+      const res = await fetchRange("/range.txt", "bytes=5-");
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(`bytes 5-9/${RANGE_BODY.length}`);
+      await expect(res.text()).resolves.toBe("56789");
+    });
+
+    test("serves a suffix range of the last N bytes", async () => {
+      const res = await fetchRange("/range.txt", "bytes=-5");
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(`bytes 5-9/${RANGE_BODY.length}`);
+      await expect(res.text()).resolves.toBe("56789");
+    });
+
+    test("clamps an end past the file to the last byte", async () => {
+      const res = await fetchRange("/range.txt", "bytes=0-999999");
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(`bytes 0-9/${RANGE_BODY.length}`);
+      expect(res.headers.get("content-length")).toBe(String(RANGE_BODY.length));
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("caps a suffix larger than the file at the whole file", async () => {
+      const res = await fetchRange("/range.txt", "bytes=-999999");
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe(`bytes 0-9/${RANGE_BODY.length}`);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test.each([
+      ["a multi-range set", "bytes=0-1,5-6"],
+      ["a non-numeric range", "bytes=abc"],
+      ["an inverted range", "bytes=5-2"],
+    ])("ignores %s and serves the full 200", async (_why, range) => {
+      const res = await fetchRange("/range.txt", range);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("ignores a non-bytes unit without disturbing negotiation", async () => {
+      // Not a range request at all, so the normal on-the-fly encoding still runs.
+      const res = await fetchStatic(
+        "/big.js",
+        {},
+        { headers: { range: "items=0-1", "accept-encoding": "br" } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      expect(res.headers.get("content-encoding")).toBe("br");
+    });
+
+    test.each([
+      ["a start past the file", "bytes=999999-"],
+      ["a zero-length suffix", "bytes=-0"],
+    ])("answers %s with 416", async (_why, range) => {
+      const res = await fetchRange("/range.txt", range);
+      expect(res.status).toBe(416);
+      expect(res.headers.get("content-range")).toBe(`bytes */${RANGE_BODY.length}`);
+      // A 416 is a plain error: no validators or representation headers ride it.
+      expect(res.headers.get("etag")).toBe(null);
+      expect(res.headers.get("last-modified")).toBe(null);
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("applies the range when If-Range matches Last-Modified", async () => {
+      const lastModified = (await fetchStatic("/range.txt")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { range: "bytes=0-4", "if-range": lastModified } },
+      );
+      expect(res.status).toBe(206);
+      await expect(res.text()).resolves.toBe("01234");
+    });
+
+    test("serves the full 200 when If-Range is not an HTTP-date", async () => {
+      // Strong date comparison, taken literally: only the IMF-fixdate emitted as
+      // `Last-Modified` matches, so an ISO timestamp naming the same second —
+      // which `Date.parse` would happily read — does not revalidate the range.
+      const lastModified = (await fetchStatic("/range.txt")).headers.get("last-modified")!;
+      const iso = new Date(lastModified).toISOString();
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { range: "bytes=0-4", "if-range": iso } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("serves the full 200 when If-Range is a stale date", async () => {
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { range: "bytes=0-4", "if-range": new Date(0).toUTCString() } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("serves the full 200 when If-Range carries the weak ETag", async () => {
+      // Our tags are weak, and If-Range demands a strong comparison, so an
+      // entity-tag If-Range never matches — the whole representation is served.
+      const etag = (await fetchStatic("/range.txt")).headers.get("etag")!;
+      expect(etag).toMatch(/^W\//);
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { range: "bytes=0-4", "if-range": etag } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("ignores the Range header on a HEAD request", async () => {
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { method: "HEAD", headers: { range: "bytes=0-4" } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      expect(res.headers.get("content-length")).toBe(String(RANGE_BODY.length));
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("serves identity bytes for a range on a compressible file", async () => {
+      // A range bypasses negotiation: the client accepts br/gzip, but the 206 is
+      // the raw bytes with no Content-Encoding.
+      const res = await fetchStatic(
+        "/big.js",
+        {},
+        { headers: { range: "bytes=0-9", "accept-encoding": "br, gzip" } },
+      );
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-encoding")).toBe(null);
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      await expect(res.text()).resolves.toBe(BIG_JS.slice(0, 10));
+    });
+
+    test("ignores a precompressed variant for a range request", async () => {
+      // `/big-gz.js` has a `.gz` beside it and the lookup is enabled, but a range
+      // is served identity-only — the disk variant's marker never appears.
+      const res = await fetchStatic(
+        "/big-gz.js",
+        { encodings: true },
+        { headers: { range: "bytes=0-9", "accept-encoding": "br, gzip" } },
+      );
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-encoding")).toBe(null);
+      await expect(res.text()).resolves.toBe(BIG_JS.slice(0, 10));
+    });
+
+    test("lets a matching If-None-Match 304 win over the Range", async () => {
+      const etag = (await fetchStatic("/range.txt")).headers.get("etag")!;
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { "if-none-match": etag, range: "bytes=0-4" } },
+      );
+      expect(res.status).toBe(304);
+      expect(res.headers.get("content-range")).toBe(null);
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("serves the full 200 for a range request with ranges: false", async () => {
+      const res = await fetchRange("/range.txt", "bytes=0-4", { ranges: false });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      expect(res.headers.get("accept-ranges")).toBe(null);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
+    test("advertises Accept-Ranges on an identity 200 but not a compressed one", async () => {
+      expect((await fetchStatic("/range.txt")).headers.get("accept-ranges")).toBe("bytes");
+      // An on-the-fly encoded response omits it.
+      const encoded = await fetchEncoded("/big.js", "br");
+      expect(encoded.headers.get("content-encoding")).toBe("br");
+      expect(encoded.headers.get("accept-ranges")).toBe(null);
+      // As does a precompressed variant.
+      const variant = await fetchVariant("/app.js", "br");
+      expect(variant.headers.get("accept-ranges")).toBe(null);
     });
   });
 
