@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serveStatic, type ServeStaticOptions } from "../src/static.ts";
+import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
 
 let tmp: string;
@@ -29,9 +30,16 @@ beforeAll(async () => {
   await writeFile(join(dir, "sub", ".env.local"), "LOCAL_SECRET");
   await writeFile(join(dir, ".git", "config.txt"), "GIT_CONFIG");
 
-  // `.well-known` (RFC 8615) is a dot directory and gets no exemption.
+  // `.well-known` (RFC 8615) is allow-listed by default.
   await mkdir(join(dir, ".well-known"), { recursive: true });
   await writeFile(join(dir, ".well-known", "security.txt"), "SECURITY_TXT");
+
+  // A dot segment nested under an allow-listed one is still a dot segment.
+  await writeFile(join(dir, ".well-known", ".env"), "WELLKNOWN_SECRET");
+
+  // A sibling that merely shares the `.well-known` prefix must not be matched.
+  await mkdir(join(dir, ".well-known-backup"), { recursive: true });
+  await writeFile(join(dir, ".well-known-backup", "secret.txt"), "BACKUP_SECRET");
 
   // Precompressed variants. Contents are markers, not real brotli/gzip: the
   // middleware serves the bytes as-is and never decompresses them.
@@ -85,6 +93,21 @@ const notFound = () => new Response("next()", { status: 404 });
 
 const fetchStatic = (path: string, root = dir) =>
   serveStatic({ dir: root })(req(path), notFound) as Promise<Response>;
+
+// `new Request()` collapses dot segments in its constructor, so a request built
+// through it hands the middleware an already-resolved pathname and can never
+// exercise the containment check. `FastURL`'s origin-form fast path returns the
+// target verbatim (`_searchNeedsNormRE` in `_url.ts` does not deopt on `..`),
+// which is the one way an unresolved pathname reaches `static.ts` — so build
+// `_url` directly to test the check rather than the test harness.
+const rawReq = (path: string) => {
+  const request = new Request("http://localhost/") as unknown as ServerRequest;
+  request._url = new FastURL(path);
+  return request;
+};
+
+const fetchRaw = (path: string) =>
+  serveStatic({ dir })(rawReq(path), notFound) as Promise<Response>;
 
 const fetchWithDotfiles = (path: string) =>
   serveStatic({ dir, dotfiles: true })(req(path), notFound) as Promise<Response>;
@@ -165,23 +188,49 @@ describe("serveStatic", () => {
       await expect(res.text()).resolves.toBe(contents);
     });
 
-    test("gives .well-known no exemption, serving it only with dotfiles: true", async () => {
-      // `.well-known` (RFC 8615) is a dot directory like any other, so serving
-      // well-known URIs from `dir` requires opting in.
-      expect((await fetchStatic("/.well-known/security.txt")).status).toBe(404);
-
-      const res = await fetchWithDotfiles("/.well-known/security.txt");
+    test("serves an arbitrary allow-listed segment and nothing else", async () => {
+      const opts = { dotfiles: [".git"] };
+      const res = await fetchWith("/.git/config.txt", {}, opts);
       expect(res.status).toBe(200);
-      await expect(res.text()).resolves.toBe("SECURITY_TXT");
+      await expect(res.text()).resolves.toBe("GIT_CONFIG");
+      expect((await fetchWith("/.env", {}, opts)).status).toBe(404);
     });
 
-    test("does not mistake resolved `..` segments for dotfiles", async () => {
-      // `join()` resolves these to `/index.html` before the dotfile check.
-      for (const path of ["/sub/../index.html", "/./index.html"]) {
-        const res = await fetchStatic(path);
-        expect(res.status, path).toBe(200);
-        await expect(res.text()).resolves.toContain("index");
-      }
+    describe(".well-known", () => {
+      test("is served by default", async () => {
+        const res = await fetchStatic("/.well-known/security.txt");
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("SECURITY_TXT");
+      });
+
+      test("serves an ACME challenge token by default", async () => {
+        // Extension-less and under a dot directory, so this needs both the
+        // literal probe and the default allow-list. Renewing a certificate must
+        // not require `dotfiles: true`, which would also publish `.env`/`.git`.
+        const res = await fetchStatic("/.well-known/acme-challenge/tok3n");
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("ACME_KEY_AUTH");
+      });
+
+      test("matches by exact segment, not by prefix", async () => {
+        const res = await fetchStatic("/.well-known-backup/secret.txt");
+        expect(res.status).toBe(404);
+        await expect(res.text()).resolves.not.toContain("BACKUP_SECRET");
+      });
+
+      test("does not serve a dot segment nested under it", async () => {
+        const res = await fetchStatic("/.well-known/.env");
+        expect(res.status).toBe(404);
+        await expect(res.text()).resolves.not.toContain("WELLKNOWN_SECRET");
+      });
+
+      test.each([
+        ["false", false],
+        ["[]", []],
+      ])("is hidden with dotfiles: %s", async (_label, dotfiles) => {
+        const res = await fetchWith("/.well-known/security.txt", {}, { dotfiles });
+        expect(res.status).toBe(404);
+      });
     });
   });
 
@@ -291,16 +340,6 @@ describe("serveStatic", () => {
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toContain("about");
     });
-
-    test("serves an ACME challenge token with dotfiles: true", async () => {
-      // Extension-less and under a dot directory: needs both the literal probe
-      // and the dotfiles opt-in.
-      expect((await fetchStatic("/.well-known/acme-challenge/tok3n")).status).toBe(404);
-
-      const res = await fetchWithDotfiles("/.well-known/acme-challenge/tok3n");
-      expect(res.status).toBe(200);
-      await expect(res.text()).resolves.toBe("ACME_KEY_AUTH");
-    });
   });
 
   describe("incompressible types", () => {
@@ -408,6 +447,15 @@ describe("serveStatic", () => {
       await expect(fetchWithDotfiles("/%2Eenv").then((r) => r.text())).resolves.toBe("DOTENV");
     });
 
+    test("applies the dotfile allow-list to the decoded name", async () => {
+      // The allow-list is matched after decoding, so an encoded `.well-known`
+      // is neither denied as an unknown dot segment nor let through unchecked.
+      await expect(fetchStatic("/%2Ewell-known/security.txt").then((r) => r.text())).resolves.toBe(
+        "SECURITY_TXT",
+      );
+      expect((await fetchStatic("/%2Ewell-known/%2Eenv")).status).toBe(404);
+    });
+
     test("does not decode twice", async () => {
       // `%252e%252e` decodes once to the harmless literal `%2e%2e`.
       const res = await fetchStatic("/%252e%252e/outside/secret.txt");
@@ -421,10 +469,44 @@ describe("serveStatic", () => {
     });
   });
 
-  test("does not serve traversal outside the root", async () => {
-    for (const path of ["/../outside/secret.txt", "/%2e%2e%2foutside%2fsecret.txt"]) {
-      const res = await fetchStatic(path);
+  describe("unresolved pathname", () => {
+    // Every request here bypasses `new Request()` — see `rawReq`. Without that,
+    // the pathname arrives already collapsed and these assert nothing: they pass
+    // against a `serveStatic` with both containment checks deleted.
+    test.each([
+      "/../outside/secret.txt",
+      "/sub/../../outside/secret.txt",
+      "/../../../../../../etc/passwd",
+    ])("serves no traversal from a raw %s", async (path) => {
+      const res = await fetchRaw(path);
       expect(res.status, path).toBe(404);
-    }
+      await expect(res.text()).resolves.not.toContain("TOPSECRET");
+    });
+
+    test.each(["/sub/../index.html", "/./index.html"])(
+      "serves %s, which resolves back inside the root",
+      async (path) => {
+        // Not every dot segment escapes, and `join()` collapses these before the
+        // dotfile check, so they must not be read as dotfiles either.
+        const res = await fetchRaw(path);
+        expect(res.status, path).toBe(200);
+        await expect(res.text()).resolves.toContain("index");
+      },
+    );
+
+    test("does not serve a raw traversal into an allow-listed dot segment", async () => {
+      const res = await fetchRaw("/.well-known/../../outside/secret.txt");
+      expect(res.status).toBe(404);
+      await expect(res.text()).resolves.not.toContain("TOPSECRET");
+    });
+  });
+
+  test("keeps an encoded separator from becoming a separator", async () => {
+    // `%2f` survives `decodeURI`, so this stays a single literal filename rather
+    // than traversing. Reaches the middleware verbatim: `new Request()` only
+    // collapses real separators.
+    const res = await fetchStatic("/%2e%2e%2foutside%2fsecret.txt");
+    expect(res.status).toBe(404);
+    await expect(res.text()).resolves.not.toContain("TOPSECRET");
   });
 });

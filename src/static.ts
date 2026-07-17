@@ -19,11 +19,14 @@ export interface ServeStaticOptions {
   methods?: string[];
 
   /**
-   * Serve dotfiles (paths with a segment starting with `.`, such as `.env` or `.git/config`).
+   * Dot segments (a path segment starting with `.`, such as `.env` or `.git`) that may be served.
    *
-   * @default false
+   * An array allow-lists segments by exact name; a path containing any other dot segment falls
+   * through to `next()`. `true` serves every dot segment, `false` (or `[]`) none.
+   *
+   * @default [".well-known"]
    */
-  dotfiles?: boolean;
+  dotfiles?: boolean | string[];
 
   /**
    * Map of `Content-Encoding` to the file extension of its precompressed variant on disk.
@@ -87,10 +90,11 @@ const isCompressible = (mimeType: string): boolean =>
   mimeType === "application/javascript" ||
   mimeType === "application/wasm";
 
-// A path segment starting with `.` marks a dotfile. `.`/`..` segments never
-// reach this check: `join()` resolves them before the path is tested, so
-// `/sub/../index.html` is `index.html` here, not a dot segment.
-const isDotPath = (relPath: string): boolean => relPath.split(sep).some((s) => s[0] === ".");
+// RFC 8615 reserves `/.well-known/` for public metadata, so it is served by
+// default: ACME HTTP-01 challenges and `security.txt` live there, and gating
+// them behind an all-or-nothing opt-in would mean publishing `.env`/`.git` to
+// renew a certificate. Every other dot segment stays hidden.
+const DEFAULT_DOTFILES = [".well-known"];
 
 // The uncompressed file, always tried last so it acts as the fallback.
 const IDENTITY: [encoding: string, ext: string] = ["", ""];
@@ -132,7 +136,22 @@ const parseAcceptEncoding = (
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const dir = resolve(options.dir) + sep;
   const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
-  const dotfiles = options.dotfiles === true;
+  // `?? DEFAULT_DOTFILES` and not `||`: an explicit `false` must stay `false`.
+  const dotfiles = options.dotfiles ?? DEFAULT_DOTFILES;
+  const allowAllDots = dotfiles === true;
+  const allowedDots = new Set(Array.isArray(dotfiles) ? dotfiles : []);
+
+  // Deny a path with a dot segment that is not allow-listed. Matching is by
+  // exact segment, so allowing `.well-known` exposes neither a sibling that
+  // merely shares its prefix (`.well-known-backup`) nor a dot segment nested
+  // under it (`.well-known/.env`).
+  //
+  // `.`/`..` segments never reach this check: `join()` resolves them before the
+  // path is tested, so `/sub/../index.html` is `index.html` here, not a dot
+  // segment.
+  const isDeniedDotPath = (relPath: string): boolean =>
+    !allowAllDots && relPath.split(sep).some((s) => s[0] === "." && !allowedDots.has(s));
+
   const encodings = options.encodings || { br: ".br", gzip: ".gz" };
   const varyOnEncoding = Object.keys(encodings).length > 0;
 
@@ -183,11 +202,16 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // any name a client must encode (`hello world.txt`, `café.txt`) is
       // unreachable. `decodeURI`, not `decodeURIComponent`: it keeps `%2F`,
       // `%3F` and `%23` encoded, so an encoded separator never becomes a
-      // separator. Dot segments (including `%2e` forms) were already resolved
-      // by the URL parser, and whatever a single decode can still surface
-      // (`%5C` on Windows, a double-encoded `..` decoding to the literal
-      // `%2e%2e`) is caught by the containment and dotfile checks below,
-      // which all run on the decoded, joined path.
+      // separator.
+      //
+      // Nothing below relies on the pathname arriving normalized. `FastURL`
+      // does resolve dot segments in practice (`_needsNormRE` in `_url.ts`
+      // deopts `.`, `..` and their `%2e` forms to the native parser), but that
+      // is an invariant of another module, and decoding can surface a dot
+      // segment after it has already run (`%252e%252e` -> `%2e%2e`, `%5C` on
+      // Windows). So containment rests only on `join()` + `startsWith(dir)`
+      // below, which resolve and re-check whatever actually reaches them; the
+      // "unresolved pathname" tests feed a raw `/../` straight in to pin that.
       try {
         path = decodeURI(path);
       } catch {
@@ -206,9 +230,10 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // Probe the literal path before the `.html` route candidates, so an
       // extension-less file is reachable at its exact name: ACME challenge
       // tokens (`/.well-known/acme-challenge/<token>`), `LICENSE`,
-      // `apple-app-site-association`. This also covers dotfiles, which land
-      // here because `extname()` reports no extension for a leading-dot name
-      // (`.env`) and would otherwise only be looked up as `.env.html`.
+      // `apple-app-site-association`. This also covers allow-listed dotfiles,
+      // which land here because `extname()` reports no extension for a
+      // leading-dot name (`.env`) and would otherwise only be looked up as
+      // `.env.html`.
       paths = [path, `${path}.html`, `${path}/index.html`];
     } else {
       paths = [path];
@@ -222,7 +247,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       if (!filePath.startsWith(dir)) {
         continue;
       }
-      if (!dotfiles && isDotPath(filePath.slice(dir.length))) {
+      if (isDeniedDotPath(filePath.slice(dir.length))) {
         continue;
       }
       const fileExt = extname(filePath);
