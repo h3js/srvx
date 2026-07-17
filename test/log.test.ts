@@ -167,4 +167,49 @@ describe("log", () => {
       "http://localhost/2",
     ]);
   });
+
+  it("stops writing under backpressure and resumes on drain", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const isTTY = process.stdout.isTTY;
+    const write = process.stdout.write;
+    const writes: string[] = [];
+    let accepting = false; // false => stream buffer is full
+
+    try {
+      process.stdout.isTTY = false;
+      vi.resetModules();
+      const { log } = await import("../src/log.ts");
+
+      process.stdout.write = ((chunk: any) => {
+        writes.push(String(chunk));
+        return accepting;
+      }) as typeof write;
+
+      const middleware = log();
+      const flushed = () => new Promise((resolve) => setImmediate(resolve));
+
+      await middleware(request("http://localhost/a"), respond(200));
+      await flushed();
+      // First write returned false, so the logger is now waiting for `drain`.
+      expect(writes).toHaveLength(1);
+
+      // Further requests buffer but must not hit stdout while draining.
+      await middleware(request("http://localhost/b"), respond(200));
+      await flushed();
+      await flushed();
+      expect(writes).toHaveLength(1);
+
+      // The stream drains and the buffered line lands.
+      accepting = true;
+      process.stdout.emit("drain");
+      await flushed();
+
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toContain("http://localhost/b");
+    } finally {
+      process.stdout.write = write;
+      process.stdout.isTTY = isTTY;
+    }
+  });
 });

@@ -26,14 +26,20 @@ function colorsEnabled(): boolean {
 /**
  * Node, Deno and Bun all expose `process.stdout`. Workers have no stdout handle
  * and fall back to `console.log`.
+ *
+ * `write` returns whether the stream can accept more data right away. A `false`
+ * result means the internal buffer is over its high-water mark and `flush` waits
+ * for the `drain` event before writing again. `console.log` has no backpressure
+ * to report, so it always returns `true`.
  */
-const write: (chunk: string) => void = /* @__PURE__ */ (() => {
-  const stdout = globalThis.process?.stdout;
+const encoder = /* @__PURE__ */ new TextEncoder();
+const stdout = globalThis.process?.stdout;
+const write: (chunk: string) => boolean = /* @__PURE__ */ (() => {
   if (stdout?.write) {
-    return (chunk) => void stdout.write(chunk);
+    return (chunk) => stdout.write(chunk);
   }
   // Chunks always end in a newline, which `console.log` adds back.
-  return (chunk) => console.log(chunk.slice(0, -1));
+  return (chunk) => (console.log(chunk.slice(0, -1)), true);
 })();
 
 /**
@@ -49,10 +55,12 @@ const schedule: (task: () => void) => void = /* @__PURE__ */ (() => {
 
 let pending = "";
 let scheduled = false;
+let draining = false;
 
 function enqueue(line: string): void {
   pending += line;
-  if (!scheduled) {
+  // While the stream is draining we only buffer; `onDrain` reschedules the flush.
+  if (!scheduled && !draining) {
     scheduled = true;
     schedule(flush);
   }
@@ -60,12 +68,28 @@ function enqueue(line: string): void {
 
 function flush(): void {
   scheduled = false;
+  if (draining || !pending) {
+    return;
+  }
   const chunk = pending;
   pending = "";
   try {
-    write(chunk);
+    if (!write(chunk) && stdout?.once) {
+      // Buffer is over the high-water mark: stop writing until it drains so a
+      // slow stdout applies backpressure instead of growing without bound.
+      draining = true;
+      stdout.once("drain", onDrain);
+    }
   } catch {
     // A broken stdout (EPIPE, closed worker) must never surface as a request error.
+  }
+}
+
+function onDrain(): void {
+  draining = false;
+  if (pending) {
+    scheduled = true;
+    schedule(flush);
   }
 }
 
@@ -91,7 +115,18 @@ function hookExit(): void {
     try {
       const fs = proc.getBuiltinModule?.("node:fs");
       if (fs) {
-        fs.writeSync(1, chunk);
+        // Encode with the web-standard `TextEncoder` so this stays runtime
+        // agnostic (`Buffer` is Node-only); `writeSync` takes any typed array.
+        // A `writeSync` may accept only part of the bytes, so advance by the
+        // returned count until the whole chunk lands.
+        const bytes = encoder.encode(chunk);
+        for (let offset = 0; offset < bytes.length;) {
+          const written = fs.writeSync(1, bytes, offset, bytes.length - offset);
+          if (written <= 0) {
+            break;
+          }
+          offset += written;
+        }
       } else {
         proc.stdout?.write(chunk);
       }
