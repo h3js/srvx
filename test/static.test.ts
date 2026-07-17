@@ -314,6 +314,16 @@ describe("serveStatic", () => {
       await expect(res.text()).resolves.toBe("PLAIN_JS");
     });
 
+    test("ignores a variant with no identity file beside it", async () => {
+      // The identity file gates the lookup, so an orphan `.br` is not a route.
+      // Nothing is lost: a client accepting no encoding could not be served it
+      // anyway, so shipping one without its source is already a broken deploy.
+      await writeFile(join(dir, "orphan.js.br"), "ORPHAN_BR");
+      const res = await fetchEncoded("/orphan.js", "br");
+      expect(res.status).toBe(404);
+      await expect(res.text()).resolves.not.toContain("ORPHAN_BR");
+    });
+
     test("rejects a variant escaping the root and falls back to the plain file", async () => {
       // `escape-variant.js.br` symlinks outside the root; the plain file does not.
       const res = await fetchEncoded("/escape-variant.js", "br");

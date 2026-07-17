@@ -96,9 +96,6 @@ const isCompressible = (mimeType: string): boolean =>
 // renew a certificate. Every other dot segment stays hidden.
 const DEFAULT_DOTFILES = [".well-known"];
 
-// The uncompressed file, always tried last so it acts as the fallback.
-const IDENTITY: [encoding: string, ext: string] = ["", ""];
-
 /**
  * Encodings from `encodings` the client accepts, in server-preference order.
  *
@@ -172,23 +169,21 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     return realDir;
   };
 
-  // Stat a candidate, rejecting anything that is not a regular file or whose
-  // resolved path escapes `dir` (see `getRealDir`).
-  const resolveFile = async (candidate: string): Promise<Stats | null> => {
+  // Existence and type only. Containment costs a `realpath` (see `isContained`)
+  // and is only worth paying for the candidate actually served.
+  const statFile = async (candidate: string): Promise<Stats | null> => {
     const fileStat = await stat(candidate).catch(() => null);
-    if (!fileStat?.isFile()) {
-      return null;
-    }
-    // The `startsWith(dir)` check on the caller side is lexical and cannot see
-    // through symlinks, while `stat()` follows them: a link inside `dir` can
-    // resolve to any file on the host. Re-assert containment against the
-    // resolved path, which also covers links in intermediate segments. Links
-    // staying inside `dir` are still served.
+    return fileStat?.isFile() ? fileStat : null;
+  };
+
+  // The containment boundary. `stat()` follows symlinks and the lexical
+  // `startsWith(dir)` pre-filter cannot see through them, so a link inside
+  // `dir` can resolve to any file on the host. Re-assert against the resolved
+  // path, which also covers links in intermediate segments. Links staying
+  // inside `dir` are still served.
+  const isContained = async (candidate: string): Promise<boolean> => {
     const realPath = await realpath(candidate).catch(() => null);
-    if (!realPath || !realPath.startsWith(await getRealDir())) {
-      return null;
-    }
-    return fileStat;
+    return realPath !== null && realPath.startsWith(await getRealDir());
   };
 
   return async (req, next) => {
@@ -244,10 +239,25 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     );
     for (const path of paths) {
       const filePath = join(dir, path);
+      // A cheap pre-filter, not the containment boundary — `isContained` is.
+      // This rejects an obvious escape without spending a syscall, and it is
+      // what makes `slice(dir.length)` below an actual relative path.
       if (!filePath.startsWith(dir)) {
         continue;
       }
       if (isDeniedDotPath(filePath.slice(dir.length))) {
+        continue;
+      }
+      // The identity file gates the candidate: a client that accepts no
+      // encoding needs it regardless, so a variant without one beside it is
+      // already a broken deploy. Probing it first costs one extra stat when a
+      // variant then wins (2 -> 3 syscalls for `/app.js` + `br`), but keeps a
+      // miss at one syscall per candidate rather than one per accepted encoding
+      // (7 -> 3 for `/nope`). Misses are worth the trade: the middleware falls
+      // through to the app on every unmatched route, so all non-static traffic
+      // pays that path, as does anything probing for `.env`/`.git`.
+      const identityStat = await statFile(filePath);
+      if (!identityStat) {
         continue;
       }
       const fileExt = extname(filePath);
@@ -257,52 +267,68 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // not for already-compressed types, and not for `renderHTML` routes,
       // whose output a variant on disk would not match.
       const compressible = !renderHTML && isCompressible(contentType);
-      for (const [encoding, ext] of compressible ? [...acceptEncodings, IDENTITY] : [IDENTITY]) {
-        const servePath = filePath + ext;
-        const fileStat = await resolveFile(servePath);
-        if (!fileStat) {
-          continue;
-        }
-        // `Content-Type` comes from the base path: the variant's own extension
-        // is the encoding (`.br`), not the media type.
-        const headers: Record<string, string> = {
-          "Content-Length": fileStat.size.toString(),
-          "Content-Type": contentType,
-        };
-        if (encoding) {
-          headers["Content-Encoding"] = encoding;
-        }
-        if (varyOnEncoding && compressible) {
-          // Set on the identity variant too, not just when an encoded one is
-          // served: a shared cache must key on the header either way.
-          headers["Vary"] = "Accept-Encoding";
-        }
-        if (renderHTML) {
-          const rendered = await renderHTML({
-            html: await readFile(servePath, "utf8"),
-            filename: servePath,
-            request: req,
-          });
-          if (req.method !== "HEAD") {
-            return rendered;
+
+      let encoding = "";
+      let servePath = filePath;
+      let fileStat = identityStat;
+      if (compressible) {
+        for (const [name, ext] of acceptEncodings) {
+          const variantPath = filePath + ext;
+          const variantStat = await statFile(variantPath);
+          // An escaping variant is skipped rather than fatal: the identity file
+          // below still serves, provided it is itself contained.
+          if (variantStat && (await isContained(variantPath))) {
+            encoding = name;
+            servePath = variantPath;
+            fileStat = variantStat;
+            break;
           }
-          // A HEAD response carries the same headers as GET, without the body.
-          // Cancel the unused body so a stream-backed rendered response
-          // releases its underlying resource instead of waiting for GC.
-          await rendered.body?.cancel().catch(() => {});
-          return new FastResponse(null, {
-            status: rendered.status,
-            statusText: rendered.statusText,
-            headers: rendered.headers,
-          });
         }
-        if (req.method === "HEAD") {
-          // Node discards a HEAD body at the http layer, so reading the file
-          // would burn I/O for bytes that never reach the wire.
-          return new FastResponse(null, { headers });
-        }
-        return new FastResponse(createReadStream(servePath) as any, { headers });
       }
+      // Only the bytes actually sent need containing, and a variant that won
+      // above is already checked.
+      if (!encoding && !(await isContained(filePath))) {
+        continue;
+      }
+      // `Content-Type` comes from the base path: the variant's own extension
+      // is the encoding (`.br`), not the media type.
+      const headers: Record<string, string> = {
+        "Content-Length": fileStat.size.toString(),
+        "Content-Type": contentType,
+      };
+      if (encoding) {
+        headers["Content-Encoding"] = encoding;
+      }
+      if (varyOnEncoding && compressible) {
+        // Set on the identity variant too, not just when an encoded one is
+        // served: a shared cache must key on the header either way.
+        headers["Vary"] = "Accept-Encoding";
+      }
+      if (renderHTML) {
+        const rendered = await renderHTML({
+          html: await readFile(servePath, "utf8"),
+          filename: servePath,
+          request: req,
+        });
+        if (req.method !== "HEAD") {
+          return rendered;
+        }
+        // A HEAD response carries the same headers as GET, without the body.
+        // Cancel the unused body so a stream-backed rendered response
+        // releases its underlying resource instead of waiting for GC.
+        await rendered.body?.cancel().catch(() => {});
+        return new FastResponse(null, {
+          status: rendered.status,
+          statusText: rendered.statusText,
+          headers: rendered.headers,
+        });
+      }
+      if (req.method === "HEAD") {
+        // Node discards a HEAD body at the http layer, so reading the file
+        // would burn I/O for bytes that never reach the wire.
+        return new FastResponse(null, { headers });
+      }
+      return new FastResponse(createReadStream(servePath) as any, { headers });
     }
     return next();
   };
