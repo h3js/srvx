@@ -89,7 +89,7 @@
     "srvx-release": "npm:srvx@^0.11.21",
     "tslib": "^2.8.1",
     "typescript": "^7.0.2",
-    "undici": "~8.3.0",
+    "undici": "8.4.0",
     "vitest": "^4.1.10"
   },
   "resolutions": {
