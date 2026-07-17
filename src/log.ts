@@ -1,7 +1,15 @@
 import * as c from "./cli/_utils.ts";
 import type { ServerMiddleware } from "./types.ts";
 
-export interface LogOptions {}
+export interface LogOptions {
+  /**
+   * Batch lines and write once per event-loop turn (default: `true`). Set to
+   * `false` to hand each line to stdout in the request's own turn: slower
+   * under load, but a hard kill can only drop the write still in flight,
+   * never a batch waiting for its flush turn.
+   */
+  batch?: boolean;
+}
 
 type Paint = (text: string) => string;
 
@@ -66,11 +74,22 @@ function enqueue(line: string): void {
   }
 }
 
+/**
+ * Unbatched mode (`batch: false`): append and flush in the same call, so the
+ * line is handed to stdout before the request completes. It still goes through
+ * `pending` + `flush` rather than `write` directly, so it can never overtake
+ * lines a batched logger or a drain wait is still holding.
+ */
+function writeNow(line: string): void {
+  pending += line;
+  flush();
+}
+
 function flush(): void {
   scheduled = false;
-  // `draining` is never true here: `enqueue` won't schedule a flush while
-  // draining, and `onDrain` clears it before rescheduling.
-  if (!pending) {
+  // A flush scheduled by `enqueue` can still fire mid-drain when a `writeNow`
+  // hit backpressure after it was queued; only buffer until `onDrain` resumes.
+  if (draining || !pending) {
     return;
   }
   const chunk = pending;
@@ -102,6 +121,36 @@ function onDrain(): void {
  * directly because `process.stdout.write` is asynchronous for pipes and would
  * not land in time.
  */
+function flushSync(): void {
+  if (!pending) {
+    return;
+  }
+  const proc = globalThis.process;
+  const chunk = pending;
+  pending = "";
+  try {
+    const fs = proc?.getBuiltinModule?.("node:fs");
+    if (fs) {
+      // Encode with the web-standard `TextEncoder` so this stays runtime
+      // agnostic (`Buffer` is Node-only); `writeSync` takes any typed array.
+      // A `writeSync` may accept only part of the bytes, so advance by the
+      // returned count until the whole chunk lands.
+      const bytes = encoder.encode(chunk);
+      for (let offset = 0; offset < bytes.length;) {
+        const written = fs.writeSync(1, bytes, offset, bytes.length - offset);
+        if (written <= 0) {
+          break;
+        }
+        offset += written;
+      }
+    } else {
+      proc?.stdout?.write(chunk);
+    }
+  } catch {
+    // stdout is already gone.
+  }
+}
+
 let exitHooked = false;
 function hookExit(): void {
   const proc = globalThis.process;
@@ -109,37 +158,53 @@ function hookExit(): void {
     return;
   }
   exitHooked = true;
-  proc.on("exit", () => {
-    if (!pending) {
-      return;
-    }
-    const chunk = pending;
-    pending = "";
-    try {
-      const fs = proc.getBuiltinModule?.("node:fs");
-      if (fs) {
-        // Encode with the web-standard `TextEncoder` so this stays runtime
-        // agnostic (`Buffer` is Node-only); `writeSync` takes any typed array.
-        // A `writeSync` may accept only part of the bytes, so advance by the
-        // returned count until the whole chunk lands.
-        const bytes = encoder.encode(chunk);
-        for (let offset = 0; offset < bytes.length;) {
-          const written = fs.writeSync(1, bytes, offset, bytes.length - offset);
-          if (written <= 0) {
-            break;
-          }
-          offset += written;
-        }
-      } else {
-        proc.stdout?.write(chunk);
+  proc.on("exit", flushSync);
+
+  // A default-handled SIGHUP/SIGTERM/SIGINT terminates the process without
+  // emitting `exit`, silently dropping whatever is buffered. That only happens
+  // when no listener exists at all — srvx's graceful shutdown registers one —
+  // so a listener is installed per signal that, when it turns out to be the
+  // only one, flushes and re-raises with the default disposition restored:
+  // the process still dies by the signal, with `exit` semantics untouched.
+  if (!proc.listenerCount || !proc.kill) {
+    return;
+  }
+  for (const [sig, signum] of [
+    ["SIGHUP", 1],
+    ["SIGINT", 2],
+    ["SIGTERM", 15],
+  ] as const) {
+    const onSignal = (): void => {
+      // Another listener owns the shutdown (e.g. graceful shutdown): the
+      // process keeps running and the regular flush path delivers `pending`.
+      // Flushing here would jump ahead of anything the stream has queued.
+      if (proc.listenerCount(sig) > 1) {
+        return;
       }
-    } catch {
-      // stdout is already gone.
+      flushSync();
+      proc.removeListener(sig, onSignal);
+      try {
+        proc.kill(proc.pid, sig);
+      } catch {
+        // Re-raising is unsupported (e.g. Windows edge cases): exit with the
+        // conventional 128 + signal number code instead of hanging alive.
+        proc.exit(128 + signum);
+      }
+    };
+    // Prepended so this runs before any `once` wrapper removes itself: a
+    // `process.once(sig, cleanup)` registered earlier would otherwise already
+    // be gone from the count when appended-last `onSignal` runs, and the
+    // sole-listener check would re-raise mid-cleanup.
+    if (proc.prependListener) {
+      proc.prependListener(sig, onSignal);
+    } else {
+      proc.on(sig, onSignal);
     }
-  });
+  }
 }
 
-export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) => {
+export const log: (options?: LogOptions) => ServerMiddleware = (options = {}) => {
+  const emit = options.batch === false ? writeNow : enqueue;
   const colors = colorsEnabled();
   const paint = (fn: Paint): Paint => (colors ? fn : plain);
   const gray = paint(c.gray);
@@ -169,7 +234,7 @@ export const log: (options?: LogOptions) => ServerMiddleware = (_options = {}) =
     const start = performance.now();
     const res = await next();
     const duration = performance.now() - start;
-    enqueue(
+    emit(
       `${time()} ${bold(req.method)} ${blue(req.url)} ${status(res.status)} ${gray(`(${duration.toFixed(2)}ms)`)}\n`,
     );
     return res;
