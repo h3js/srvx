@@ -123,6 +123,59 @@ describe("FastURL", () => {
       expect(url.search).toBe("?a=1&b=2");
     });
 
+    test("read-then-mutate: detached read cache is discarded on adoption", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      expect(params.get("a")).toBe("1"); // populate the lazily-parsed read store
+      params.set("b", "2"); // adopts the native URL's params; read store discarded
+      expect(url.search).toBe("?a=1&b=2");
+      expect(url.href).toBe("http://localhost/p?a=1&b=2");
+      expect(params.get("b")).toBe("2");
+    });
+
+    test("encoding round-trip matches native (%2B, +, %20)", () => {
+      const input = "/p?a=%2B&b=+&c=%20";
+      const std = new URL(`http://localhost${input}`);
+      const url = new FastURL(input);
+      expect(url.searchParams.get("a")).toBe(std.searchParams.get("a")); // "+"
+      expect(url.searchParams.get("b")).toBe(std.searchParams.get("b")); // " "
+      expect(url.searchParams.get("c")).toBe(std.searchParams.get("c")); // " "
+      for (const u of [std, url]) {
+        u.searchParams.set("d", "+ &=");
+      }
+      expect(url.search).toBe(std.search);
+      expect(url.href).toBe(std.href);
+    });
+
+    test("forEach forwards thisArg", () => {
+      const url = new FastURL("/p?a=1&b=2");
+      const thisArg = { tag: "ctx" };
+      const seen: [string, string, unknown][] = [];
+      url.searchParams.forEach(function (this: unknown, value, key) {
+        seen.push([key, value, this]);
+      }, thisArg);
+      expect(seen).toEqual([
+        ["a", "1", thisArg],
+        ["b", "2", thisArg],
+      ]);
+    });
+
+    test("delete/has with value argument match native", () => {
+      const std = new URL("http://localhost/p?a=1&a=2&b=3");
+      const url = new FastURL("/p?a=1&a=2&b=3");
+      expect(url.searchParams.has("a", "2")).toBe(true);
+      expect(url.searchParams.has("a", "9")).toBe(false);
+      for (const u of [std, url]) {
+        u.searchParams.delete("a", "1");
+      }
+      expect(url.search).toBe(std.search);
+      for (const u of [std, url]) {
+        u.searchParams.delete("b");
+      }
+      expect(url.search).toBe(std.search);
+      expect(url.href).toBe(std.href);
+    });
+
     test("NodeRequestURL: mutation reflected, raw req.url untouched", () => {
       const req = { url: "/p?a=1", headers: { host: "localhost" } } as any;
       const url = new NodeRequestURL({ req });

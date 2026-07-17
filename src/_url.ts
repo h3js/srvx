@@ -94,7 +94,18 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
       }
 
       get _params(): globalThis.URLSearchParams {
-        return (this.#params ??= new NativeSearchParams(this.#owner.search));
+        if (!this.#params) {
+          // Read the owner's search BEFORE the `??=` check below: if this read
+          // ever deopted the owner, its `_url` getter would `_adopt` into
+          // `#params`, and a blind assignment here would overwrite the adopted
+          // (URL-linked) store with a detached copy — silently re-detaching the
+          // facade. Unreachable today (a facade only exists on the fast path,
+          // whose href always contains a `/` so `search` never deopts), but
+          // don't rely on that invariant.
+          const search = this.#owner.search;
+          this.#params ??= new NativeSearchParams(search);
+        }
+        return this.#params;
       }
 
       // Writes must be reflected by the owner URL (`search`/`href`) like
