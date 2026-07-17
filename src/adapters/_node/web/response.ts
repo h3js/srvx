@@ -19,44 +19,7 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | undefined {
 // Statuses that must not carry a response body per the Fetch/HTTP spec.
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
-// Drop any `transfer-encoding` entry from a `writeHead()` headers argument
-// (object, flat `[k, v, ...]`, or nested `[[k, v], ...]` form). An explicit
-// `Transfer-Encoding: chunked` makes Node chunk-frame the body it writes to the
-// bridging socket, corrupting the captured body (`5\r\nhello\r\n...`), and the
-// header itself is a hop-by-hop framing artifact that must not reach the web
-// `Response`. See https://github.com/h3js/srvx/issues/248
-function stripTransferEncoding<T>(headers: T): T {
-  if (!headers || typeof headers !== "object") {
-    return headers;
-  }
-  if (Array.isArray(headers)) {
-    if (headers.length > 0 && Array.isArray(headers[0])) {
-      return headers.filter(([key]) => String(key).toLowerCase() !== "transfer-encoding") as T;
-    }
-    const out: unknown[] = [];
-    for (let i = 0; i < headers.length; i += 2) {
-      if (String(headers[i]).toLowerCase() === "transfer-encoding") continue;
-      out.push(headers[i], headers[i + 1]);
-    }
-    return out as T;
-  }
-  let hasTransferEncoding = false;
-  for (const key in headers) {
-    if (key.toLowerCase() === "transfer-encoding") {
-      hasTransferEncoding = true;
-      break;
-    }
-  }
-  if (!hasTransferEncoding) {
-    return headers;
-  }
-  const out: Record<string, unknown> = {};
-  for (const key in headers) {
-    if (key.toLowerCase() === "transfer-encoding") continue;
-    out[key] = (headers as Record<string, unknown>)[key];
-  }
-  return out as T;
-}
+
 
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
@@ -203,4 +166,46 @@ export class WebServerResponse extends ServerResponse {
       headers: headers,
     });
   }
+}
+
+
+// --- internal ---
+
+// Drop any `transfer-encoding` entry from a `writeHead()` headers argument
+// (object, flat `[k, v, ...]`, or nested `[[k, v], ...]` form). An explicit
+// `Transfer-Encoding: chunked` makes Node chunk-frame the body it writes to the
+// bridging socket, corrupting the captured body (`5\r\nhello\r\n...`), and the
+// header itself is a hop-by-hop framing artifact that must not reach the web
+// `Response`. See https://github.com/h3js/srvx/issues/248
+function stripTransferEncoding<T>(headers: T): T {
+  if (!headers || typeof headers !== "object") {
+    return headers;
+  }
+  if (Array.isArray(headers)) {
+    if (headers.length > 0 && Array.isArray(headers[0])) {
+      return headers.filter(([key]) => String(key).toLowerCase() !== "transfer-encoding") as T;
+    }
+    const out: unknown[] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      if (String(headers[i]).toLowerCase() === "transfer-encoding") continue;
+      out.push(headers[i], headers[i + 1]);
+    }
+    return out as T;
+  }
+  let hasTransferEncoding = false;
+  for (const key in headers) {
+    if (key.toLowerCase() === "transfer-encoding") {
+      hasTransferEncoding = true;
+      break;
+    }
+  }
+  if (!hasTransferEncoding) {
+    return headers;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key in headers) {
+    if (key.toLowerCase() === "transfer-encoding") continue;
+    out[key] = (headers as Record<string, unknown>)[key];
+  }
+  return out as T;
 }
