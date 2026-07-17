@@ -1229,6 +1229,22 @@ describe("serveStatic", () => {
       await expect(res.text()).resolves.toBe("01234");
     });
 
+    test("serves the full 200 when If-Range is not an HTTP-date", async () => {
+      // Strong date comparison, taken literally: only the IMF-fixdate emitted as
+      // `Last-Modified` matches, so an ISO timestamp naming the same second —
+      // which `Date.parse` would happily read — does not revalidate the range.
+      const lastModified = (await fetchStatic("/range.txt")).headers.get("last-modified")!;
+      const iso = new Date(lastModified).toISOString();
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { range: "bytes=0-4", "if-range": iso } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-range")).toBe(null);
+      await expect(res.text()).resolves.toBe(RANGE_BODY);
+    });
+
     test("serves the full 200 when If-Range is a stale date", async () => {
       const res = await fetchStatic(
         "/range.txt",

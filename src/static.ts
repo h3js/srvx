@@ -698,16 +698,17 @@ function matchesIfModifiedSince(header: string | null, lastModifiedMs: number): 
 // RFC 9110 §13.1.5 — whether an `If-Range` lets the range apply. The entity-tag
 // form (a value opening with `"` or `W/`) requires a strong comparison, which
 // our weak tags can never pass, so it always drops the range to a full 200. The
-// HTTP-date form is a strong date comparison: it matches only when the date is
-// the exact second we emit as `Last-Modified` (`lastModifiedMs`, already floored
-// to the second). An unparseable value is a mismatch. A failure here is never an
-// error status — it just serves the whole representation.
+// HTTP-date form is a strong date comparison, taken literally: the only date a
+// client can legitimately hold is the IMF-fixdate this middleware emitted as
+// `Last-Modified`, so match that exact string — not whatever `Date.parse` also
+// accepts (an ISO timestamp naming the same second included). A failure here is
+// never an error status — it just serves the whole representation.
 function matchesIfRange(header: string, lastModifiedMs: number): boolean {
   const value = header.trim();
   if (value.startsWith('"') || value.startsWith("W/")) {
     return false;
   }
-  return Date.parse(value) === lastModifiedMs;
+  return value === new Date(lastModifiedMs).toUTCString();
 }
 
 // Parse a single `Range: bytes=...` against `size` (the fd's `fstat`, the bytes
