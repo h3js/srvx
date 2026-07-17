@@ -51,7 +51,10 @@ function _isRepeated(rawHeaders: string[], lowerName: string): boolean {
 export type NodeRequestHeaders = InstanceType<typeof NodeRequestHeaders>;
 
 export const NodeRequestHeaders: {
-  new (req: NodeServerRequest): globalThis.Headers;
+  new (req: NodeServerRequest): globalThis.Headers & {
+    /** @internal See `_adopt` in the class body. */
+    _adopt(headers: globalThis.Headers): void;
+  };
 } = /* @__PURE__ */ (() => {
   const NativeHeaders = globalThis.Headers;
 
@@ -65,6 +68,17 @@ export const NodeRequestHeaders: {
 
     static [Symbol.hasInstance](val: unknown) {
       return val instanceof NativeHeaders;
+    }
+
+    /**
+     * Swap the backing store for the materialized native request's Headers so
+     * this wrapper becomes a pure facade over it: previously-taken references
+     * stay live and mutations through either view land in the single remaining
+     * store. Called by `NodeRequest`'s `_request` getter.
+     * @internal
+     */
+    _adopt(headers: globalThis.Headers) {
+      this.#headers = headers;
     }
 
     get _headers() {

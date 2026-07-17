@@ -147,10 +147,10 @@ export const NodeRequest: {
       return this._url.href;
     }
 
+    // Always the same `NodeRequestHeaders` wrapper, even after `_request`
+    // materializes (the wrapper then fronts the native request's Headers — see
+    // `_request`), so references taken at any point stay live and identical.
     get headers(): Headers {
-      if (this.#request) {
-        return this.#request.headers;
-      }
       return (this.#headers ||= new NodeRequestHeaders(this.#req));
     }
 
@@ -355,7 +355,13 @@ export const NodeRequest: {
           // @ts-expect-error Undici specific
           duplex: body ? "half" : undefined,
         });
-        this.#headers = undefined;
+        // From here on the native request's Headers is the single mutable
+        // store; the wrapper (created by the `this.headers` init above if it
+        // didn't already exist) becomes a facade over it. Both views —
+        // `req.headers` and `_request.headers` / `clone()` / `formData()` —
+        // observe the same mutations, and header references taken before
+        // materialization stay live.
+        this.#headers!._adopt(this.#request.headers);
         this.#bodyStream = undefined;
       }
 
