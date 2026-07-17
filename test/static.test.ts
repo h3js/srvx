@@ -983,6 +983,18 @@ describe("serveStatic", () => {
       );
     });
 
+    test("falls back to 0 for non-finite maxAge and caps huge values", async () => {
+      expect((await fetchStatic("/app.js", { maxAge: NaN })).headers.get("cache-control")).toBe(
+        "max-age=0",
+      );
+      expect(
+        (await fetchStatic("/app.js", { maxAge: Infinity })).headers.get("cache-control"),
+      ).toBe("max-age=0");
+      expect((await fetchStatic("/app.js", { maxAge: 1e21 })).headers.get("cache-control")).toBe(
+        "max-age=2147483648",
+      );
+    });
+
     test("ignores immutable without a maxAge", async () => {
       const res = await fetchStatic("/app.js", { immutable: true });
       expect(res.headers.get("cache-control")).toBe(null);

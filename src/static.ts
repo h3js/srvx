@@ -555,13 +555,17 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 
 // The `Cache-Control` value, or "" when `maxAge` is unset so the header is
 // omitted entirely. `max-age` takes non-negative integer seconds, so a
-// fractional or negative `maxAge` is floored and clamped. `immutable` only has
-// meaning next to a lifetime, so it is dropped when `maxAge` is unset.
+// fractional or negative `maxAge` is floored and clamped, non-finite values fall
+// back to 0, and the result is capped at the RFC 9111 recommended ceiling of
+// 2^31 seconds. `immutable` only has meaning next to a lifetime, so it is
+// dropped when `maxAge` is unset.
 function buildCacheControl(maxAge: number | undefined, immutable: boolean | undefined): string {
   if (maxAge === undefined) {
     return "";
   }
-  const seconds = Math.max(0, Math.floor(maxAge));
+  const seconds = Number.isFinite(maxAge)
+    ? Math.min(2147483648, Math.max(0, Math.floor(maxAge)))
+    : 0;
   return immutable ? `max-age=${seconds}, immutable` : `max-age=${seconds}`;
 }
 
