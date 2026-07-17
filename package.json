@@ -41,7 +41,6 @@
     }
   },
   "scripts": {
-    "bench:log": "node test/bench-log/_run.mjs",
     "bench:node": "node test/bench-node/_run.mjs",
     "bench:url:bun": "bun run ./test/url.bench.ts",
     "bench:url:deno": "deno run -A ./test/url.bench.ts",
