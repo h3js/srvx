@@ -362,6 +362,80 @@ describe("adapters", () => {
     // handler was not reading. (Without the fix this equals expectedLength.)
     expect(bufferedBeforeReading).toBeLessThan(expectedLength / 2);
   });
+
+  // Connect-style `(req, res, next)` middleware on the synthetic bridge path
+  // (no real Node req/res) must receive a working `next`. Without it, invoking
+  // `next` threw ("next is not a function") and surfaced as a 500.
+  test("connect-style middleware that ends the response works", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      // @ts-expect-error http1/http2 union
+      res.writeHead(201, { "content-type": "text/plain" });
+      res.end("middleware ok");
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe("middleware ok");
+  });
+
+  test("connect-style middleware calling next() does not 500", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      res.setHeader("x-mw", "1");
+      // No downstream handler: finalize with the current response state.
+      next();
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
+        status: r.status,
+        header: r.headers.get("x-mw"),
+      })),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for next()")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ status: 200, header: "1" });
+  });
+
+  test("connect-style middleware calling next(err) propagates as an error", async () => {
+    const error = new Error("boom");
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      next(error);
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    // Silence the expected error log from fetchNodeHandler's catch.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws async propagates as an error", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => Promise.reject(new Error("async boom"));
+    const webHandler = toFetchHandler(middleware as any);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
 });
 
 describe("request signal", () => {
@@ -814,9 +888,8 @@ describe("node body crash regressions", () => {
   });
 
   // The flip side of the above: `bodyUsed` tracks the spec's "disturbed" bit, so
-  // merely *touching* `request.body` must not consume it. Guards the body
-  // stream's `highWaterMark: 0` — with a read-ahead buffer it would pull a chunk
-  // on construction and mark an untouched body as used.
+  // merely *touching* `request.body` must not consume it — `isDisturbed` on the
+  // handed-out stream must stay false until an actual read or cancel.
   test("accessing req.body without reading it does not mark the body used", async () => {
     const server = serve({
       port: 0,
@@ -831,6 +904,29 @@ describe("node body crash regressions", () => {
 
     const res = await fetch(server.url!, { method: "POST", body: "hello" });
     expect(await res.json()).toEqual({ hasBody: true, bodyUsed: false, text: "hello" });
+    await server.close(true);
+  });
+
+  // Cancelling the body disturbs it per the fetch spec, exactly like reading it:
+  // `bodyUsed` flips and later reads reject.
+  test("cancelling req.body marks the body used and rejects later reads", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        await req.body!.cancel();
+        return Response.json({
+          bodyUsed: req.bodyUsed,
+          text: await req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ bodyUsed: true, text: "TypeError" });
     await server.close(true);
   });
 
