@@ -62,9 +62,13 @@ export const NodeResponse: {
       if (this.#headers) {
         return this.#headers;
       }
-      const initHeaders = this.#init?.headers;
-      return (this.#headers =
-        initHeaders instanceof Headers ? initHeaders : new Headers(initHeaders));
+      // Copy the init headers instead of adopting the caller's instance, so that
+      // mutating `res.headers` can't leak back into a shared "template" Headers
+      // (CORS/security presets, per-route defaults), matching native `Response`.
+      // The copy is lazy: it only happens once someone reaches for `.headers`.
+      // The read-only path (`_toNodeResponse()`) iterates `#init.headers`
+      // directly and stays zero-copy.
+      return (this.#headers = new Headers(this.#init?.headers));
     }
 
     get ok(): boolean {
