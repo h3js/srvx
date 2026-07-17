@@ -41,6 +41,10 @@ const HOP_BY_HOP_HEADERS = new Set([
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
   #socketError?: Error;
+  // Resolves the pending `waitForResponseHead()` promise the moment the header
+  // block is flushed (see `writeHead()` below). `undefined` when nothing is
+  // waiting yet.
+  #onHeadersSent?: () => void;
 
   constructor(req: WebIncomingMessage, socket: WebRequestSocket) {
     super(req);
@@ -91,17 +95,27 @@ export class WebServerResponse extends ServerResponse {
 
     // Express can override prototype so we have to bind methods
     this.waitToFinish = this.waitToFinish.bind(this);
+    this.waitForResponseHead = this.waitForResponseHead.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);
   }
 
   // `writeHead()` bypasses `setHeader()`, storing headers straight into the raw
   // header block, so an explicit `Transfer-Encoding` here would re-enable chunk
   // framing. Strip it from every accepted headers form before delegating.
+  //
+  // This is also the single choke point where the header block is flushed: both
+  // an explicit `writeHead()` and the implicit flush on the first `write()`/
+  // `end()` (Node's `_implicitHeader()` calls `this.writeHead(statusCode)`) pass
+  // through here. Once `super.writeHead()` returns, `this._header` is populated,
+  // so this is where `waitForResponseHead()` is released and streaming/SSE
+  // responses can be handed back before `end()`. See issue #248.
   override writeHead(statusCode: number, statusMessage?: any, headers?: any): this {
-    if (typeof statusMessage === "string") {
-      return super.writeHead(statusCode, statusMessage, stripTransferEncoding(headers));
-    }
-    return super.writeHead(statusCode, stripTransferEncoding(statusMessage));
+    const result =
+      typeof statusMessage === "string"
+        ? super.writeHead(statusCode, statusMessage, stripTransferEncoding(headers))
+        : super.writeHead(statusCode, stripTransferEncoding(statusMessage));
+    this.#onHeadersSent?.();
+    return result;
   }
 
   override setHeader(name: string, value: number | string | readonly string[]): this {
@@ -156,8 +170,52 @@ export class WebServerResponse extends ServerResponse {
     });
   }
 
+  // Settle as soon as the response head (status + headers) is known, WITHOUT
+  // waiting for `res.end()`. Unlike `waitToFinish()`, this lets `toWebResponse()`
+  // return while the handler keeps writing, so streaming and SSE bodies flow
+  // through the `_webResBody` stream instead of buffering until finish (which,
+  // for a never-ending SSE handler, is never). See issue #248.
+  waitForResponseHead(): Promise<void> {
+    // Headers already flushed (the common case: a handler calls writeHead/write
+    // then returns), or the response already finished/ended synchronously.
+    if (this.headersSent || this.writableEnded || this.writableFinished) {
+      return Promise.resolve();
+    }
+    // Socket already torn down (e.g. an already-aborted request): no head is
+    // coming. Mirror waitToFinish()'s rejection so the caller surfaces the abort.
+    if (this.#socketError || this.#socket.destroyed) {
+      return Promise.reject(this.#socketError ?? prematureCloseError());
+    }
+    return new Promise<void>((resolve, reject) => {
+      const socket = this.#socket;
+      const settle = (err?: Error) => {
+        this.#onHeadersSent = undefined;
+        this.removeListener("finish", onFinish);
+        this.removeListener("error", onError);
+        socket.removeListener("error", onError);
+        socket.removeListener("close", onClose);
+        if (err) reject(err);
+        else resolve();
+      };
+      // The header flush releases us (see `writeHead()`); `finish` covers a
+      // response that ends without ever flushing a distinct head first.
+      this.#onHeadersSent = () => settle();
+      const onFinish = () => settle();
+      const onError = (err: Error) => settle(err);
+      const onClose = () => {
+        if (!this.headersSent && !this.writableFinished) {
+          settle(this.#socketError ?? prematureCloseError());
+        }
+      };
+      this.on("finish", onFinish);
+      this.on("error", onError);
+      socket.on("error", onError);
+      socket.on("close", onClose);
+    });
+  }
+
   async toWebResponse(): Promise<Response> {
-    await this.waitToFinish();
+    await this.waitForResponseHead();
 
     const headers: [string, string][] = [];
 

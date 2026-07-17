@@ -256,6 +256,48 @@ describe("adapters", () => {
   });
 
   // https://github.com/h3js/srvx/issues/248
+  // A streaming/SSE handler that writes the head + a chunk but never calls
+  // res.end() must NOT block the returned Response: toWebResponse() has to settle
+  // once the head is known so the body streams incrementally instead of buffering
+  // until finish (which, for open-ended SSE, never happens).
+  test("streaming response is returned before res.end()", async () => {
+    let pushChunk!: () => void;
+    let endStream!: () => void;
+    const sseHandler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      let n = 2;
+      pushChunk = () => res.write(`data: ${n++}\n\n`);
+      endStream = () => res.end();
+      // Intentionally never returns end(); the response stays open.
+    };
+    const webHandler = toFetchHandler(sseHandler);
+
+    // The Response must resolve without the handler ever calling res.end().
+    const res = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("streaming response hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    // And the body must flow chunk-by-chunk while the handler keeps writing.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const read = async () => decoder.decode((await reader.read()).value);
+
+    expect(await read()).toBe("data: 1\n\n");
+    pushChunk();
+    expect(await read()).toBe("data: 2\n\n");
+    pushChunk();
+    expect(await read()).toBe("data: 3\n\n");
+    endStream();
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/248
   // An explicit `Transfer-Encoding: chunked` must not chunk-frame the bridged
   // body. The synthetic response is close-delimited (its raw bytes are captured
   // and re-wrapped in a web Response), so framing would surface as literal chunk
