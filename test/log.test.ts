@@ -1,5 +1,26 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ServerMiddleware, ServerRequest } from "../src/types.ts";
+
+/**
+ * Every fresh import of `log.ts` registers its own `exit`/`SIGTERM`/`SIGINT`
+ * hooks on the shared process; without cleanup the suite accumulates them past
+ * the max-listeners warning threshold.
+ */
+function snapshotProcessListeners(): () => void {
+  const events = ["exit", "SIGTERM", "SIGINT"] as const;
+  const before = new Map(events.map((event) => [event, new Set(process.listeners(event))]));
+  return () => {
+    for (const event of events) {
+      for (const listener of process.listeners(event)) {
+        if (!before.get(event)!.has(listener)) {
+          process.removeListener(event, listener);
+        }
+      }
+    }
+  };
+}
 
 const ESC = /\[\d+m/;
 
@@ -26,6 +47,7 @@ async function withLog(
 
   const isTTY = process.stdout.isTTY;
   const write = process.stdout.write;
+  const restoreListeners = snapshotProcessListeners();
   const chunks: string[] = [];
   try {
     process.stdout.isTTY = tty;
@@ -44,6 +66,7 @@ async function withLog(
   } finally {
     process.stdout.write = write;
     process.stdout.isTTY = isTTY;
+    restoreListeners();
   }
   return chunks;
 }
@@ -173,6 +196,7 @@ describe("log", () => {
 
     const isTTY = process.stdout.isTTY;
     const write = process.stdout.write;
+    const restoreListeners = snapshotProcessListeners();
     const writes: string[] = [];
     let accepting = false; // false => stream buffer is full
 
@@ -210,6 +234,150 @@ describe("log", () => {
     } finally {
       process.stdout.write = write;
       process.stdout.isTTY = isTTY;
+      restoreListeners();
     }
+  });
+
+  it("writes each line without waiting for a flush turn when batch is disabled", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const isTTY = process.stdout.isTTY;
+    const write = process.stdout.write;
+    const restoreListeners = snapshotProcessListeners();
+    const writes: string[] = [];
+
+    try {
+      process.stdout.isTTY = false;
+      vi.resetModules();
+      const { log } = await import("../src/log.ts");
+
+      process.stdout.write = ((chunk: any) => {
+        writes.push(String(chunk));
+        return true;
+      }) as typeof write;
+
+      const middleware = log({ batch: false });
+      // No setImmediate turn in between: the line must already be with stdout.
+      await middleware(request("http://localhost/a"), respond(200));
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toContain("http://localhost/a");
+      await middleware(request("http://localhost/b"), respond(200));
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toContain("http://localhost/b");
+    } finally {
+      process.stdout.write = write;
+      process.stdout.isTTY = isTTY;
+      restoreListeners();
+    }
+  });
+
+  it("buffers unbatched lines while the stream drains", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    const isTTY = process.stdout.isTTY;
+    const write = process.stdout.write;
+    const restoreListeners = snapshotProcessListeners();
+    const writes: string[] = [];
+    let accepting = false;
+
+    try {
+      process.stdout.isTTY = false;
+      vi.resetModules();
+      const { log } = await import("../src/log.ts");
+
+      process.stdout.write = ((chunk: any) => {
+        writes.push(String(chunk));
+        return accepting;
+      }) as typeof write;
+
+      const middleware = log({ batch: false });
+      await middleware(request("http://localhost/a"), respond(200));
+      // The write returned false: subsequent lines must wait for `drain`
+      // instead of being forced onto a full stream.
+      await middleware(request("http://localhost/b"), respond(200));
+      expect(writes).toHaveLength(1);
+
+      accepting = true;
+      process.stdout.emit("drain");
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(writes).toHaveLength(2);
+      expect(writes[1]).toContain("http://localhost/b");
+    } finally {
+      process.stdout.write = write;
+      process.stdout.isTTY = isTTY;
+      restoreListeners();
+    }
+  });
+});
+
+/**
+ * Crash-flush behavior only shows in a process that actually terminates, so
+ * these spawn `fixtures/log-crash.mjs` and assert on what reaches the pipe.
+ * Self-delivered signals don't exist on Windows.
+ */
+describe.skipIf(process.platform === "win32")("log crash flush", () => {
+  const fixture = fileURLToPath(new URL("fixtures/log-crash.mjs", import.meta.url));
+
+  const run = (
+    scenario: string,
+  ): Promise<{ urls: string[]; code: number | null; signal: NodeJS.Signals | null }> =>
+    new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        // Node 22 needs the flag to import the `.ts` source; on newer versions
+        // stripping is on by default and the flag only emits the warning.
+        ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", fixture, scenario],
+        // Production disables colors, keeping the output assertions plain.
+        {
+          env: { ...process.env, NODE_ENV: "production", FORCE_COLOR: "" },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (chunk) => (out += chunk));
+      child.stderr.on("data", (chunk) => (err += chunk));
+      child.on("error", reject);
+      child.on("close", (code, signal) => {
+        if (err.trim()) {
+          reject(new Error(`fixture stderr: ${err}`));
+          return;
+        }
+        resolve({ urls: [...out.matchAll(/GET (\S+)/g)].map((m) => m[1]!), code, signal });
+      });
+    });
+
+  const allThree = ["http://localhost/0", "http://localhost/1", "http://localhost/2"];
+
+  it("flushes buffered lines when a default-handled SIGTERM terminates the process", async () => {
+    const result = await run("sigterm");
+    expect(result.urls).toEqual(allThree);
+    // The re-raise preserves death-by-signal semantics.
+    expect(result.signal).toBe("SIGTERM");
+  });
+
+  it("flushes buffered lines when a default-handled SIGINT terminates the process", async () => {
+    const result = await run("sigint");
+    expect(result.urls).toEqual(allThree);
+    expect(result.signal).toBe("SIGINT");
+  });
+
+  it("defers to other signal listeners instead of killing the process", async () => {
+    const result = await run("handled-sigterm");
+    expect(result.urls).toEqual(allThree);
+    expect(result.code).toBe(0);
+  });
+
+  it("flushes buffered lines on a same-tick process.exit()", async () => {
+    const result = await run("exit");
+    expect(result.urls).toEqual(allThree);
+    expect(result.code).toBe(0);
+  });
+
+  it("does not keep an idle process alive", async () => {
+    const result = await run("natural");
+    expect(result.urls).toEqual(allThree);
+    expect(result.code).toBe(0);
   });
 });
