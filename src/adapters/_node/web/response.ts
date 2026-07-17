@@ -19,8 +19,6 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | undefined {
 // Statuses that must not carry a response body per the Fetch/HTTP spec.
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
-
-
 export class WebServerResponse extends ServerResponse {
   #socket: WebRequestSocket;
   #socketError?: Error;
@@ -167,7 +165,6 @@ export class WebServerResponse extends ServerResponse {
     });
   }
 }
-
 
 // --- internal ---
 
