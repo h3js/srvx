@@ -44,10 +44,14 @@ export const NodeRequest: {
     #req: NodeServerRequest;
     #url?: URL;
     #bodyStream?: ReadableStream | null;
-    // Tracks body consumption at the srvx level so a second read rejects with
-    // `TypeError: Body is unusable` (like native fetch) instead of hanging on a
-    // re-listened, already-ended IncomingMessage, and so `bodyUsed` can be
-    // served without materializing a native Request over a disturbed stream.
+    // The fetch spec's "disturbed" bit, tracked at the srvx level: set by the
+    // buffered fast path (text()/json()) directly, and latched from the stream
+    // `body` hands out by `#isBodyUsed()`. Every body read rejects with
+    // `TypeError: Body is unusable` once set (like native fetch) instead of
+    // hanging on a re-listened, already-ended IncomingMessage or resolving empty
+    // off the null-body Request that `_request` serves in this state. Also lets
+    // `bodyUsed` answer without materializing a native Request over a disturbed
+    // stream.
     #bodyUsed = false;
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
@@ -215,10 +219,30 @@ export const NodeRequest: {
       // Serve from srvx state: after a fast-path read the native Request is never
       // materialized (or is materialized with a null body), so it would otherwise
       // report `false` or throw when the underlying stream is disturbed.
-      if (this.#bodyUsed) {
+      if (this.#isBodyUsed()) {
         return true;
       }
       return this.#request ? this.#request.bodyUsed : false;
+    }
+
+    // The spec's "disturbed" check. `#bodyUsed` only sees the buffered fast path
+    // (text()/json()); a consumer reading or cancelling the stream `body` handed
+    // out bypasses it, so consult the stream's own disturbed bit via
+    // `isDisturbed` (the same primitive undici's guards use — a `ReadableStream`
+    // doesn't expose it; the `Readable` static alias is used because `@types/node`
+    // doesn't declare the module-level export) and latch the answer. Latching
+    // matters: `_request` calls this *before* releasing `#bodyStream` to the
+    // native Request, past which undici owns the accounting — its tee reads this
+    // stream on `clone()`, which must not count as a read of this request's body.
+    #isBodyUsed(): boolean {
+      if (
+        !this.#bodyUsed &&
+        this.#bodyStream &&
+        Readable.isDisturbed(this.#bodyStream as unknown as NodeJS.ReadableStream)
+      ) {
+        this.#bodyUsed = true;
+      }
+      return this.#bodyUsed;
     }
 
     // Buffer the raw request body once; consumers add their own single
@@ -231,7 +255,7 @@ export const NodeRequest: {
     text(): Promise<string> {
       // A second read of an already-consumed body must reject like native fetch
       // rather than re-listen to an ended stream (which would hang).
-      if (this.#bodyUsed) {
+      if (this.#isBodyUsed()) {
         return Promise.reject(bodyUnusable());
       }
       if (this.#request) {
@@ -256,7 +280,7 @@ export const NodeRequest: {
     }
 
     json(): Promise<any> {
-      if (this.#bodyUsed) {
+      if (this.#isBodyUsed()) {
         return Promise.reject(bodyUnusable());
       }
       if (this.#request) {
@@ -280,6 +304,40 @@ export const NodeRequest: {
       return this.#readBuffered().then((buf) => JSON.parse(buf.toString()));
     }
 
+    arrayBuffer(): Promise<ArrayBuffer> {
+      return this.#consumeNative("arrayBuffer");
+    }
+
+    bytes(): Promise<Uint8Array<ArrayBuffer>> {
+      return this.#consumeNative("bytes");
+    }
+
+    blob(): Promise<Blob> {
+      return this.#consumeNative("blob");
+    }
+
+    formData(): Promise<FormData> {
+      return this.#consumeNative("formData");
+    }
+
+    // Unlike text()/json() these have no buffered fast path — they hand off to the
+    // native Request, which owns the accounting from there. The one case it cannot
+    // see is a body srvx already consumed: `_request` then serves a *null-body*
+    // Request (see `_request`), whose body is pristine, so undici's own
+    // "Body is unusable" guard never fires and the read resolves empty. Guard here.
+    #consumeNative(method: "arrayBuffer" | "bytes" | "blob" | "formData"): Promise<any> {
+      if (this.#isBodyUsed()) {
+        return Promise.reject(bodyUnusable());
+      }
+      try {
+        return this._request[method]();
+      } catch (error) {
+        // Materializing `_request` throws synchronously if the body stream is
+        // locked (a consumer holds a reader). Reject like native fetch.
+        return Promise.reject(error);
+      }
+    }
+
     get _request(): globalThis.Request {
       if (!this.#request) {
         // If the body was already consumed via the buffered/stream fast path the
@@ -288,7 +346,7 @@ export const NodeRequest: {
         // disturbed or locked") and poisons `bodyUsed` / `clone()` / `formData()`
         // / `blob()` / `mode` / `referrer`. Serve a null-body Request instead and
         // let `bodyUsed` reflect srvx state.
-        const body = this.#bodyUsed ? null : this.body;
+        const body = this.#isBodyUsed() ? null : this.body;
         this.#request = new NativeRequest(this.url, {
           method: this.method,
           headers: this.headers,
@@ -320,6 +378,12 @@ export const NodeRequest: {
  * Alternatively you can use `new Request(req._request || req)` instead of patching global Request.
  */
 export function patchGlobalRequest(): typeof Request {
+  // Idempotent: if the global is already patched, return the installed class
+  // so `patchGlobalRequest() === globalThis.Request` holds on repeated calls.
+  if ((globalThis.Request as any)._srvx) {
+    return globalThis.Request as unknown as typeof Request;
+  }
+
   const NativeRequest = getNativeRequest();
 
   const PatchedRequest = class Request extends NativeRequest {
@@ -339,9 +403,7 @@ export function patchGlobalRequest(): typeof Request {
       super(input, options);
     }
   };
-  if (!(globalThis.Request as any)._srvx) {
-    globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
-  }
+  globalThis.Request = PatchedRequest as unknown as typeof globalThis.Request;
   return PatchedRequest;
 }
 
