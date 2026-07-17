@@ -48,11 +48,86 @@ const _searchNeedsNormRE = /[#"'<>\x00-\x20\x7f-\uffff]/;
  *
  * - It is assumed that the input URL is **already encoded** and formatted from an HTTP request. A fragment (`#`), while not valid in an origin-form request target, is handled via full URL parsing.
  * - Triggering the setters or getters on other props will deoptimize to full URL parsing.
- * - Changes to `searchParams` will be discarded as we don't track them.
+ * - Mutating `searchParams` deoptimizes to full URL parsing; changes are reflected in `search`/`href` and the same `searchParams` object is kept across deopts (native `URL` semantics).
  */
 export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
   /* @__PURE__ */ (() => {
     const NativeURL = globalThis.URL;
+    const NativeSearchParams = globalThis.URLSearchParams;
+
+    /**
+     * Facade handed out by `FastURL`'s `searchParams` getter on the fast path so
+     * the spec's "same object for the lifetime of the URL" identity holds across
+     * a later deopt. Reads are served from a params object lazily parsed off the
+     * owner's search string; mutations materialize the owner's native URL first
+     * (the owner then swaps this facade's backing store to that URL's
+     * `searchParams` via `_adopt`) so the write lands in the single store
+     * `search`/`href` serialize from — matching native `URL` semantics.
+     */
+    const FastURLSearchParams: {
+      new (owner: { search: string; _url: globalThis.URL }): globalThis.URLSearchParams & {
+        /** @internal See `_adopt` in the class body. */
+        _adopt(params: globalThis.URLSearchParams): void;
+      };
+    } = class URLSearchParams implements Partial<globalThis.URLSearchParams> {
+      #owner: { search: string; _url: globalThis.URL };
+      #params?: globalThis.URLSearchParams;
+
+      constructor(owner: { search: string; _url: globalThis.URL }) {
+        this.#owner = owner;
+      }
+
+      static [Symbol.hasInstance](val: unknown) {
+        return val instanceof NativeSearchParams;
+      }
+
+      /**
+       * Swap the backing store for the materialized native URL's `searchParams`
+       * so this facade becomes a pure view over it: previously-taken references
+       * stay live and mutations through either view land in the single remaining
+       * store (mirrors `NodeRequestHeaders`'s `_adopt`). Called by `FastURL`'s
+       * `_url` getter.
+       * @internal
+       */
+      _adopt(params: globalThis.URLSearchParams) {
+        this.#params = params;
+      }
+
+      get _params(): globalThis.URLSearchParams {
+        return (this.#params ??= new NativeSearchParams(this.#owner.search));
+      }
+
+      // Writes must be reflected by the owner URL (`search`/`href`) like
+      // native. Materializing `_url` makes the owner adopt its native
+      // `searchParams` as this facade's store (a pre-adoption `#params` parsed
+      // from the same search string is safely discarded — it cannot have been
+      // mutated), so the write below lands in the linked store.
+      #mutable(): globalThis.URLSearchParams {
+        void this.#owner._url;
+        return this.#params!;
+      }
+
+      append(name: string, value: string): void {
+        this.#mutable().append(name, value);
+      }
+
+      set(name: string, value: string): void {
+        this.#mutable().set(name, value);
+      }
+
+      delete(name: string, value?: string): void {
+        this.#mutable().delete(name, value);
+      }
+
+      sort(): void {
+        this.#mutable().sort();
+      }
+    } as any;
+
+    lazyInherit(FastURLSearchParams.prototype, NativeSearchParams.prototype, "_params");
+
+    Object.setPrototypeOf(FastURLSearchParams.prototype, NativeSearchParams.prototype);
+    Object.setPrototypeOf(FastURLSearchParams, NativeSearchParams);
 
     const FastURL = class URL implements Partial<globalThis.URL> {
       #url?: globalThis.URL;
@@ -61,7 +136,7 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
       #host?: string;
       #pathname?: string;
       #search?: string;
-      #searchParams?: URLSearchParams;
+      #searchParams?: InstanceType<typeof FastURLSearchParams>;
       #pos?: [protocol: number, pathname: number, query: number];
 
       constructor(url: string | URLInit) {
@@ -106,8 +181,12 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
         this.#host = undefined;
         this.#pathname = undefined;
         this.#search = undefined;
-        this.#searchParams = undefined;
         this.#pos = undefined;
+        // Keep #searchParams: the handed-out facade stays this URL's
+        // `searchParams` identity; it now fronts the native URL's params so
+        // previously-taken references stay live and mutations through either
+        // view land in the single remaining store.
+        this.#searchParams?._adopt(this.#url.searchParams);
         return this.#url;
       }
 
@@ -167,13 +246,15 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
       }
 
       get searchParams() {
+        // The facade (created on the fast path) stays the answer even after a
+        // deopt — it fronts the native URL's params from then on (see `_url`).
+        if (this.#searchParams) {
+          return this.#searchParams;
+        }
         if (this.#url) {
           return this.#url.searchParams;
         }
-        if (!this.#searchParams) {
-          this.#searchParams = new URLSearchParams(this.search);
-        }
-        return this.#searchParams;
+        return (this.#searchParams = new FastURLSearchParams(this));
       }
 
       get protocol() {

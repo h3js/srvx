@@ -54,6 +54,85 @@ describe("FastURL", () => {
     expect(url.searchParams).toEqual(new URLSearchParams("?search"));
   });
 
+  describe("searchParams identity & mutation", () => {
+    // Native URL hands out the SAME `searchParams` object for the lifetime of
+    // the URL, and mutations are reflected in `search`/`href`. The fast path
+    // used to hand out a detached URLSearchParams whose identity broke on any
+    // deopt (even a read-only `url.host` access) and whose mutations were
+    // silently discarded. The facade (with `_adopt`, mirroring
+    // NodeRequestHeaders) must close both gaps.
+
+    test("same object across a read-only deopt", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      void url.hostname; // deopt to native URL
+      expect(url.searchParams).toBe(params);
+      expect(params.get("a")).toBe("1");
+    });
+
+    test("instanceof URLSearchParams, iterable, and copyable", () => {
+      const url = new FastURL("/p?a=1&b=2");
+      const params = url.searchParams;
+      expect(params instanceof URLSearchParams).toBe(true);
+      expect([...params]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+      expect(new URLSearchParams(params as any).toString()).toBe("a=1&b=2");
+      expect(params.size).toBe(2);
+      expect(params.getAll("a")).toEqual(["1"]);
+      expect(params.toString()).toBe("a=1&b=2");
+    });
+
+    test("set/append/delete/sort are reflected in search & href (like native)", () => {
+      const std = new URL("http://localhost/p?b=2&a=1");
+      const url = new FastURL("/p?b=2&a=1");
+      for (const u of [std, url]) {
+        u.searchParams.set("c", "3");
+        u.searchParams.append("a", "x");
+        u.searchParams.delete("b");
+        u.searchParams.sort();
+      }
+      expect(url.search, ".search").toBe(std.search);
+      expect(url.href, ".href").toBe(std.href);
+      expect(url.searchParams.toString()).toBe(std.searchParams.toString());
+    });
+
+    test("reference taken before deopt observes later URL mutations", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      url.search = "?z=9"; // setter deopts and mutates the native URL
+      expect(params.get("z")).toBe("9");
+      expect(params.get("a")).toBe(null);
+      expect(url.searchParams).toBe(params);
+    });
+
+    test("mutation on the fast path deopts and drops cached search", () => {
+      const url = new FastURL("/p?a=1");
+      expect(url.search).toBe("?a=1"); // populate fast-path cache first
+      url.searchParams.delete("a");
+      expect(url.search).toBe("");
+      expect(url.href).toBe("http://localhost/p");
+    });
+
+    test("constructor slow path keeps stable native searchParams", () => {
+      const url = new FastURL("http://example.com/p?a=1");
+      const params = url.searchParams;
+      expect(url.searchParams).toBe(params);
+      params.set("b", "2");
+      expect(url.search).toBe("?a=1&b=2");
+    });
+
+    test("NodeRequestURL: mutation reflected, raw req.url untouched", () => {
+      const req = { url: "/p?a=1", headers: { host: "localhost" } } as any;
+      const url = new NodeRequestURL({ req });
+      url.searchParams.set("b", "2");
+      expect(url.href).toBe("http://localhost/p?a=1&b=2");
+      expect(url.searchParams).toBe(url.searchParams);
+      expect(req.url).toBe("/p?a=1");
+    });
+  });
+
   describe("origin-form string (bare path)", () => {
     // Regression (F12): `new FastURL("/foo?x=1")` is a documented fast path.
     // It must resolve against `http://localhost` semantics (like the adapter's
