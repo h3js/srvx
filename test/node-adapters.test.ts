@@ -695,6 +695,68 @@ describe("FastResponse header dedup", () => {
   });
 });
 
+// https://github.com/h3js/srvx/issues/250
+describe("FastResponse copies init Headers", () => {
+  const headerPairs = (headers: string[]) => {
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      pairs.push([headers[i], headers[i + 1]]);
+    }
+    return pairs;
+  };
+
+  test("mutating res.headers does not leak into a shared Headers init", () => {
+    const shared = new Headers({ a: "1" });
+
+    const res = new FastResponse("x", { headers: shared });
+    res.headers.set("b", "2");
+
+    expect(shared.has("b")).toBe(false);
+    expect(res.headers.get("a")).toBe("1");
+    expect(res.headers.get("b")).toBe("2");
+  });
+
+  test("a shared Headers template survives reuse across responses", () => {
+    const preset = new Headers({ "x-preset": "1" });
+
+    const first = new FastResponse("x", { headers: preset });
+    first.headers.append("set-cookie", "session=abc");
+
+    const second = new FastResponse("y", { headers: preset });
+
+    expect(second.headers.getSetCookie()).toEqual([]);
+    expect(first.headers.getSetCookie()).toEqual(["session=abc"]);
+  });
+
+  test("the copy preserves multiple set-cookie values", () => {
+    const shared = new Headers();
+    shared.append("set-cookie", "a=1");
+    shared.append("set-cookie", "b=2");
+
+    const res = new FastResponse("x", { headers: shared });
+
+    expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+  });
+
+  test("mutations via res.headers reach the wire", () => {
+    const res = new FastResponse("x", { headers: new Headers({ a: "1" }) });
+    res.headers.set("b", "2");
+
+    const { headers } = res._toNodeResponse();
+
+    expect(headerPairs(headers)).toContainEqual(["a", "1"]);
+    expect(headerPairs(headers)).toContainEqual(["b", "2"]);
+  });
+
+  test("an untouched Headers init still reaches the wire", () => {
+    const { headers } = new FastResponse("x", {
+      headers: new Headers({ a: "1" }),
+    })._toNodeResponse();
+
+    expect(headerPairs(headers)).toContainEqual(["a", "1"]);
+  });
+});
+
 // v1 stabilization: Node-adapter crash/corruption regressions.
 describe("node body crash regressions", () => {
   // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async
