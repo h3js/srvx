@@ -78,51 +78,9 @@ const COMMON_MIME_TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-// Types that benefit from compression — everything else (images, video, audio,
-// archives, fonts) is already compressed and would not have a `.br`/`.gz` variant.
-const isCompressible = (mimeType: string): boolean =>
-  mimeType.startsWith("text/") ||
-  mimeType.endsWith("+json") ||
-  mimeType.endsWith("+xml") ||
-  mimeType === "application/json" ||
-  mimeType === "application/xml" ||
-  mimeType === "application/wasm";
-
 // RFC 8615 reserves `/.well-known/` for public metadata (ACME HTTP-01
 // challenges, `security.txt`), so it is the only dot segment served by default.
 const DEFAULT_DOTFILES = [".well-known"];
-
-/**
- * Encodings from `encodings` the client accepts, in server-preference order.
- * `q=0` is honored as "not acceptable"; `*` applies to encodings not named explicitly.
- */
-const parseAcceptEncoding = (
-  header: string | null,
-  encodings: Record<string, string>,
-): [encoding: string, ext: string][] => {
-  if (!header) {
-    return [];
-  }
-  const quality = new Map<string, number>();
-  for (const part of header.split(",")) {
-    const [token, ...params] = part.split(";");
-    const name = token!.trim().toLowerCase();
-    if (!name) {
-      continue;
-    }
-    let q = 1;
-    for (const param of params) {
-      const trimmed = param.trim();
-      if (trimmed.startsWith("q=")) {
-        // A malformed q (`q=abc`) parses to NaN: treat it as refused.
-        q = Number.parseFloat(trimmed.slice(2)) || 0;
-      }
-    }
-    quality.set(name, q);
-  }
-  const wildcard = quality.get("*");
-  return Object.entries(encodings).filter(([name]) => (quality.get(name) ?? wildcard ?? 0) > 0);
-};
 
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
@@ -131,8 +89,12 @@ const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + s
 type ServableFile = { handle: FileHandle; size: number };
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
+  // `resolve()` also converts separators (`C:/assets` -> `C:\assets`), and
+  // `join()`/`realpath()` only emit native ones, so every path a `sep`-based
+  // check sees is already in platform form.
   const dir = asPrefix(resolve(options.dir));
   const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
+
   const dotfiles = options.dotfiles ?? DEFAULT_DOTFILES;
   const allowAllDots = dotfiles === true;
   const allowedDots = new Set(Array.isArray(dotfiles) ? dotfiles : []);
@@ -349,3 +311,50 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     return next();
   };
 };
+
+// --- internal ---
+
+// Types that benefit from compression — everything else (images, video, audio,
+// archives, fonts) is already compressed and would not have a `.br`/`.gz` variant.
+function isCompressible(mimeType: string): boolean {
+  return (
+    mimeType.startsWith("text/") ||
+    mimeType.endsWith("+json") ||
+    mimeType.endsWith("+xml") ||
+    mimeType === "application/json" ||
+    mimeType === "application/xml" ||
+    mimeType === "application/wasm"
+  );
+}
+
+/**
+ * Encodings from `encodings` the client accepts, in server-preference order.
+ * `q=0` is honored as "not acceptable"; `*` applies to encodings not named explicitly.
+ */
+function parseAcceptEncoding(
+  header: string | null,
+  encodings: Record<string, string>,
+): [encoding: string, ext: string][] {
+  if (!header) {
+    return [];
+  }
+  const quality = new Map<string, number>();
+  for (const part of header.split(",")) {
+    const [token, ...params] = part.split(";");
+    const name = token!.trim().toLowerCase();
+    if (!name) {
+      continue;
+    }
+    let q = 1;
+    for (const param of params) {
+      const trimmed = param.trim();
+      if (trimmed.startsWith("q=")) {
+        // A malformed q (`q=abc`) parses to NaN: treat it as refused.
+        q = Number.parseFloat(trimmed.slice(2)) || 0;
+      }
+    }
+    quality.set(name, q);
+  }
+  const wildcard = quality.get("*");
+  return Object.entries(encodings).filter(([name]) => (quality.get(name) ?? wildcard ?? 0) > 0);
+}
