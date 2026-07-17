@@ -443,36 +443,53 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         etagValue = computeETag(file.size, file.mtimeMs, encoding);
         headers["ETag"] = etagValue;
       }
-      const lastModifiedMs = Math.floor(file.mtimeMs / 1000) * 1000;
+      // A future mtime (clock skew, a deliberately post-dated file) must not
+      // become a future `Last-Modified`, or an `If-Modified-Since` bearing it
+      // would match until real time catches up. RFC 9110 §8.8.2 caps it at the
+      // response's origination time.
+      const lastModifiedMs = Math.min(
+        Math.floor(file.mtimeMs / 1000) * 1000,
+        Math.floor(Date.now() / 1000) * 1000,
+      );
       if (lastModified) {
         headers["Last-Modified"] = new Date(lastModifiedMs).toUTCString();
       }
-      // A still-fresh conditional request skips the body entirely. `If-None-Match`
-      // takes precedence (RFC 9110 §13.2.2): when it is present, a non-match is
-      // final and `If-Modified-Since` is never consulted.
-      let notModified = false;
-      const ifNoneMatch = etagValue ? req.headers.get("if-none-match") : null;
+      // A conditional request that still matches needs no body. `If-None-Match`
+      // takes precedence over `If-Modified-Since` (RFC 9110 §13.2.2): its very
+      // presence suppresses the date check — even with `etag` off, where no tag
+      // is emitted so only `*` can match — and a match answers GET/HEAD with
+      // `304` but any other configured method with `412` (precondition failed).
+      // `If-Modified-Since` is a GET/HEAD-only validator (RFC 9110 §13.1.3), so
+      // it is never evaluated for the other methods.
+      const conditionalGet = req.method === "GET" || req.method === "HEAD";
+      let conditionalStatus = 0;
+      const ifNoneMatch = req.headers.get("if-none-match");
       if (ifNoneMatch !== null) {
-        notModified = matchesIfNoneMatch(ifNoneMatch, etagValue);
-      } else if (lastModified) {
-        notModified = matchesIfModifiedSince(req.headers.get("if-modified-since"), lastModifiedMs);
+        if (matchesIfNoneMatch(ifNoneMatch, etagValue)) {
+          conditionalStatus = conditionalGet ? 304 : 412;
+        }
+      } else if (lastModified && conditionalGet) {
+        if (matchesIfModifiedSince(req.headers.get("if-modified-since"), lastModifiedMs)) {
+          conditionalStatus = 304;
+        }
       }
-      if (notModified) {
+      if (conditionalStatus) {
         await file.handle.close().catch(() => {});
-        // A 304 carries the validators and `Vary` a 200 would, but none of the
-        // representation headers (`Content-Type`/`-Length`/`-Encoding`): the
-        // client is being told to reuse the body it already has.
-        const notModifiedHeaders: Record<string, string> = {};
+        // Both statuses drop the representation headers
+        // (`Content-Type`/`-Length`/`-Encoding`) and the body — a `304` tells the
+        // client to reuse the copy it has, a `412` that its precondition failed —
+        // while keeping the validators and `Vary` a `200` would carry.
+        const conditionalHeaders: Record<string, string> = {};
         if (etagValue) {
-          notModifiedHeaders["ETag"] = etagValue;
+          conditionalHeaders["ETag"] = etagValue;
         }
         if (headers["Last-Modified"]) {
-          notModifiedHeaders["Last-Modified"] = headers["Last-Modified"];
+          conditionalHeaders["Last-Modified"] = headers["Last-Modified"];
         }
         if (headers["Vary"]) {
-          notModifiedHeaders["Vary"] = headers["Vary"];
+          conditionalHeaders["Vary"] = headers["Vary"];
         }
-        return new FastResponse(null, { status: 304, headers: notModifiedHeaders });
+        return new FastResponse(null, { status: conditionalStatus, headers: conditionalHeaders });
       }
       if (req.method === "HEAD") {
         // Node discards a HEAD body at the http layer, so skip the read — and
@@ -527,10 +544,14 @@ function computeETag(size: number, mtimeMs: number, encoding: string): string {
 
 // RFC 9110 §13.1.2 — a weak comparison, since our tags are weak, so an optional
 // `W/` prefix is stripped from each candidate before matching. `*` matches any
-// current representation.
+// current representation. With ETags off (`etag` empty) there is no tag to
+// compare, so only `*` can match.
 function matchesIfNoneMatch(header: string, etag: string): boolean {
   if (header.trim() === "*") {
     return true;
+  }
+  if (!etag) {
+    return false;
   }
   const bare = etag.replace(/^W\//, "");
   return header.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === bare);

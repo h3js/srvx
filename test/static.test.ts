@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, symlink, truncate } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, symlink, truncate, utimes } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
@@ -834,14 +834,16 @@ describe("serveStatic", () => {
       expect(right.headers.get("vary")).toBe("Accept-Encoding");
     });
 
-    test("omits ETag and ignores If-None-Match with etag: false", async () => {
+    test("omits ETag and does not match a client tag with etag: false", async () => {
       const res = await fetchStatic("/app.js", { etag: false });
       expect(res.headers.get("etag")).toBe(null);
-      // A tag the default run would have minted no longer 304s.
+      // With no tag emitted, a specific If-None-Match cannot match, so the tag
+      // a default run would have minted no longer 304s. (`*` is the one value
+      // that still matches — it asks only whether a representation exists.)
       const cond = await fetchStatic(
         "/app.js",
         { etag: false },
-        { headers: { "if-none-match": "*" } },
+        { headers: { "if-none-match": 'W/"whatever"' } },
       );
       expect(cond.status).toBe(200);
     });
@@ -863,6 +865,85 @@ describe("serveStatic", () => {
       });
       expect(res.headers.get("etag")).toBe(null);
       expect(res.headers.get("last-modified")).toBe(null);
+    });
+
+    test("answers a matching If-None-Match on a non-GET/HEAD method with 412", async () => {
+      // The tag is stable across methods (size + mtime), so a default GET mints
+      // the one a configured POST must fail its precondition against.
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      const res = await fetchStatic(
+        "/app.js",
+        { methods: ["POST"] },
+        { method: "POST", headers: { "if-none-match": etag } },
+      );
+      expect(res.status).toBe(412);
+      expect(res.headers.get("etag")).toBe(etag);
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("serves a non-GET/HEAD body when If-None-Match does not match", async () => {
+      const res = await fetchStatic(
+        "/app.js",
+        { methods: ["POST"] },
+        { method: "POST", headers: { "if-none-match": 'W/"stale"' } },
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("ignores If-Modified-Since for a non-GET/HEAD method", async () => {
+      // A GET/HEAD-only validator (RFC 9110 §13.1.3): a fresh date must not
+      // shortcut a configured POST into a 304.
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/app.js",
+        { methods: ["POST"] },
+        { method: "POST", headers: { "if-modified-since": lastModified } },
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("If-None-Match presence suppresses If-Modified-Since even with etag off", async () => {
+      // RFC 9110 §13.2.2: a present If-None-Match takes precedence. With
+      // `etag: false` no tag is emitted, so a specific one cannot match — the
+      // full body is served, not a 304 rescued by the still-parsed date.
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/app.js",
+        { etag: false },
+        { headers: { "if-none-match": 'W/"whatever"', "if-modified-since": lastModified } },
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("etag")).toBe(null);
+    });
+
+    test("still honors If-Modified-Since with etag off when no If-None-Match is sent", async () => {
+      // Nothing suppresses the date check here, so the date validator alone
+      // still shortcuts to a 304.
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/app.js",
+        { etag: false },
+        { headers: { "if-modified-since": lastModified } },
+      );
+      expect(res.status).toBe(304);
+    });
+
+    test("caps Last-Modified at the response time for a future-dated file", async () => {
+      // A future mtime (clock skew, a deliberately post-dated file) must not
+      // surface as a future `Last-Modified` — RFC 9110 §8.8.2 — or an
+      // `If-Modified-Since` bearing it would 304 until real time catches up.
+      const future = join(dir, "future.js");
+      await writeFile(future, "FUTURE");
+      const ahead = new Date(Date.now() + 86_400_000);
+      await utimes(future, ahead, ahead);
+      try {
+        const res = await fetchStatic("/future.js");
+        expect(Date.parse(res.headers.get("last-modified")!)).toBeLessThanOrEqual(Date.now());
+      } finally {
+        await rm(future, { force: true });
+      }
     });
 
     test("answers a conditional HEAD with 304", async () => {
