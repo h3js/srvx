@@ -92,6 +92,9 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
         cliOpts.static
           ? serveStatic({
               dir: cliOpts.static,
+              // Dev convenience: browse directories without an index. Off in prod
+              // so the directory structure is never exposed by default.
+              dirListing: !cliOpts.prod,
             })
           : undefined,
         ...(serverOptions.middleware || []),

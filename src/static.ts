@@ -5,7 +5,7 @@ import type { Transform } from "node:stream";
 
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { open, readdir, realpath, stat } from "node:fs/promises";
 import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
@@ -111,6 +111,22 @@ export interface ServeStaticOptions {
    * @default true
    */
   ranges?: boolean;
+
+  /**
+   * Serve a minimal HTML directory listing when a request resolves to a
+   * directory that has no index file (`index.html`). A directory that does have
+   * one always serves the index instead.
+   *
+   * Entries are the directory's immediate children, with denied dot segments
+   * (see `dotfiles`) hidden just as they are for file requests. Only names are
+   * revealed, never file contents.
+   *
+   * Off by default — it exposes the directory structure, so it is opt-in. The
+   * `srvx` CLI turns it on in dev mode only.
+   *
+   * @default false
+   */
+  dirListing?: boolean;
 
   /**
    * A function to modify the HTML content before serving it.
@@ -236,6 +252,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const lastModified = options.lastModified ?? true;
   const etag = options.etag ?? true;
   const ranges = options.ranges ?? true;
+  const dirListing = options.dirListing ?? false;
 
   // Depends only on the options, so it is built once. Empty when `maxAge` is
   // unset — the header is fully opt-in.
@@ -312,6 +329,44 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     }
     await handle.close().catch(() => {});
     return null;
+  };
+
+  // The immediate children of a directory safe to list, or null when the path is
+  // not a listable directory. Re-asserts the same boundaries a file request gets:
+  // lexical containment, then symlink-resolved containment (a link inside `dir`
+  // could point the directory out of the root), and the dot-path deny check on
+  // both the requested path and each entry — so a listing never names what a
+  // direct request would refuse to serve.
+  const readListing = async (relPath: string): Promise<{ name: string; dir: boolean }[] | null> => {
+    const dirPath = relPath === "" ? dir : join(dir, relPath);
+    if (
+      relPath !== "" &&
+      (!dirPath.startsWith(dir) || isDeniedDotPath(dirPath.slice(dir.length)))
+    ) {
+      return null;
+    }
+    const realPath = await realpath(dirPath).catch(() => null);
+    if (realPath === null) {
+      return null;
+    }
+    const root = await getRealDir();
+    const realWithSep = asPrefix(realPath);
+    if (!realWithSep.startsWith(root) || isDeniedDotPath(realWithSep.slice(root.length))) {
+      return null;
+    }
+    // `withFileTypes` reads the type from the same `readdir` syscall, so the
+    // trailing-slash decoration below costs no extra `stat` per entry. A
+    // non-directory (or an unreadable one) throws and falls through to `null`.
+    const dirents = await readdir(realPath, { withFileTypes: true }).catch(() => null);
+    if (dirents === null) {
+      return null;
+    }
+    const entries = dirents
+      .filter((d) => !isDeniedDotPath(d.name))
+      .map((d) => ({ name: d.name, dir: d.isDirectory() }));
+    // Directories first, then by name — a conventional, stable listing order.
+    entries.sort((a, b) => (a.dir === b.dir ? (a.name < b.name ? -1 : 1) : a.dir ? -1 : 1));
+    return entries;
   };
 
   return async (req, next) => {
@@ -628,11 +683,77 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       pipeline(stream, encoded, () => {});
       return new FastResponse(encoded as any, { headers });
     }
+    // No file matched. With `dirListing` on, a request naming a directory (root, a
+    // trailing-slash path, or an extension-less one) that has no index is
+    // answered with a listing rather than falling through. An index always wins:
+    // its `index.html` candidate was probed in the loop above.
+    if (dirListing && (path === "" || trailingSlash || extname(path) === "")) {
+      const entries = await readListing(path);
+      if (entries) {
+        const base = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
+        const headers = { "Content-Type": "text/html; charset=utf-8" };
+        // HEAD mirrors GET's headers without the body.
+        const body = req.method === "HEAD" ? null : renderDirListing(base, path, entries);
+        return new FastResponse(body, { headers });
+      }
+    }
     return next();
   };
 };
 
 // --- internal ---
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+// Escape text before interpolating it into the listing HTML — a filename is
+// attacker-controllable and lands in both element text and an `href` attribute.
+function escapeHtml(str: string): string {
+  return str.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]!);
+}
+
+// A minimal directory listing. `base` is the request pathname with a guaranteed
+// trailing slash, so every entry href is an absolute path that resolves the same
+// whether the directory was requested with a trailing slash or without.
+// `displayPath` is the decoded relative path, shown in the heading.
+function renderDirListing(
+  base: string,
+  displayPath: string,
+  entries: { name: string; dir: boolean }[],
+): string {
+  const heading = escapeHtml("/" + (displayPath ? displayPath + "/" : ""));
+  const items: string[] = [];
+  // A parent link everywhere but the root. `base` ends in `/`, so relative `../`
+  // climbs one segment.
+  if (displayPath !== "") {
+    items.push(`<li><a href="../">../</a></li>`);
+  }
+  for (const entry of entries) {
+    const suffix = entry.dir ? "/" : "";
+    // `encodeURIComponent` before `escapeHtml`: the first makes the name a safe
+    // URL path segment (a literal `/` in a name is encoded, never a separator),
+    // the second makes that URL safe inside the attribute. The trailing `/` for
+    // a directory is appended after encoding so it stays a real separator.
+    const href = escapeHtml(base + encodeURIComponent(entry.name) + suffix);
+    const text = escapeHtml(entry.name + suffix);
+    items.push(`<li><a href="${href}">${text}</a></li>`);
+  }
+  return (
+    `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>Index of ${heading}</title>` +
+    `<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:60rem}` +
+    `h1{font-size:1.2rem;font-weight:600}ul{list-style:none;padding:0}` +
+    `li{padding:.15rem 0}a{text-decoration:none;color:#0366d6}` +
+    `a:hover{text-decoration:underline}</style></head>` +
+    `<body><h1>Index of ${heading}</h1><ul>${items.join("")}</ul></body></html>`
+  );
+}
 
 // The `Cache-Control` value, or "" when `maxAge` is unset so the header is
 // omitted entirely. `max-age` takes non-negative integer seconds, so a
