@@ -32,6 +32,9 @@ export class WebServerResponse extends ServerResponse {
     // a real wire: `toWebResponse()` captures the raw body buffer from the
     // bridging socket and re-wraps it in a web `Response`. Chunk framing would
     // corrupt that captured body, so keep the output un-chunked (close-delimited).
+    // A handler setting `Transfer-Encoding` explicitly would re-enable framing
+    // regardless of this flag, so those headers are also stripped at the
+    // `writeHead`/`setHeader`/`appendHeader` choke points below.
     this.useChunkedEncodingByDefault = false;
 
     this.once("finish", () => {
@@ -70,6 +73,30 @@ export class WebServerResponse extends ServerResponse {
     // Express can override prototype so we have to bind methods
     this.waitToFinish = this.waitToFinish.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);
+  }
+
+  // `writeHead()` bypasses `setHeader()`, storing headers straight into the raw
+  // header block, so an explicit `Transfer-Encoding` here would re-enable chunk
+  // framing. Strip it from every accepted headers form before delegating.
+  override writeHead(statusCode: number, statusMessage?: any, headers?: any): this {
+    if (typeof statusMessage === "string") {
+      return super.writeHead(statusCode, statusMessage, stripTransferEncoding(headers));
+    }
+    return super.writeHead(statusCode, stripTransferEncoding(statusMessage));
+  }
+
+  override setHeader(name: string, value: number | string | readonly string[]): this {
+    if (typeof name === "string" && name.toLowerCase() === "transfer-encoding") {
+      return this;
+    }
+    return super.setHeader(name, value);
+  }
+
+  override appendHeader(name: string, value: string | readonly string[]): this {
+    if (typeof name === "string" && name.toLowerCase() === "transfer-encoding") {
+      return this;
+    }
+    return super.appendHeader(name, value);
   }
 
   waitToFinish(): Promise<void> {
@@ -137,4 +164,45 @@ export class WebServerResponse extends ServerResponse {
       headers: headers,
     });
   }
+}
+
+// --- internal ---
+
+// Drop any `transfer-encoding` entry from a `writeHead()` headers argument
+// (object, flat `[k, v, ...]`, or nested `[[k, v], ...]` form). An explicit
+// `Transfer-Encoding: chunked` makes Node chunk-frame the body it writes to the
+// bridging socket, corrupting the captured body (`5\r\nhello\r\n...`), and the
+// header itself is a hop-by-hop framing artifact that must not reach the web
+// `Response`. See https://github.com/h3js/srvx/issues/248
+function stripTransferEncoding<T>(headers: T): T {
+  if (!headers || typeof headers !== "object") {
+    return headers;
+  }
+  if (Array.isArray(headers)) {
+    if (headers.length > 0 && Array.isArray(headers[0])) {
+      return headers.filter(([key]) => String(key).toLowerCase() !== "transfer-encoding") as T;
+    }
+    const out: unknown[] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      if (String(headers[i]).toLowerCase() === "transfer-encoding") continue;
+      out.push(headers[i], headers[i + 1]);
+    }
+    return out as T;
+  }
+  let hasTransferEncoding = false;
+  for (const key in headers) {
+    if (key.toLowerCase() === "transfer-encoding") {
+      hasTransferEncoding = true;
+      break;
+    }
+  }
+  if (!hasTransferEncoding) {
+    return headers;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key in headers) {
+    if (key.toLowerCase() === "transfer-encoding") continue;
+    out[key] = (headers as Record<string, unknown>)[key];
+  }
+  return out as T;
 }
