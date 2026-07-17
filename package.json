@@ -56,6 +56,8 @@
     "test": "pnpm lint && pnpm typecheck && vitest run --coverage",
     "test:node-compat:deno": "deno run vitest test/node.test",
     "test:node-compat:bun": "bun vitest test/node.test.ts",
+    "test:node-adapters:deno": "deno run vitest test/node-adapters.test",
+    "test:node-adapters:bun": "bun vitest test/node-adapters.test.ts",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "vitest": "vitest"
   },
