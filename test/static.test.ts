@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, relative, sep } from "node:path";
 import { serveStatic, type ServeStaticOptions } from "../src/static.ts";
 import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
@@ -22,6 +22,9 @@ beforeAll(async () => {
   await mkdir(join(dir, "sub"), { recursive: true });
   await writeFile(join(dir, "index.html"), "<h1>index</h1>");
   await writeFile(join(dir, "sub", "inside.txt"), "INSIDE");
+
+  // A nested index, reached by naming its directory rather than the file.
+  await writeFile(join(dir, "sub", "index.html"), "<h1>sub index</h1>");
 
   // Dotfiles: bare, with an extension, nested, and inside a dot directory.
   await mkdir(join(dir, ".git"), { recursive: true });
@@ -49,6 +52,9 @@ beforeAll(async () => {
   await writeFile(join(dir, "only-gz.js"), "PLAIN_ONLY_GZ");
   await writeFile(join(dir, "only-gz.js.gz"), "GZIP_ONLY_GZ");
 
+  // A variant with no identity file beside it.
+  await writeFile(join(dir, "orphan.js.br"), "ORPHAN_BR");
+
   // Extension-less files, reachable at their exact name.
   await writeFile(join(dir, "LICENSE"), "LICENSE_BODY");
   await writeFile(join(dir, "apple-app-site-association"), "AASA_BODY");
@@ -58,10 +64,18 @@ beforeAll(async () => {
   // An extension-less route that must still resolve to its `.html` file.
   await writeFile(join(dir, "about.html"), "<h1>about</h1>");
 
+  // `.htm` maps to `text/html` just as `.html` does.
+  await writeFile(join(dir, "page.htm"), "<h1>htm</h1>");
+
   // Names that only appear percent-encoded on the wire.
   await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
+
+  // Extensions whose MIME mapping is pinned below; the contents never matter.
+  for (const name of ["mod.wasm", "pic.avif", "song.mp3", "bundle.gz"]) {
+    await writeFile(join(dir, name), "X");
+  }
 
   // Already-compressed type: a `.br` next to it must never be looked up.
   await writeFile(join(dir, "logo.png"), "PNG_BYTES");
@@ -79,6 +93,16 @@ beforeAll(async () => {
   // A link that stays within the root must keep working.
   await symlink(join(dir, "sub", "inside.txt"), join(dir, "contained.txt"));
 
+  // Links that stay inside the root but land on a dot path: containment alone
+  // serves these, since the name they are requested under has no dot segment.
+  await symlink(join(dir, ".env"), join(dir, "alias-dotfile.txt"));
+  await symlink(join(dir, ".git"), join(dir, "alias-dotdir"));
+  await symlink(join(dir, ".well-known", "security.txt"), join(dir, "alias-allowed.txt"));
+
+  // The same alias reached through the precompressed-variant lookup.
+  await writeFile(join(dir, "alias-variant.js"), "PLAIN_ALIAS_VARIANT");
+  await symlink(join(dir, ".env"), join(dir, "alias-variant.js.br"));
+
   // A root that is itself a symlink must keep working.
   linkedDir = join(tmp, "public-link");
   await symlink(dir, linkedDir);
@@ -88,11 +112,23 @@ afterAll(async () => {
   await rm(tmp, { recursive: true, force: true });
 });
 
-const req = (path: string) => new Request(`http://localhost${path}`) as unknown as ServerRequest;
+const req = (path: string, init?: RequestInit) =>
+  new Request(`http://localhost${path}`, init) as unknown as ServerRequest;
 const notFound = () => new Response("next()", { status: 404 });
 
-const fetchStatic = (path: string, root = dir) =>
-  serveStatic({ dir: root })(req(path), notFound) as Promise<Response>;
+const fetchStatic = (path: string, opts: Partial<ServeStaticOptions> = {}, init?: RequestInit) =>
+  serveStatic({ dir, ...opts })(req(path, init), notFound) as Promise<Response>;
+
+const fetchEncoded = (path: string, acceptEncoding: string, opts: Partial<ServeStaticOptions> = {}) =>
+  fetchStatic(path, opts, { headers: { "accept-encoding": acceptEncoding } });
+
+// Every denial falls through to the app rather than being answered here, so the
+// sentinel body from `notFound()` is what proves the middleware declined. It is
+// strictly stronger than asserting the secret is absent.
+const expectNext = async (res: Response, label?: string) => {
+  expect(res.status, label).toBe(404);
+  await expect(res.text()).resolves.toBe("next()");
+};
 
 // `new Request()` collapses dot segments in its constructor, so a request built
 // through it hands the middleware an already-resolved pathname and can never
@@ -109,18 +145,6 @@ const rawReq = (path: string) => {
 const fetchRaw = (path: string) =>
   serveStatic({ dir })(rawReq(path), notFound) as Promise<Response>;
 
-const fetchWithDotfiles = (path: string) =>
-  serveStatic({ dir, dotfiles: true })(req(path), notFound) as Promise<Response>;
-
-const fetchWith = (path: string, init: RequestInit, opts: Partial<ServeStaticOptions> = {}) =>
-  serveStatic({ dir, ...opts })(
-    new Request(`http://localhost${path}`, init) as unknown as ServerRequest,
-    notFound,
-  ) as Promise<Response>;
-
-const fetchEncoded = (path: string, acceptEncoding: string) =>
-  fetchWith(path, { headers: { "accept-encoding": acceptEncoding } });
-
 describe("serveStatic", () => {
   test("serves a file", async () => {
     const res = await fetchStatic("/sub/inside.txt");
@@ -134,17 +158,62 @@ describe("serveStatic", () => {
     await expect(res.text()).resolves.toContain("index");
   });
 
+  test("serves from a dir that is a filesystem root", async () => {
+    // A root already ends at a segment boundary, so the `dir + sep` prefix must
+    // not become `//` — nothing would match it and every request would 404.
+    // `dotfiles: true` because the host path above `tmpdir()` may itself hold a
+    // dot segment (`~/.cache/...`), which is not what this pins.
+    const { root } = parse(dir);
+    const urlPath = "/" + relative(root, join(dir, "index.html")).split(sep).join("/");
+    const res = await fetchStatic(urlPath, { dir: root, dotfiles: true });
+    expect(res.status).toBe(200);
+    await expect(res.text()).resolves.toContain("index");
+  });
+
+  describe("methods", () => {
+    test("falls through for a method outside the default GET/HEAD", async () => {
+      await expectNext(await fetchStatic("/app.js", {}, { method: "POST" }));
+    });
+
+    test("serves a method named in `methods`", async () => {
+      const res = await fetchStatic("/app.js", { methods: ["POST"] }, { method: "POST" });
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("matches the method case-insensitively", async () => {
+      const res = await fetchStatic("/app.js", { methods: ["post"] }, { method: "POST" });
+      expect(res.status).toBe(200);
+    });
+
+    test("no longer serves GET when `methods` omits it", async () => {
+      await expectNext(await fetchStatic("/app.js", { methods: ["POST"] }));
+    });
+  });
+
+  describe("directory routes", () => {
+    test("serves <dir>/index.html for an extension-less directory route", async () => {
+      const res = await fetchStatic("/sub");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toContain("sub index");
+    });
+
+    test.each(["/sub/", "/app.js/"])("ignores a trailing slash on %s", async (path) => {
+      // The strip matters most for a file: `stat("app.js/")` is ENOTDIR, so
+      // without it the route 404s. A directory would resolve either way, since
+      // `join()` collapses the `sub//index.html` candidate.
+      const res = await fetchStatic(path);
+      expect(res.status, path).toBe(200);
+    });
+  });
+
   describe("symlinks", () => {
     test("does not serve a symlink escaping the root", async () => {
-      const res = await fetchStatic("/escape.txt");
-      expect(res.status).toBe(404);
-      await expect(res.text()).resolves.not.toContain("TOPSECRET");
+      await expectNext(await fetchStatic("/escape.txt"));
     });
 
     test("does not serve through a symlinked directory escaping the root", async () => {
-      const res = await fetchStatic("/escape-dir/secret.txt");
-      expect(res.status).toBe(404);
-      await expect(res.text()).resolves.not.toContain("TOPSECRET");
+      await expectNext(await fetchStatic("/escape-dir/secret.txt"));
     });
 
     test("serves a symlink contained within the root", async () => {
@@ -154,46 +223,71 @@ describe("serveStatic", () => {
     });
 
     test("serves files when dir is itself a symlink", async () => {
-      const res = await fetchStatic("/sub/inside.txt", linkedDir);
+      const res = await fetchStatic("/sub/inside.txt", { dir: linkedDir });
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe("INSIDE");
     });
 
     test("still rejects an escaping symlink when dir is itself a symlink", async () => {
-      const res = await fetchStatic("/escape.txt", linkedDir);
-      expect(res.status).toBe(404);
+      await expectNext(await fetchStatic("/escape.txt", { dir: linkedDir }));
+    });
+
+    describe("aliasing a dot path", () => {
+      // The dotfile policy reads the request path, containment reads the
+      // resolved one. A link inside the root that lands on a hidden dot path
+      // satisfies containment, so the policy has to be re-checked after
+      // resolving or the link publishes what it names.
+      const DOT_ALIASES = [
+        ["/alias-dotfile.txt", "DOTENV"],
+        ["/alias-dotdir/config.txt", "GIT_CONFIG"],
+      ];
+
+      test.each(DOT_ALIASES)("does not serve %s, which resolves onto a denied dot path", async (path) => {
+        await expectNext(await fetchStatic(path!));
+      });
+
+      test.each(DOT_ALIASES)("serves %s with dotfiles: true", async (path, contents) => {
+        // The policy is what hides these, not containment: both links resolve
+        // inside the root, so lifting the policy must serve them.
+        await expect(fetchStatic(path!, { dotfiles: true }).then((r) => r.text())).resolves.toBe(
+          contents,
+        );
+      });
+
+      test("serves an alias whose target is allow-listed", async () => {
+        // Resolving must re-apply the policy, not blanket-deny every link that
+        // lands on a dot segment.
+        const res = await fetchStatic("/alias-allowed.txt");
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("SECURITY_TXT");
+      });
     });
   });
 
   describe("dotfiles", () => {
-    test.each([
+    const DOT_PATHS = [
       ["/.env", "DOTENV"],
       ["/.env.production", "PROD_SECRET"],
       ["/sub/.env.local", "LOCAL_SECRET"],
       ["/.git/config.txt", "GIT_CONFIG"],
-    ])("does not serve %s by default", async (path, secret) => {
-      const res = await fetchStatic(path);
-      expect(res.status).toBe(404);
-      await expect(res.text()).resolves.not.toContain(secret);
+    ];
+
+    test.each(DOT_PATHS)("does not serve %s by default", async (path) => {
+      await expectNext(await fetchStatic(path!));
     });
 
-    test.each([
-      ["/.env", "DOTENV"],
-      ["/.env.production", "PROD_SECRET"],
-      ["/sub/.env.local", "LOCAL_SECRET"],
-      ["/.git/config.txt", "GIT_CONFIG"],
-    ])("serves %s with dotfiles: true", async (path, contents) => {
-      const res = await fetchWithDotfiles(path);
+    test.each(DOT_PATHS)("serves %s with dotfiles: true", async (path, contents) => {
+      const res = await fetchStatic(path!, { dotfiles: true });
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
     });
 
     test("serves an arbitrary allow-listed segment and nothing else", async () => {
       const opts = { dotfiles: [".git"] };
-      const res = await fetchWith("/.git/config.txt", {}, opts);
+      const res = await fetchStatic("/.git/config.txt", opts);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe("GIT_CONFIG");
-      expect((await fetchWith("/.env", {}, opts)).status).toBe(404);
+      expect((await fetchStatic("/.env", opts)).status).toBe(404);
     });
 
     describe(".well-known", () => {
@@ -213,81 +307,53 @@ describe("serveStatic", () => {
       });
 
       test("matches by exact segment, not by prefix", async () => {
-        const res = await fetchStatic("/.well-known-backup/secret.txt");
-        expect(res.status).toBe(404);
-        await expect(res.text()).resolves.not.toContain("BACKUP_SECRET");
+        await expectNext(await fetchStatic("/.well-known-backup/secret.txt"));
       });
 
       test("does not serve a dot segment nested under it", async () => {
-        const res = await fetchStatic("/.well-known/.env");
-        expect(res.status).toBe(404);
-        await expect(res.text()).resolves.not.toContain("WELLKNOWN_SECRET");
+        await expectNext(await fetchStatic("/.well-known/.env"));
       });
 
       test.each([
         ["false", false],
         ["[]", []],
       ])("is hidden with dotfiles: %s", async (_label, dotfiles) => {
-        const res = await fetchWith("/.well-known/security.txt", {}, { dotfiles });
+        const res = await fetchStatic("/.well-known/security.txt", { dotfiles });
         expect(res.status).toBe(404);
       });
     });
   });
 
   describe("precompressed lookup", () => {
-    test("prefers brotli when both variants exist", async () => {
-      const res = await fetchEncoded("/app.js", "gzip, br");
-      expect(res.headers.get("content-encoding")).toBe("br");
-      expect(res.headers.get("content-type")).toBe("text/javascript");
-      await expect(res.text()).resolves.toBe("BROTLI_JS");
-    });
-
-    test("falls back to gzip when brotli is not accepted", async () => {
-      const res = await fetchEncoded("/app.js", "gzip");
-      expect(res.headers.get("content-encoding")).toBe("gzip");
-      await expect(res.text()).resolves.toBe("GZIP_JS");
-    });
-
-    test("falls back to the plain file when no variant is accepted", async () => {
-      const res = await fetchEncoded("/app.js", "");
-      expect(res.headers.get("content-encoding")).toBe(null);
-      await expect(res.text()).resolves.toBe("PLAIN_JS");
-    });
-
-    test("falls back to the plain file when no variant exists on disk", async () => {
-      const res = await fetchEncoded("/index.html", "br");
-      expect(res.headers.get("content-encoding")).toBe(null);
-      await expect(res.text()).resolves.toContain("index");
-    });
-
-    test("skips a missing variant and uses the next accepted one", async () => {
-      const res = await fetchEncoded("/only-gz.js", "br, gzip");
-      expect(res.headers.get("content-encoding")).toBe("gzip");
-      await expect(res.text()).resolves.toBe("GZIP_ONLY_GZ");
-    });
-
-    test("honors q=0 as a refusal", async () => {
-      const res = await fetchEncoded("/app.js", "br;q=0, gzip");
-      expect(res.headers.get("content-encoding")).toBe("gzip");
-      await expect(res.text()).resolves.toBe("GZIP_JS");
-    });
-
-    test("honors an explicit q ranking", async () => {
-      const res = await fetchEncoded("/app.js", "br;q=1.0");
-      expect(res.headers.get("content-encoding")).toBe("br");
-      await expect(res.text()).resolves.toBe("BROTLI_JS");
-    });
-
-    test("supports the * wildcard", async () => {
-      const res = await fetchEncoded("/app.js", "*");
-      expect(res.headers.get("content-encoding")).toBe("br");
-    });
-
-    test("does not match an encoding as a substring", async () => {
+    // (file, Accept-Encoding) -> which bytes are served. `/app.js` has both a
+    // `.br` and a `.gz` beside it; `/only-gz.js` only a `.gz`; `/index.html`
+    // neither.
+    const VARIANT_CASES: {
+      why: string;
+      accept: string;
+      enc: string | null;
+      body: string;
+      path?: string;
+    }[] = [
+      { why: "prefers brotli when both variants exist", accept: "gzip, br", enc: "br", body: "BROTLI_JS" },
+      { why: "falls back to gzip when brotli is not accepted", accept: "gzip", enc: "gzip", body: "GZIP_JS" },
+      { why: "falls back to the plain file when no variant is accepted", accept: "", enc: null, body: "PLAIN_JS" },
+      { why: "honors q=0 as a refusal", accept: "br;q=0, gzip", enc: "gzip", body: "GZIP_JS" },
+      { why: "honors an explicit q ranking", accept: "br;q=1.0", enc: "br", body: "BROTLI_JS" },
+      { why: "treats a malformed q as a refusal", accept: "br;q=abc", enc: null, body: "PLAIN_JS" },
+      { why: "supports the * wildcard", accept: "*", enc: "br", body: "BROTLI_JS" },
       // "x-gzip" must not satisfy "gzip", nor "brotli" satisfy "br".
-      const res = await fetchEncoded("/app.js", "x-gzip, brotli");
-      expect(res.headers.get("content-encoding")).toBe(null);
-      await expect(res.text()).resolves.toBe("PLAIN_JS");
+      { why: "does not match an encoding as a substring", accept: "x-gzip, brotli", enc: null, body: "PLAIN_JS" },
+      // An empty token must be skipped rather than parsed as an encoding.
+      { why: "ignores empty tokens", accept: ", , br", enc: "br", body: "BROTLI_JS" },
+      { why: "skips a missing variant and uses the next accepted one", accept: "br, gzip", enc: "gzip", body: "GZIP_ONLY_GZ", path: "/only-gz.js" },
+      { why: "falls back to the plain file when no variant exists on disk", accept: "br", enc: null, body: "<h1>index</h1>", path: "/index.html" },
+    ];
+
+    test.each(VARIANT_CASES)("$why", async ({ accept, enc, body, path = "/app.js" }) => {
+      const res = await fetchEncoded(path, accept);
+      expect(res.headers.get("content-encoding")).toBe(enc);
+      await expect(res.text()).resolves.toBe(body);
     });
 
     test("sets Vary: Accept-Encoding whenever variants are configured", async () => {
@@ -302,13 +368,7 @@ describe("serveStatic", () => {
     });
 
     test("serves the plain file with encodings: {}", async () => {
-      const res = await fetchWith(
-        "/app.js",
-        { headers: { "accept-encoding": "br" } },
-        {
-          encodings: {},
-        },
-      );
+      const res = await fetchEncoded("/app.js", "br", { encodings: {} });
       expect(res.headers.get("content-encoding")).toBe(null);
       expect(res.headers.get("vary")).toBe(null);
       await expect(res.text()).resolves.toBe("PLAIN_JS");
@@ -318,20 +378,22 @@ describe("serveStatic", () => {
       // The identity file gates the lookup, so an orphan `.br` is not a route.
       // Nothing is lost: a client accepting no encoding could not be served it
       // anyway, so shipping one without its source is already a broken deploy.
-      await writeFile(join(dir, "orphan.js.br"), "ORPHAN_BR");
-      const res = await fetchEncoded("/orphan.js", "br");
-      expect(res.status).toBe(404);
-      await expect(res.text()).resolves.not.toContain("ORPHAN_BR");
+      await expectNext(await fetchEncoded("/orphan.js", "br"));
     });
 
-    test("rejects a variant escaping the root and falls back to the plain file", async () => {
-      // `escape-variant.js.br` symlinks outside the root; the plain file does not.
-      const res = await fetchEncoded("/escape-variant.js", "br");
+    test.each([
+      // Links out of the root, and onto a denied dot path respectively. Both
+      // plain files stay put, and a variant that is not servable is skipped
+      // rather than fatal — the identity file below it still serves.
+      ["/escape-variant.js", "PLAIN_VARIANT", "TOPSECRET"],
+      ["/alias-variant.js", "PLAIN_ALIAS_VARIANT", "DOTENV"],
+    ])("falls back to the plain file when %s's variant is not servable", async (path, body, secret) => {
+      const res = await fetchEncoded(path!, "br");
       expect(res.status).toBe(200);
       expect(res.headers.get("content-encoding")).toBe(null);
-      const body = await res.text();
-      expect(body).toBe("PLAIN_VARIANT");
-      expect(body).not.toContain("TOPSECRET");
+      const text = await res.text();
+      expect(text).toBe(body);
+      expect(text).not.toContain(secret);
     });
   });
 
@@ -340,7 +402,7 @@ describe("serveStatic", () => {
       ["/LICENSE", "LICENSE_BODY"],
       ["/apple-app-site-association", "AASA_BODY"],
     ])("serves %s at its exact name", async (path, contents) => {
-      const res = await fetchStatic(path);
+      const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
     });
@@ -365,33 +427,67 @@ describe("serveStatic", () => {
       // ...but still sets it for compressible types.
       expect((await fetchEncoded("/index.html", "br")).headers.get("vary")).toBe("Accept-Encoding");
     });
+  });
 
+  describe("renderHTML", () => {
+    const opts = {
+      renderHTML: ({ html }: { html: string }) => new Response(`${html}<!--rendered-->`),
+    };
+
+    test.each(["/index.html", "/page.htm"])("renders %s", async (path) => {
+      // Both map to `text/html`, so both render: an extension the MIME table
+      // treats as HTML must not be served as raw markup.
+      const res = await fetchStatic(path, opts);
+      await expect(res.text()).resolves.toContain("<!--rendered-->");
+    });
+
+    test("does not render a non-HTML file", async () => {
+      const res = await fetchStatic("/sub/inside.txt", opts);
+      await expect(res.text()).resolves.toBe("INSIDE");
+    });
+  });
+
+  describe("Content-Type", () => {
     test.each([
+      // Text carries an explicit charset...
+      ["/index.html", "text/html; charset=utf-8"],
+      ["/sub/inside.txt", "text/plain; charset=utf-8"],
+      ["/app.js", "text/javascript; charset=utf-8"],
+      // ...while non-text bytes have none to declare.
+      ["/logo.png", "image/png"],
+      ["/LICENSE", "application/octet-stream"],
+      // Straight from the MIME table.
       ["/mod.wasm", "application/wasm"],
       ["/pic.avif", "image/avif"],
       ["/song.mp3", "audio/mpeg"],
       ["/bundle.gz", "application/gzip"],
-    ])("maps %s to %s", async (path, type) => {
-      await writeFile(join(dir, path.slice(1)), "X");
-      const res = await fetchStatic(path);
-      expect(res.headers.get("content-type")).toBe(type);
+    ])("declares %s as %s", async (path, type) => {
+      expect((await fetchStatic(path!)).headers.get("content-type")).toBe(type);
+    });
+
+    test("declares a charset alongside Content-Encoding", async () => {
+      // The charset describes the decoded bytes, so a variant keeps it.
+      const res = await fetchEncoded("/app.js", "br");
+      expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+      expect(res.headers.get("content-encoding")).toBe("br");
     });
   });
 
   describe("HEAD", () => {
     test("returns headers with no body", async () => {
-      const res = await fetchWith("/app.js", { method: "HEAD" });
+      const res = await fetchStatic("/app.js", {}, { method: "HEAD" });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-length")).toBe(String("PLAIN_JS".length));
-      expect(res.headers.get("content-type")).toBe("text/javascript");
+      expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
       await expect(res.text()).resolves.toBe("");
     });
 
     test("reports the variant's headers without a body", async () => {
-      const res = await fetchWith("/app.js", {
-        method: "HEAD",
-        headers: { "accept-encoding": "br" },
-      });
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { method: "HEAD", headers: { "accept-encoding": "br" } },
+      );
       expect(res.headers.get("content-encoding")).toBe("br");
       expect(res.headers.get("content-length")).toBe(String("BROTLI_JS".length));
       await expect(res.text()).resolves.toBe("");
@@ -402,10 +498,10 @@ describe("serveStatic", () => {
         renderHTML: ({ html }: { html: string }) =>
           new Response(`${html}<!--rendered-->`, { headers: { "x-rendered": "1" } }),
       };
-      const get = await fetchWith("/index.html", {}, opts);
+      const get = await fetchStatic("/index.html", opts);
       await expect(get.text()).resolves.toContain("<!--rendered-->");
 
-      const head = await fetchWith("/index.html", { method: "HEAD" }, opts);
+      const head = await fetchStatic("/index.html", opts, { method: "HEAD" });
       expect(head.status).toBe(200);
       expect(head.headers.get("x-rendered")).toBe("1");
       await expect(head.text()).resolves.toBe("");
@@ -423,38 +519,39 @@ describe("serveStatic", () => {
             }),
           ),
       };
-      const head = await fetchWith("/index.html", { method: "HEAD" }, opts);
+      const head = await fetchStatic("/index.html", opts, { method: "HEAD" });
       await expect(head.text()).resolves.toBe("");
       expect(cancelled).toBe(true);
     });
   });
 
   describe("percent-encoded paths", () => {
-    test("decodes the pathname once for the lookup", async () => {
-      const res = await fetchStatic("/hello%20world.txt");
+    test.each([
+      ["/hello%20world.txt", "SPACE_NAME"],
+      ["/caf%C3%A9.txt", "UNICODE_NAME"],
+      ["/50%25.txt", "PERCENT_NAME"],
+    ])("decodes %s exactly once for the lookup", async (path, contents) => {
+      const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
-      await expect(res.text()).resolves.toBe("SPACE_NAME");
+      await expect(res.text()).resolves.toBe(contents);
     });
 
-    test("decodes non-ASCII names", async () => {
-      await expect(fetchStatic("/caf%C3%A9.txt").then((r) => r.text())).resolves.toBe(
-        "UNICODE_NAME",
-      );
-    });
-
-    test("decodes an encoded literal percent", async () => {
-      await expect(fetchStatic("/50%25.txt").then((r) => r.text())).resolves.toBe("PERCENT_NAME");
-    });
-
-    test("keeps an encoded separator encoded", async () => {
-      // `%2F` must not become a path separator: the decoded lookup is for a
-      // file literally named `sub%2Finside.txt`, which does not exist.
-      expect((await fetchStatic("/sub%2Finside.txt")).status).toBe(404);
+    test.each([
+      // The decoded lookup is for a file literally named `sub%2Finside.txt`.
+      "/sub%2Finside.txt",
+      // `%2f` survives `decodeURI`, so this stays a single literal filename
+      // rather than traversing. Reaches the middleware verbatim: `new Request()`
+      // only collapses real separators.
+      "/%2e%2e%2foutside%2fsecret.txt",
+    ])("keeps the encoded separator in %s encoded", async (path) => {
+      await expectNext(await fetchStatic(path), path);
     });
 
     test("applies the dotfile policy to the decoded name", async () => {
       expect((await fetchStatic("/%2Eenv")).status).toBe(404);
-      await expect(fetchWithDotfiles("/%2Eenv").then((r) => r.text())).resolves.toBe("DOTENV");
+      await expect(fetchStatic("/%2Eenv", { dotfiles: true }).then((r) => r.text())).resolves.toBe(
+        "DOTENV",
+      );
     });
 
     test("applies the dotfile allow-list to the decoded name", async () => {
@@ -468,14 +565,11 @@ describe("serveStatic", () => {
 
     test("does not decode twice", async () => {
       // `%252e%252e` decodes once to the harmless literal `%2e%2e`.
-      const res = await fetchStatic("/%252e%252e/outside/secret.txt");
-      expect(res.status).toBe(404);
+      await expectNext(await fetchStatic("/%252e%252e/outside/secret.txt"));
     });
 
-    test("rejects malformed encoding with 400", async () => {
-      for (const path of ["/foo%", "/%ZZ"]) {
-        expect((await fetchStatic(path)).status, path).toBe(400);
-      }
+    test.each(["/foo%", "/%ZZ"])("rejects the malformed encoding %s with 400", async (path) => {
+      expect((await fetchStatic(path)).status, path).toBe(400);
     });
   });
 
@@ -487,10 +581,10 @@ describe("serveStatic", () => {
       "/../outside/secret.txt",
       "/sub/../../outside/secret.txt",
       "/../../../../../../etc/passwd",
+      // A traversal that starts inside an allow-listed dot segment.
+      "/.well-known/../../outside/secret.txt",
     ])("serves no traversal from a raw %s", async (path) => {
-      const res = await fetchRaw(path);
-      expect(res.status, path).toBe(404);
-      await expect(res.text()).resolves.not.toContain("TOPSECRET");
+      await expectNext(await fetchRaw(path), path);
     });
 
     test.each(["/sub/../index.html", "/./index.html"])(
@@ -503,20 +597,5 @@ describe("serveStatic", () => {
         await expect(res.text()).resolves.toContain("index");
       },
     );
-
-    test("does not serve a raw traversal into an allow-listed dot segment", async () => {
-      const res = await fetchRaw("/.well-known/../../outside/secret.txt");
-      expect(res.status).toBe(404);
-      await expect(res.text()).resolves.not.toContain("TOPSECRET");
-    });
-  });
-
-  test("keeps an encoded separator from becoming a separator", async () => {
-    // `%2f` survives `decodeURI`, so this stays a single literal filename rather
-    // than traversing. Reaches the middleware verbatim: `new Request()` only
-    // collapses real separators.
-    const res = await fetchStatic("/%2e%2e%2foutside%2fsecret.txt");
-    expect(res.status).toBe(404);
-    await expect(res.text()).resolves.not.toContain("TOPSECRET");
   });
 });

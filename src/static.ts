@@ -78,32 +78,26 @@ const COMMON_MIME_TYPES: Record<string, string> = {
   ".pdf": "application/pdf",
 };
 
-// Types that benefit from compression. Everything else (images, video, audio,
-// archives, fonts) is already compressed, so a `.br`/`.gz` variant would not
-// exist and looking for one only costs stat calls.
+// Types that benefit from compression — everything else (images, video, audio,
+// archives, fonts) is already compressed and would not have a `.br`/`.gz` variant.
 const isCompressible = (mimeType: string): boolean =>
   mimeType.startsWith("text/") ||
   mimeType.endsWith("+json") ||
   mimeType.endsWith("+xml") ||
   mimeType === "application/json" ||
   mimeType === "application/xml" ||
-  mimeType === "application/javascript" ||
   mimeType === "application/wasm";
 
-// RFC 8615 reserves `/.well-known/` for public metadata, so it is served by
-// default: ACME HTTP-01 challenges and `security.txt` live there, and gating
-// them behind an all-or-nothing opt-in would mean publishing `.env`/`.git` to
-// renew a certificate. Every other dot segment stays hidden.
+// RFC 8615 reserves `/.well-known/` for public metadata (ACME HTTP-01
+// challenges, `security.txt`), so it is the only dot segment served by default.
 const DEFAULT_DOTFILES = [".well-known"];
 
 /**
  * Encodings from `encodings` the client accepts, in server-preference order.
- *
- * `q=0` means "not acceptable" and is honored, so `br;q=0, gzip` serves gzip rather than
- * brotli. A `*` applies to any encoding not named explicitly.
+ * `q=0` is honored as "not acceptable"; `*` applies to encodings not named explicitly.
  */
 const parseAcceptEncoding = (
-  header: string,
+  header: string | null,
   encodings: Record<string, string>,
 ): [encoding: string, ext: string][] => {
   if (!header) {
@@ -120,7 +114,7 @@ const parseAcceptEncoding = (
     for (const param of params) {
       const trimmed = param.trim();
       if (trimmed.startsWith("q=")) {
-        // A malformed q (`q=abc`) parses to NaN; treat it as refused.
+        // A malformed q (`q=abc`) parses to NaN: treat it as refused.
         q = Number.parseFloat(trimmed.slice(2)) || 0;
       }
     }
@@ -130,33 +124,30 @@ const parseAcceptEncoding = (
   return Object.entries(encodings).filter(([name]) => (quality.get(name) ?? wildcard ?? 0) > 0);
 };
 
+// Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
+// must not also match `/srv/www-backup`). Roots already end with `sep`.
+const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
+
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
-  const dir = resolve(options.dir) + sep;
+  const dir = asPrefix(resolve(options.dir));
   const methods = new Set((options.methods || ["GET", "HEAD"]).map((m) => m.toUpperCase()));
-  // `?? DEFAULT_DOTFILES` and not `||`: an explicit `false` must stay `false`.
   const dotfiles = options.dotfiles ?? DEFAULT_DOTFILES;
   const allowAllDots = dotfiles === true;
   const allowedDots = new Set(Array.isArray(dotfiles) ? dotfiles : []);
 
-  // Deny a path with a dot segment that is not allow-listed. Matching is by
-  // exact segment, so allowing `.well-known` exposes neither a sibling that
-  // merely shares its prefix (`.well-known-backup`) nor a dot segment nested
-  // under it (`.well-known/.env`).
-  //
-  // `.`/`..` segments never reach this check: `join()` resolves them before the
-  // path is tested, so `/sub/../index.html` is `index.html` here, not a dot
-  // segment.
+  // Deny paths with a non-allow-listed dot segment. Matching is by exact
+  // segment, so allowing `.well-known` exposes neither `.well-known-backup`
+  // nor `.well-known/.env`. (`.`/`..` never reach this check: `join()`
+  // resolves them first.)
   const isDeniedDotPath = (relPath: string): boolean =>
     !allowAllDots && relPath.split(sep).some((s) => s[0] === "." && !allowedDots.has(s));
 
   const encodings = options.encodings || { br: ".br", gzip: ".gz" };
   const varyOnEncoding = Object.keys(encodings).length > 0;
 
-  // Real (symlink-resolved) `dir`, used to re-assert containment below. `dir`
-  // itself may legitimately be a symlink (`/var/www` -> `/data/www`), so both
-  // sides of the comparison have to be resolved or every file would be
-  // rejected. Resolved lazily and cached only on success, so a `dir` that is
-  // created after the first request is still picked up.
+  // Symlink-resolved `dir` for containment checks — `dir` itself may
+  // legitimately be a symlink. Resolved lazily and cached only on success, so
+  // a `dir` created after the first request is still picked up.
   let realDir: string | undefined;
   const getRealDir = async (): Promise<string> => {
     if (realDir === undefined) {
@@ -164,26 +155,28 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       if (resolved === null) {
         return dir;
       }
-      realDir = resolved + sep;
+      realDir = asPrefix(resolved);
     }
     return realDir;
   };
 
-  // Existence and type only. Containment costs a `realpath` (see `isContained`)
-  // and is only worth paying for the candidate actually served.
   const statFile = async (candidate: string): Promise<Stats | null> => {
     const fileStat = await stat(candidate).catch(() => null);
     return fileStat?.isFile() ? fileStat : null;
   };
 
-  // The containment boundary. `stat()` follows symlinks and the lexical
-  // `startsWith(dir)` pre-filter cannot see through them, so a link inside
-  // `dir` can resolve to any file on the host. Re-assert against the resolved
-  // path, which also covers links in intermediate segments. Links staying
-  // inside `dir` are still served.
-  const isContained = async (candidate: string): Promise<boolean> => {
+  // The real security boundary. The handler's checks are lexical while
+  // `stat()` follows symlinks, so a link inside `dir` could escape the root
+  // (`escape.txt` -> `/etc/passwd`) or alias a denied dot path to an allowed
+  // name (`public.txt` -> `.env`). Re-assert both invariants against the
+  // resolved path; links that stay inside `dir` on an allowed path still work.
+  const isServable = async (candidate: string): Promise<boolean> => {
     const realPath = await realpath(candidate).catch(() => null);
-    return realPath !== null && realPath.startsWith(await getRealDir());
+    if (realPath === null) {
+      return false;
+    }
+    const root = await getRealDir();
+    return realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length));
   };
 
   return async (req, next) => {
@@ -193,25 +186,16 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     const url = (req._url ??= new FastURL(req.url));
     let path = url.pathname.slice(1).replace(/\/$/, "");
     if (path.includes("%")) {
-      // `url.pathname` keeps the wire encoding, so decode exactly once here or
-      // any name a client must encode (`hello world.txt`, `café.txt`) is
-      // unreachable. `decodeURI`, not `decodeURIComponent`: it keeps `%2F`,
-      // `%3F` and `%23` encoded, so an encoded separator never becomes a
-      // separator.
-      //
-      // Nothing below relies on the pathname arriving normalized. `FastURL`
-      // does resolve dot segments in practice (`_needsNormRE` in `_url.ts`
-      // deopts `.`, `..` and their `%2e` forms to the native parser), but that
-      // is an invariant of another module, and decoding can surface a dot
-      // segment after it has already run (`%252e%252e` -> `%2e%2e`, `%5C` on
-      // Windows). So containment rests only on `join()` + `startsWith(dir)`
-      // below, which resolve and re-check whatever actually reaches them; the
-      // "unresolved pathname" tests feed a raw `/../` straight in to pin that.
+      // Decode the wire encoding exactly once, or names a client must encode
+      // (`café.txt`) are unreachable. `decodeURI` (not `decodeURIComponent`)
+      // keeps `%2F`/`%3F`/`%23` encoded, so an encoded separator never becomes
+      // a separator. Containment does not rely on the pathname arriving
+      // normalized: `join()` + `startsWith(dir)` below re-check whatever
+      // reaches them, including dot segments that decoding surfaces.
       try {
         path = decodeURI(path);
       } catch {
-        // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static
-        // do rather than guessing at a lookup for a raw `%` name.
+        // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static.
         return new FastResponse("Bad Request", { status: 400 });
       }
     }
@@ -219,65 +203,51 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
     if (path === "") {
       paths = ["index.html"];
     } else if (extname(path) === "") {
-      // TODO: consider answering `/sub` with a 303 redirect to `/sub/` instead
-      // of serving `sub/index.html` in place (nginx sends 301): without the
+      // TODO: consider answering `/sub` with a redirect to `/sub/` instead of
+      // serving `sub/index.html` in place (nginx sends 301): without the
       // trailing slash, relative links inside that index resolve against `/`.
-      // Probe the literal path before the `.html` route candidates, so an
-      // extension-less file is reachable at its exact name: ACME challenge
-      // tokens (`/.well-known/acme-challenge/<token>`), `LICENSE`,
-      // `apple-app-site-association`. This also covers allow-listed dotfiles,
-      // which land here because `extname()` reports no extension for a
-      // leading-dot name (`.env`) and would otherwise only be looked up as
-      // `.env.html`.
+      //
+      // The literal path comes first so an extension-less file is reachable at
+      // its exact name: ACME challenge tokens, `LICENSE`, and allow-listed
+      // dotfiles like `.env` (which `extname()` reports as extension-less).
       paths = [path, `${path}.html`, `${path}/index.html`];
     } else {
       paths = [path];
     }
-    const acceptEncodings = parseAcceptEncoding(
-      req.headers.get("accept-encoding") || "",
-      encodings,
-    );
-    for (const path of paths) {
-      const filePath = join(dir, path);
-      // A cheap pre-filter, not the containment boundary — `isContained` is.
-      // This rejects an obvious escape without spending a syscall, and it is
-      // what makes `slice(dir.length)` below an actual relative path.
-      if (!filePath.startsWith(dir)) {
+    // Parsed lazily: unmatched routes (all non-static traffic) never need it.
+    let acceptEncodings: [encoding: string, ext: string][] | undefined;
+    for (const candidate of paths) {
+      const filePath = join(dir, candidate);
+      // Cheap lexical pre-filter — `isServable` is the real boundary. Also
+      // guarantees `slice(dir.length)` yields an actual relative path.
+      if (!filePath.startsWith(dir) || isDeniedDotPath(filePath.slice(dir.length))) {
         continue;
       }
-      if (isDeniedDotPath(filePath.slice(dir.length))) {
-        continue;
-      }
-      // The identity file gates the candidate: a client that accepts no
-      // encoding needs it regardless, so a variant without one beside it is
-      // already a broken deploy. Probing it first costs one extra stat when a
-      // variant then wins (2 -> 3 syscalls for `/app.js` + `br`), but keeps a
-      // miss at one syscall per candidate rather than one per accepted encoding
-      // (7 -> 3 for `/nope`). Misses are worth the trade: the middleware falls
-      // through to the app on every unmatched route, so all non-static traffic
-      // pays that path, as does anything probing for `.env`/`.git`.
+      // The identity file gates the candidate: a variant without one beside it
+      // is a broken deploy, and probing it first keeps a miss (all unmatched
+      // traffic) at one syscall per candidate instead of one per encoding.
       const identityStat = await statFile(filePath);
       if (!identityStat) {
         continue;
       }
-      const fileExt = extname(filePath);
-      const contentType = COMMON_MIME_TYPES[fileExt] || "application/octet-stream";
-      const renderHTML = fileExt === ".html" ? options.renderHTML : undefined;
-      // Look for precompressed variants only where one could plausibly exist:
-      // not for already-compressed types, and not for `renderHTML` routes,
-      // whose output a variant on disk would not match.
+      const contentType = COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream";
+      // Keyed off the resolved type so `.htm` renders like `.html`.
+      const renderHTML = contentType === "text/html" ? options.renderHTML : undefined;
+      // No variant lookup for already-compressed types, nor for `renderHTML`
+      // routes, whose output a variant on disk would not match.
       const compressible = !renderHTML && isCompressible(contentType);
 
       let encoding = "";
       let servePath = filePath;
       let fileStat = identityStat;
       if (compressible) {
+        acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), encodings);
         for (const [name, ext] of acceptEncodings) {
           const variantPath = filePath + ext;
           const variantStat = await statFile(variantPath);
-          // An escaping variant is skipped rather than fatal: the identity file
-          // below still serves, provided it is itself contained.
-          if (variantStat && (await isContained(variantPath))) {
+          // An unservable variant (escapes the root, or resolves onto a denied
+          // dot path) is skipped, not fatal: the identity file can still serve.
+          if (variantStat && (await isServable(variantPath))) {
             encoding = name;
             servePath = variantPath;
             fileStat = variantStat;
@@ -285,24 +255,9 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           }
         }
       }
-      // Only the bytes actually sent need containing, and a variant that won
-      // above is already checked.
-      if (!encoding && !(await isContained(filePath))) {
+      // Only the bytes actually sent need checking; a winning variant already was.
+      if (!encoding && !(await isServable(filePath))) {
         continue;
-      }
-      // `Content-Type` comes from the base path: the variant's own extension
-      // is the encoding (`.br`), not the media type.
-      const headers: Record<string, string> = {
-        "Content-Length": fileStat.size.toString(),
-        "Content-Type": contentType,
-      };
-      if (encoding) {
-        headers["Content-Encoding"] = encoding;
-      }
-      if (varyOnEncoding && compressible) {
-        // Set on the identity variant too, not just when an encoded one is
-        // served: a shared cache must key on the header either way.
-        headers["Vary"] = "Accept-Encoding";
       }
       if (renderHTML) {
         const rendered = await renderHTML({
@@ -313,9 +268,8 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         if (req.method !== "HEAD") {
           return rendered;
         }
-        // A HEAD response carries the same headers as GET, without the body.
-        // Cancel the unused body so a stream-backed rendered response
-        // releases its underlying resource instead of waiting for GC.
+        // HEAD carries GET's headers without the body; cancel the unused body
+        // so a stream-backed rendered response releases its resource.
         await rendered.body?.cancel().catch(() => {});
         return new FastResponse(null, {
           status: rendered.status,
@@ -323,9 +277,25 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           headers: rendered.headers,
         });
       }
+      // `Content-Type` comes from the base path: the variant's own extension
+      // is the encoding (`.br`), not the media type. Text carries an explicit
+      // charset so browsers do not decode non-ASCII with a guessed fallback.
+      const headers: Record<string, string> = {
+        "Content-Length": fileStat.size.toString(),
+        "Content-Type": contentType.startsWith("text/")
+          ? `${contentType}; charset=utf-8`
+          : contentType,
+      };
+      if (encoding) {
+        headers["Content-Encoding"] = encoding;
+      }
+      if (varyOnEncoding && compressible) {
+        // Also set on the identity response: shared caches must key on the
+        // header either way.
+        headers["Vary"] = "Accept-Encoding";
+      }
       if (req.method === "HEAD") {
-        // Node discards a HEAD body at the http layer, so reading the file
-        // would burn I/O for bytes that never reach the wire.
+        // Node discards a HEAD body at the http layer; skip the file I/O.
         return new FastResponse(null, { headers });
       }
       return new FastResponse(createReadStream(servePath) as any, { headers });
