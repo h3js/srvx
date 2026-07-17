@@ -3,6 +3,7 @@ import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { extname, join, resolve, sep } from "node:path";
+import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
@@ -86,6 +87,15 @@ const DEFAULT_DOTFILES = [".well-known"];
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
 const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
 
+// A candidate is only known to be a regular file once it is open (the check is an
+// `fstat` on the fd), and `open()` on a FIFO blocks until a writer arrives. Without
+// `O_NONBLOCK` a pipe swapped in for a file — before the `stat` that precedes an
+// `open`, or between the two — parks a libuv threadpool thread indefinitely, and the
+// pool is 4 threads by default, so a handful of requests stall every fs op in the
+// process. Reads of regular files ignore the flag. Windows has no `O_NONBLOCK` and
+// cannot block this way: the `?? 0` leaves plain `O_RDONLY` there.
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
 type ServableFile = { handle: FileHandle; size: number };
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
@@ -141,7 +151,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   // check-then-`createReadStream(path)` sequence, a symlink swap in between
   // would serve a file the checks never saw.
   const openServable = async (candidate: string): Promise<ServableFile | null> => {
-    const handle = await open(candidate).catch(() => null);
+    const handle = await open(candidate, OPEN_FLAGS).catch(() => null);
     if (handle === null) {
       return null;
     }
@@ -238,8 +248,8 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), encodings);
         for (const [name, ext] of acceptEncodings) {
           const variantPath = filePath + ext;
-          // `stat` before `open`: a missing variant should cost one syscall,
-          // and opening a non-file (a FIFO) can block.
+          // `stat` before `open`: a missing variant (the common case) should cost
+          // one syscall rather than an `open`/`fstat`/`close`.
           if (!(await statFile(variantPath))) {
             continue;
           }

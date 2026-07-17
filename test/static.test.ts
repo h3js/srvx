@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
 import { serveStatic, type ServeStaticOptions } from "../src/static.ts";
@@ -295,6 +296,43 @@ describe("serveStatic", () => {
         expect(res.status).toBe(200);
         await expect(res.text()).resolves.toBe("SECURITY_TXT");
       });
+    });
+  });
+
+  // `mkfifo` is POSIX-only; Windows has no FIFO to open in the first place.
+  //
+  // These pin the ordinary outcome — a pipe sitting in the root is refused by the
+  // `stat()` mode check, before any `open()`. The harder case, where that check is
+  // won by a swap and `open()` itself meets the FIFO, needs a lying `stat` to
+  // reproduce and lives in `static-nonblock.test.ts`.
+  describe.skipIf(process.platform === "win32")("non-regular files", () => {
+    test("declines a FIFO", async () => {
+      const fifo = join(dir, "pipe.txt");
+      execFileSync("mkfifo", [fifo]);
+      try {
+        await expectNext(await fetchStatic("/pipe.txt"));
+      } finally {
+        await rm(fifo, { force: true });
+      }
+    });
+
+    // Its own identity file rather than `app.js`, whose `.br` the shared fixture
+    // already occupies.
+    test("declines a FIFO standing in for a precompressed variant", async () => {
+      const identity = join(dir, "piped.js");
+      const fifo = `${identity}.br`;
+      await writeFile(identity, "PIPED_JS");
+      execFileSync("mkfifo", [fifo]);
+      try {
+        // The identity file still serves; only the variant is unusable.
+        const res = await fetchEncoded("/piped.js", "br");
+        expect(res.status).toBe(200);
+        expect(res.headers.get("content-encoding")).toBe(null);
+        await expect(res.text()).resolves.toBe("PIPED_JS");
+      } finally {
+        await rm(fifo, { force: true });
+        await rm(identity, { force: true });
+      }
     });
   });
 
