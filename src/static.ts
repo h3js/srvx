@@ -691,7 +691,12 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       const entries = await readListing(path);
       if (entries) {
         const base = url.pathname.endsWith("/") ? url.pathname : url.pathname + "/";
-        const headers = { "Content-Type": "text/html; charset=utf-8" };
+        const headers = {
+          "Content-Type": "text/html; charset=utf-8",
+          // A generated listing should never be indexed; mirrors the `robots`
+          // meta tag for crawlers that only read headers.
+          "X-Robots-Tag": "noindex, nofollow",
+        };
         // HEAD mirrors GET's headers without the body.
         const body = req.method === "HEAD" ? null : renderDirListing(base, path, entries);
         return new FastResponse(body, { headers });
@@ -729,9 +734,9 @@ function renderDirListing(
   const heading = escapeHtml("/" + (displayPath ? displayPath + "/" : ""));
   const items: string[] = [];
   // A parent link everywhere but the root. `base` ends in `/`, so relative `../`
-  // climbs one segment.
+  // climbs one segment. Shown as a folder, since it navigates up to one.
   if (displayPath !== "") {
-    items.push(`<li><a href="../">../</a></li>`);
+    items.push(row("../", "../", true));
   }
   for (const entry of entries) {
     const suffix = entry.dir ? "/" : "";
@@ -739,23 +744,43 @@ function renderDirListing(
     // URL path segment (a literal `/` in a name is encoded, never a separator),
     // the second makes that URL safe inside the attribute. The trailing `/` for
     // a directory is appended after encoding so it stays a real separator.
-    const href = escapeHtml(base + encodeURIComponent(entry.name) + suffix);
-    const text = escapeHtml(entry.name + suffix);
-    items.push(`<li><a href="${href}">${text}</a></li>`);
+    const href = base + encodeURIComponent(entry.name) + suffix;
+    items.push(row(href, entry.name + suffix, entry.dir));
   }
   return (
     `<!DOCTYPE html><html><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    // A generated listing is not content to index; the `X-Robots-Tag` header
+    // set alongside covers crawlers that skip the markup.
+    `<meta name="robots" content="noindex, nofollow">` +
     `<title>Index of ${heading}</title>` +
-    `<style>body{font-family:system-ui,sans-serif;margin:2rem;max-width:60rem}` +
-    `h1{font-size:1.2rem;font-weight:600}ul{list-style:none;padding:0}` +
-    `li{padding:.15rem 0}a{text-decoration:none;color:#0366d6}` +
-    `a:hover{text-decoration:underline}` +
+    `<style>` +
+    `:root{--bg:#fff;--fg:#1f2328;--muted:#656d76;--line:#d0d7de;--link:#0969da;--hover:#f6f8fa}` +
     // Follow the OS theme — a plain palette swap, no toggle.
-    `@media(prefers-color-scheme:dark){body{background:#0d1117;color:#c9d1d9}` +
-    `a{color:#58a6ff}}</style></head>` +
-    `<body><h1>Index of ${heading}</h1><ul>${items.join("")}</ul></body></html>`
+    `@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--line:#30363d;--link:#4493f8;--hover:#161b22}}` +
+    `*{box-sizing:border-box}` +
+    `body{font-family:system-ui,-apple-system,sans-serif;line-height:1.5;margin:0;` +
+    `padding:2rem 1.25rem;color:var(--fg);background:var(--bg)}` +
+    `main{max-width:48rem;margin:0 auto}` +
+    `h1{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.95rem;` +
+    `font-weight:600;color:var(--muted);margin:0 0 1rem;word-break:break-all}` +
+    `ul{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:.625rem;overflow:hidden}` +
+    `li+li{border-top:1px solid var(--line)}` +
+    `a{display:flex;gap:.625rem;align-items:center;padding:.55rem .875rem;` +
+    `text-decoration:none;color:var(--link)}` +
+    `a:hover{background:var(--hover)}` +
+    `.i{flex:none;width:1.25rem;text-align:center}` +
+    `</style></head>` +
+    `<body><main><h1>Index of ${heading}</h1><ul>${items.join("")}</ul></main></body></html>`
   );
+}
+
+// One listing row. `href` is a raw (unescaped) URL and `label` raw text; both
+// are escaped here before landing in the attribute and element text. The icon
+// is a fixed emoji, so it needs none.
+function row(href: string, label: string, dir: boolean): string {
+  const icon = dir ? "📁" : "📄";
+  return `<li><a href="${escapeHtml(href)}"><span class="i">${icon}</span>${escapeHtml(label)}</a></li>`;
 }
 
 // The `Cache-Control` value, or "" when `maxAge` is unset so the header is

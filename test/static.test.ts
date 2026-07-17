@@ -318,6 +318,12 @@ describe("serveStatic", () => {
       expect(html).toContain("prefers-color-scheme:dark");
     });
 
+    test("marks the listing noindex (meta tag and header)", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true });
+      expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+      await expect(res.text()).resolves.toContain('name="robots" content="noindex, nofollow"');
+    });
+
     test("hides denied dot segments from the listing", async () => {
       const html = await (await fetchStatic("/files/", { dirListing: true })).text();
       expect(html).not.toContain(".hidden");
