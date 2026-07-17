@@ -745,6 +745,138 @@ describe("serveStatic", () => {
     });
   });
 
+  describe("caching validators", () => {
+    test("sets a weak ETag and Last-Modified by default", async () => {
+      const res = await fetchStatic("/app.js");
+      expect(res.headers.get("etag")).toMatch(/^W\/".+"$/);
+      // A parseable HTTP date, not the raw mtime.
+      expect(Number.isNaN(Date.parse(res.headers.get("last-modified")!))).toBe(false);
+    });
+
+    test("answers a matching If-None-Match with 304 and no body", async () => {
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      const res = await fetchStatic("/app.js", {}, { headers: { "if-none-match": etag } });
+      expect(res.status).toBe(304);
+      // The validator is echoed so the client can refresh its freshness...
+      expect(res.headers.get("etag")).toBe(etag);
+      // ...but the representation headers are not, and there is no body.
+      expect(res.headers.get("content-length")).toBe(null);
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("serves the body when If-None-Match does not match", async () => {
+      const res = await fetchStatic("/app.js", {}, { headers: { "if-none-match": 'W/"stale"' } });
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("treats If-None-Match: * as a match", async () => {
+      const res = await fetchStatic("/app.js", {}, { headers: { "if-none-match": "*" } });
+      expect(res.status).toBe(304);
+    });
+
+    test("answers a fresh If-Modified-Since with 304", async () => {
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { headers: { "if-modified-since": lastModified } },
+      );
+      expect(res.status).toBe(304);
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("serves the body when If-Modified-Since predates the file", async () => {
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { headers: { "if-modified-since": new Date(0).toUTCString() } },
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("lets a non-matching If-None-Match override a fresh If-Modified-Since", async () => {
+      // RFC 9110 §13.2.2: If-None-Match present and unmatched is final; the fresh
+      // If-Modified-Since here must not rescue it into a 304.
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { headers: { "if-none-match": 'W/"stale"', "if-modified-since": lastModified } },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    test("gives distinct ETags to distinct encodings of one file", async () => {
+      // Same file, so same size and mtime — only the folded-in encoding sets the
+      // two tags apart, which a cache keying on Vary depends on.
+      const identity = (await fetchEncoded("/big.js", "")).headers.get("etag")!;
+      const gzip = await fetchEncoded("/big.js", "gzip");
+      expect(gzip.headers.get("content-encoding")).toBe("gzip");
+      expect(gzip.headers.get("etag")).not.toBe(identity);
+
+      // The identity tag must not validate the gzip representation...
+      const wrongRes = await fetchStatic(
+        "/big.js",
+        {},
+        { headers: { "accept-encoding": "gzip", "if-none-match": identity } },
+      );
+      expect(wrongRes.status).toBe(200);
+      // ...while the gzip tag does, and the 304 still carries Vary.
+      const gzipEtag = gzip.headers.get("etag")!;
+      const right = await fetchStatic(
+        "/big.js",
+        {},
+        { headers: { "accept-encoding": "gzip", "if-none-match": gzipEtag } },
+      );
+      expect(right.status).toBe(304);
+      expect(right.headers.get("vary")).toBe("Accept-Encoding");
+    });
+
+    test("omits ETag and ignores If-None-Match with etag: false", async () => {
+      const res = await fetchStatic("/app.js", { etag: false });
+      expect(res.headers.get("etag")).toBe(null);
+      // A tag the default run would have minted no longer 304s.
+      const cond = await fetchStatic(
+        "/app.js",
+        { etag: false },
+        { headers: { "if-none-match": "*" } },
+      );
+      expect(cond.status).toBe(200);
+    });
+
+    test("omits Last-Modified and ignores If-Modified-Since with lastModified: false", async () => {
+      const res = await fetchStatic("/app.js", { lastModified: false });
+      expect(res.headers.get("last-modified")).toBe(null);
+      const cond = await fetchStatic(
+        "/app.js",
+        { lastModified: false },
+        { headers: { "if-modified-since": new Date(Date.now() + 3600_000).toUTCString() } },
+      );
+      expect(cond.status).toBe(200);
+    });
+
+    test("does not set validators on a renderHTML route", async () => {
+      const res = await fetchStatic("/index.html", {
+        renderHTML: ({ html }: { html: string }) => new Response(html),
+      });
+      expect(res.headers.get("etag")).toBe(null);
+      expect(res.headers.get("last-modified")).toBe(null);
+    });
+
+    test("answers a conditional HEAD with 304", async () => {
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { method: "HEAD", headers: { "if-none-match": etag } },
+      );
+      expect(res.status).toBe(304);
+      await expect(res.text()).resolves.toBe("");
+    });
+  });
+
   describe("HEAD", () => {
     test("returns headers with no body", async () => {
       const res = await fetchStatic("/app.js", {}, { method: "HEAD" });

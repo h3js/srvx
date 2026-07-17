@@ -57,6 +57,26 @@ export interface ServeStaticOptions {
   compress?: boolean;
 
   /**
+   * Emit a `Last-Modified` header from the file's modification time, and answer an
+   * `If-Modified-Since` conditional request that still matches with `304 Not Modified`.
+   *
+   * @default true
+   */
+  lastModified?: boolean;
+
+  /**
+   * Emit an `ETag` validator, and answer an `If-None-Match` conditional request that still
+   * matches with `304 Not Modified`.
+   *
+   * The tag is weak (`W/"…"`): it is derived from the file's size and modification time
+   * rather than its bytes, and folds in the `Content-Encoding`, so a brotli and a gzip
+   * response under one URL never share one — which a cache keying on `Vary` relies on.
+   *
+   * @default true
+   */
+  etag?: boolean;
+
+  /**
    * A function to modify the HTML content before serving it.
    */
   renderHTML?: (ctx: {
@@ -146,7 +166,7 @@ const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + s
 // cannot block this way: the `?? 0` leaves plain `O_RDONLY` there.
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
-type ServableFile = { handle: FileHandle; size: number };
+type ServableFile = { handle: FileHandle; size: number; mtimeMs: number };
 
 // An encoding this middleware can answer with: by serving a precompressed variant
 // beside the file (`ext`), by encoding on the fly (`compressor`), or either.
@@ -176,6 +196,9 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 
   const encodings = options.encodings === true ? DEFAULT_ENCODINGS : options.encodings || {};
   const compress = options.compress ?? true;
+
+  const lastModified = options.lastModified ?? true;
+  const etag = options.etag ?? true;
 
   // Encodings served, in server-preference order. Disk variants lead: their order
   // is the documented preference, and a variant costs no CPU. An encoding reachable
@@ -239,7 +262,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         if (realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length))) {
           const realStat = await stat(realPath).catch(() => null);
           if (realStat && realStat.ino === fileStat.ino && realStat.dev === fileStat.dev) {
-            return { handle, size: fileStat.size };
+            return { handle, size: fileStat.size, mtimeMs: fileStat.mtimeMs };
           }
         }
       }
@@ -411,6 +434,46 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         // header either way.
         headers["Vary"] = "Accept-Encoding";
       }
+      // Validators over the representation actually served (`file`): the variant
+      // when one won, the identity file otherwise, with the negotiated encoding
+      // folded into the ETag. HTTP dates are second-granular, so `Last-Modified`
+      // and every comparison against it run at that precision.
+      let etagValue = "";
+      if (etag) {
+        etagValue = computeETag(file.size, file.mtimeMs, encoding);
+        headers["ETag"] = etagValue;
+      }
+      const lastModifiedMs = Math.floor(file.mtimeMs / 1000) * 1000;
+      if (lastModified) {
+        headers["Last-Modified"] = new Date(lastModifiedMs).toUTCString();
+      }
+      // A still-fresh conditional request skips the body entirely. `If-None-Match`
+      // takes precedence (RFC 9110 §13.2.2): when it is present, a non-match is
+      // final and `If-Modified-Since` is never consulted.
+      let notModified = false;
+      const ifNoneMatch = etagValue ? req.headers.get("if-none-match") : null;
+      if (ifNoneMatch !== null) {
+        notModified = matchesIfNoneMatch(ifNoneMatch, etagValue);
+      } else if (lastModified) {
+        notModified = matchesIfModifiedSince(req.headers.get("if-modified-since"), lastModifiedMs);
+      }
+      if (notModified) {
+        await file.handle.close().catch(() => {});
+        // A 304 carries the validators and `Vary` a 200 would, but none of the
+        // representation headers (`Content-Type`/`-Length`/`-Encoding`): the
+        // client is being told to reuse the body it already has.
+        const notModifiedHeaders: Record<string, string> = {};
+        if (etagValue) {
+          notModifiedHeaders["ETag"] = etagValue;
+        }
+        if (headers["Last-Modified"]) {
+          notModifiedHeaders["Last-Modified"] = headers["Last-Modified"];
+        }
+        if (headers["Vary"]) {
+          notModifiedHeaders["Vary"] = headers["Vary"];
+        }
+        return new FastResponse(null, { status: 304, headers: notModifiedHeaders });
+      }
       if (req.method === "HEAD") {
         // Node discards a HEAD body at the http layer, so skip the read — and
         // with it the compression a GET would pay for. The headers still
@@ -450,6 +513,38 @@ function isCompressible(mimeType: string): boolean {
     mimeType === "application/xml" ||
     mimeType === "application/wasm"
   );
+}
+
+// A weak validator over the served representation. Weak (`W/`), not strong: an
+// on-the-fly encode is not byte-stable across runs, and a strong tag's one real
+// advantage — byte-range requests — is something this middleware does not answer.
+// Size and mtime pin the file; the encoding is folded in so a gzip and a brotli
+// response under one URL never collide, which a cache keying on `Vary` relies on.
+function computeETag(size: number, mtimeMs: number, encoding: string): string {
+  const tag = `${size.toString(16)}-${Math.trunc(mtimeMs).toString(16)}`;
+  return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
+}
+
+// RFC 9110 §13.1.2 — a weak comparison, since our tags are weak, so an optional
+// `W/` prefix is stripped from each candidate before matching. `*` matches any
+// current representation.
+function matchesIfNoneMatch(header: string, etag: string): boolean {
+  if (header.trim() === "*") {
+    return true;
+  }
+  const bare = etag.replace(/^W\//, "");
+  return header.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === bare);
+}
+
+// The file is unchanged if its mtime is at or before the client's copy.
+// `lastModifiedMs` is already floored to the second (matching the HTTP date we
+// send), so a sub-second mtime never reads as newer than the date it produced.
+function matchesIfModifiedSince(header: string | null, lastModifiedMs: number): boolean {
+  if (!header) {
+    return false;
+  }
+  const since = Date.parse(header);
+  return !Number.isNaN(since) && lastModifiedMs <= since;
 }
 
 /**
