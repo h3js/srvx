@@ -77,6 +77,28 @@ export interface ServeStaticOptions {
   etag?: boolean;
 
   /**
+   * Freshness lifetime, in **seconds**, emitted as `Cache-Control: max-age=<n>`.
+   *
+   * Off by default: no `Cache-Control` header is sent, so a client revalidates
+   * with the `ETag`/`Last-Modified` validators on every use. Set it to let a
+   * client reuse a response without a request until it goes stale.
+   *
+   * @default undefined
+   */
+  maxAge?: number;
+
+  /**
+   * Add the `immutable` directive to `Cache-Control`, telling a client not to
+   * revalidate a still-fresh response even on an explicit reload.
+   *
+   * Only takes effect alongside `maxAge`, and only makes sense for a
+   * fingerprinted (content-hashed) asset, whose URL changes when its bytes do.
+   *
+   * @default false
+   */
+  immutable?: boolean;
+
+  /**
    * A function to modify the HTML content before serving it.
    */
   renderHTML?: (ctx: {
@@ -199,6 +221,10 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 
   const lastModified = options.lastModified ?? true;
   const etag = options.etag ?? true;
+
+  // Depends only on the options, so it is built once. Empty when `maxAge` is
+  // unset — the header is fully opt-in.
+  const cacheControl = buildCacheControl(options.maxAge, options.immutable);
 
   // Encodings served, in server-preference order. Disk variants lead: their order
   // is the documented preference, and a variant costs no CPU. An encoding reachable
@@ -434,6 +460,9 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         // header either way.
         headers["Vary"] = "Accept-Encoding";
       }
+      if (cacheControl) {
+        headers["Cache-Control"] = cacheControl;
+      }
       // Validators over the representation actually served (`file`): the variant
       // when one won, the identity file otherwise, with the negotiated encoding
       // folded into the ETag. HTTP dates are second-granular, so `Last-Modified`
@@ -489,6 +518,11 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         if (headers["Vary"]) {
           conditionalHeaders["Vary"] = headers["Vary"];
         }
+        // A 304 refreshes the client's stored freshness, so carry Cache-Control
+        // (RFC 9110 §15.4.5). A 412 is a plain error and gets none.
+        if (cacheControl && conditionalStatus === 304) {
+          conditionalHeaders["Cache-Control"] = cacheControl;
+        }
         return new FastResponse(null, { status: conditionalStatus, headers: conditionalHeaders });
       }
       if (req.method === "HEAD") {
@@ -518,6 +552,22 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
 };
 
 // --- internal ---
+
+// The `Cache-Control` value, or "" when `maxAge` is unset so the header is
+// omitted entirely. `max-age` takes non-negative integer seconds, so a
+// fractional or negative `maxAge` is floored and clamped, non-finite values fall
+// back to 0, and the result is capped at the RFC 9111 recommended ceiling of
+// 2^31 seconds. `immutable` only has meaning next to a lifetime, so it is
+// dropped when `maxAge` is unset.
+function buildCacheControl(maxAge: number | undefined, immutable: boolean | undefined): string {
+  if (maxAge === undefined) {
+    return "";
+  }
+  const seconds = Number.isFinite(maxAge)
+    ? Math.min(2147483648, Math.max(0, Math.floor(maxAge)))
+    : 0;
+  return immutable ? `max-age=${seconds}, immutable` : `max-age=${seconds}`;
+}
 
 // Types that benefit from compression — everything else (images, video, audio,
 // archives, fonts) is already compressed and would not have a `.br`/`.gz` variant.

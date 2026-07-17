@@ -958,6 +958,81 @@ describe("serveStatic", () => {
     });
   });
 
+  describe("Cache-Control", () => {
+    test("omits the header by default", async () => {
+      const res = await fetchStatic("/app.js");
+      expect(res.headers.get("cache-control")).toBe(null);
+    });
+
+    test("emits max-age from maxAge (seconds)", async () => {
+      const res = await fetchStatic("/app.js", { maxAge: 3600 });
+      expect(res.headers.get("cache-control")).toBe("max-age=3600");
+    });
+
+    test("adds immutable alongside maxAge", async () => {
+      const res = await fetchStatic("/app.js", { maxAge: 31536000, immutable: true });
+      expect(res.headers.get("cache-control")).toBe("max-age=31536000, immutable");
+    });
+
+    test("floors a fractional maxAge and clamps a negative one to 0", async () => {
+      expect((await fetchStatic("/app.js", { maxAge: 59.9 })).headers.get("cache-control")).toBe(
+        "max-age=59",
+      );
+      expect((await fetchStatic("/app.js", { maxAge: -10 })).headers.get("cache-control")).toBe(
+        "max-age=0",
+      );
+    });
+
+    test("falls back to 0 for non-finite maxAge and caps huge values", async () => {
+      expect((await fetchStatic("/app.js", { maxAge: NaN })).headers.get("cache-control")).toBe(
+        "max-age=0",
+      );
+      expect(
+        (await fetchStatic("/app.js", { maxAge: Infinity })).headers.get("cache-control"),
+      ).toBe("max-age=0");
+      expect((await fetchStatic("/app.js", { maxAge: 1e21 })).headers.get("cache-control")).toBe(
+        "max-age=2147483648",
+      );
+    });
+
+    test("ignores immutable without a maxAge", async () => {
+      const res = await fetchStatic("/app.js", { immutable: true });
+      expect(res.headers.get("cache-control")).toBe(null);
+    });
+
+    test("carries Cache-Control on a 304 but not a 412", async () => {
+      const etag = (await fetchStatic("/app.js", { maxAge: 600 })).headers.get("etag")!;
+      const notModified = await fetchStatic(
+        "/app.js",
+        { maxAge: 600 },
+        { headers: { "if-none-match": etag } },
+      );
+      expect(notModified.status).toBe(304);
+      expect(notModified.headers.get("cache-control")).toBe("max-age=600");
+
+      const precondition = await fetchStatic(
+        "/app.js",
+        { maxAge: 600, methods: ["POST"] },
+        { method: "POST", headers: { "if-none-match": etag } },
+      );
+      expect(precondition.status).toBe(412);
+      expect(precondition.headers.get("cache-control")).toBe(null);
+    });
+
+    test("sets Cache-Control on a HEAD response", async () => {
+      const res = await fetchStatic("/app.js", { maxAge: 120 }, { method: "HEAD" });
+      expect(res.headers.get("cache-control")).toBe("max-age=120");
+    });
+
+    test("does not set Cache-Control on a renderHTML route", async () => {
+      const res = await fetchStatic("/index.html", {
+        maxAge: 3600,
+        renderHTML: ({ html }: { html: string }) => new Response(html),
+      });
+      expect(res.headers.get("cache-control")).toBe(null);
+    });
+  });
+
   describe("HEAD", () => {
     test("returns headers with no body", async () => {
       const res = await fetchStatic("/app.js", {}, { method: "HEAD" });
