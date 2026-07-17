@@ -50,6 +50,11 @@ beforeAll(async () => {
   // An extension-less route that must still resolve to its `.html` file.
   await writeFile(join(dir, "about.html"), "<h1>about</h1>");
 
+  // Names that only appear percent-encoded on the wire.
+  await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
+  await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
+  await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
+
   // Already-compressed type: a `.br` next to it must never be looked up.
   await writeFile(join(dir, "logo.png"), "PNG_BYTES");
   await writeFile(join(dir, "logo.png.br"), "PNG_BR_SHOULD_BE_IGNORED");
@@ -355,6 +360,64 @@ describe("serveStatic", () => {
       expect(head.status).toBe(200);
       expect(head.headers.get("x-rendered")).toBe("1");
       await expect(head.text()).resolves.toBe("");
+    });
+
+    test("cancels the unused rendered body", async () => {
+      let cancelled = false;
+      const opts = {
+        renderHTML: () =>
+          new Response(
+            new ReadableStream({
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          ),
+      };
+      const head = await fetchWith("/index.html", { method: "HEAD" }, opts);
+      await expect(head.text()).resolves.toBe("");
+      expect(cancelled).toBe(true);
+    });
+  });
+
+  describe("percent-encoded paths", () => {
+    test("decodes the pathname once for the lookup", async () => {
+      const res = await fetchStatic("/hello%20world.txt");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("SPACE_NAME");
+    });
+
+    test("decodes non-ASCII names", async () => {
+      await expect(fetchStatic("/caf%C3%A9.txt").then((r) => r.text())).resolves.toBe(
+        "UNICODE_NAME",
+      );
+    });
+
+    test("decodes an encoded literal percent", async () => {
+      await expect(fetchStatic("/50%25.txt").then((r) => r.text())).resolves.toBe("PERCENT_NAME");
+    });
+
+    test("keeps an encoded separator encoded", async () => {
+      // `%2F` must not become a path separator: the decoded lookup is for a
+      // file literally named `sub%2Finside.txt`, which does not exist.
+      expect((await fetchStatic("/sub%2Finside.txt")).status).toBe(404);
+    });
+
+    test("applies the dotfile policy to the decoded name", async () => {
+      expect((await fetchStatic("/%2Eenv")).status).toBe(404);
+      await expect(fetchWithDotfiles("/%2Eenv").then((r) => r.text())).resolves.toBe("DOTENV");
+    });
+
+    test("does not decode twice", async () => {
+      // `%252e%252e` decodes once to the harmless literal `%2e%2e`.
+      const res = await fetchStatic("/%252e%252e/outside/secret.txt");
+      expect(res.status).toBe(404);
+    });
+
+    test("rejects malformed encoding with 400", async () => {
+      for (const path of ["/foo%", "/%ZZ"]) {
+        expect((await fetchStatic(path)).status, path).toBe(400);
+      }
     });
   });
 

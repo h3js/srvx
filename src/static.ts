@@ -177,11 +177,32 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       return next();
     }
     const url = (req._url ??= new FastURL(req.url));
-    const path = url.pathname.slice(1).replace(/\/$/, "");
+    let path = url.pathname.slice(1).replace(/\/$/, "");
+    if (path.includes("%")) {
+      // `url.pathname` keeps the wire encoding, so decode exactly once here or
+      // any name a client must encode (`hello world.txt`, `café.txt`) is
+      // unreachable. `decodeURI`, not `decodeURIComponent`: it keeps `%2F`,
+      // `%3F` and `%23` encoded, so an encoded separator never becomes a
+      // separator. Dot segments (including `%2e` forms) were already resolved
+      // by the URL parser, and whatever a single decode can still surface
+      // (`%5C` on Windows, a double-encoded `..` decoding to the literal
+      // `%2e%2e`) is caught by the containment and dotfile checks below,
+      // which all run on the decoded, joined path.
+      try {
+        path = decodeURI(path);
+      } catch {
+        // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static
+        // do rather than guessing at a lookup for a raw `%` name.
+        return new FastResponse("Bad Request", { status: 400 });
+      }
+    }
     let paths: string[];
     if (path === "") {
       paths = ["index.html"];
     } else if (extname(path) === "") {
+      // TODO: consider answering `/sub` with a 303 redirect to `/sub/` instead
+      // of serving `sub/index.html` in place (nginx sends 301): without the
+      // trailing slash, relative links inside that index resolve against `/`.
       // Probe the literal path before the `.html` route candidates, so an
       // extension-less file is reachable at its exact name: ACME challenge
       // tokens (`/.well-known/acme-challenge/<token>`), `LICENSE`,
@@ -241,6 +262,9 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
             return rendered;
           }
           // A HEAD response carries the same headers as GET, without the body.
+          // Cancel the unused body so a stream-backed rendered response
+          // releases its underlying resource instead of waiting for GC.
+          await rendered.body?.cancel().catch(() => {});
           return new FastResponse(null, {
             status: rendered.status,
             statusText: rendered.statusText,
