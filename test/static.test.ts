@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll, afterEach } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, symlink, truncate } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { serveStatic, type ServeStaticOptions } from "../src/static.ts";
 import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
@@ -10,6 +11,19 @@ import type { ServerRequest } from "../src/types.ts";
 let tmp: string;
 let dir: string;
 let linkedDir: string;
+
+// Over the 1 KiB floor under which nothing is compressed on the fly, and
+// compressible enough that an encoded body is unmistakably smaller.
+const BIG_JS = `/* ${"payload;".repeat(256)} */\n`;
+
+// Stands in for a precompressed `.gz` on disk (never real gzip — the middleware
+// serves those bytes as-is). Padded over the floor as well, so that a test
+// reaching it is decided by variant-over-on-the-fly precedence and not by the
+// size check quietly refusing to compress a short variant.
+const BIG_GZ_MARKER = `GZIP_BIG_FROM_DISK ${"z".repeat(2048)}`;
+
+// The ceiling past which a file is served as-is rather than compressed per request.
+const COMPRESS_MAX_SIZE = 10 * 1024 * 1024;
 
 beforeAll(async () => {
   tmp = await mkdtemp(join(tmpdir(), "srvx-static-"));
@@ -55,6 +69,26 @@ beforeAll(async () => {
 
   // A variant with no identity file beside it.
   await writeFile(join(dir, "orphan.js.br"), "ORPHAN_BR");
+
+  // On-the-fly compression fixtures. Everything above is deliberately under the
+  // 1 KiB floor, so only these are ever encoded per request.
+  //
+  // `big.js` has no variant beside it: encoding it here is the only way it is
+  // served compressed. `big-gz.js` has one, so it pins the precedence between
+  // the two paths.
+  await writeFile(join(dir, "big.js"), BIG_JS);
+  await writeFile(join(dir, "big-gz.js"), BIG_JS);
+  await writeFile(join(dir, "big-gz.js.gz"), BIG_GZ_MARKER);
+
+  // The two size bounds, from either side. `truncate` extends `huge.js` with
+  // zeros sparsely, so a 10 MiB size costs neither the write nor the disk.
+  await writeFile(join(dir, "small.js"), "s".repeat(1023));
+  await writeFile(join(dir, "huge.js"), "// huge\n");
+  await truncate(join(dir, "huge.js"), COMPRESS_MAX_SIZE + 1);
+
+  // Compressible-sized bodies behind a type and a route that must not encode.
+  await writeFile(join(dir, "big.png"), BIG_JS);
+  await writeFile(join(dir, "big.html"), `<h1>${"x".repeat(2048)}</h1>`);
 
   // Extension-less files, reachable at their exact name.
   await writeFile(join(dir, "LICENSE"), "LICENSE_BODY");
@@ -471,10 +505,11 @@ describe("serveStatic", () => {
       expect(res.headers.get("content-length")).toBe(String("BROTLI_JS".length));
     });
 
-    test("serves the plain file with encodings: {}", async () => {
+    test("skips the lookup with encodings: {}", async () => {
+      // `/app.js` is under the size floor for on-the-fly compression, so with no
+      // variant lookup there is nothing left to serve but the plain bytes.
       const res = await fetchEncoded("/app.js", "br", { encodings: {} });
       expect(res.headers.get("content-encoding")).toBe(null);
-      expect(res.headers.get("vary")).toBe(null);
       await expect(res.text()).resolves.toBe("PLAIN_JS");
     });
 
@@ -502,6 +537,118 @@ describe("serveStatic", () => {
         expect(text).not.toContain(secret);
       },
     );
+  });
+
+  describe("on-the-fly compression", () => {
+    const decode: Record<string, (buf: Buffer) => Buffer> = {
+      br: brotliDecompressSync,
+      gzip: gunzipSync,
+    };
+
+    test.each(["br", "gzip"])("encodes with %s when no variant exists", async (enc) => {
+      const res = await fetchEncoded("/big.js", enc);
+      expect(res.headers.get("content-encoding")).toBe(enc);
+      // Decoding the body is what proves it was really encoded, rather than the
+      // plain bytes sent under an encoding header.
+      const body = Buffer.from(await res.arrayBuffer());
+      expect(decode[enc]!(body).toString()).toBe(BIG_JS);
+      expect(body.length).toBeLessThan(BIG_JS.length);
+    });
+
+    test("prefers brotli over gzip", async () => {
+      const res = await fetchEncoded("/big.js", "gzip, br");
+      expect(res.headers.get("content-encoding")).toBe("br");
+    });
+
+    test("honors q=0 as a refusal", async () => {
+      const res = await fetchEncoded("/big.js", "br;q=0, gzip");
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+    });
+
+    test("omits Content-Length, unknown until the bytes are encoded", async () => {
+      const res = await fetchEncoded("/big.js", "br");
+      expect(res.headers.get("content-length")).toBe(null);
+    });
+
+    test("sets Vary: Accept-Encoding", async () => {
+      expect((await fetchEncoded("/big.js", "br")).headers.get("vary")).toBe("Accept-Encoding");
+    });
+
+    test("prefers a variant on disk over encoding on the fly", async () => {
+      // `/big-gz.js` is over the floor and has a `.gz` beside it. Brotli is
+      // accepted and ranks first, but a variant costs no CPU, so the `.gz` wins
+      // — and its marker contents are what prove it was not encoded here. Both
+      // the variant and the file under it are over the floor, so nothing but
+      // precedence decides this.
+      const res = await fetchEncoded("/big-gz.js", "br, gzip");
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+      await expect(res.text()).resolves.toBe(BIG_GZ_MARKER);
+    });
+
+    test.each([
+      ["under the size floor", "/small.js"],
+      ["over the size ceiling", "/huge.js"],
+    ])("serves a file %s as-is", async (_why, path) => {
+      const res = await fetchEncoded(path!, "br");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-encoding")).toBe(null);
+      // Unencoded, so the length is known and must still be declared.
+      expect(res.headers.get("content-length")).not.toBe(null);
+    });
+
+    test("never encodes an already-compressed type", async () => {
+      const res = await fetchEncoded("/big.png", "br");
+      expect(res.headers.get("content-encoding")).toBe(null);
+      expect(res.headers.get("vary")).toBe(null);
+      await expect(res.text()).resolves.toBe(BIG_JS);
+    });
+
+    test("does not encode a renderHTML route", async () => {
+      // The rendered `Response` belongs to the caller; encoding it would mean
+      // rewriting a body this middleware does not own.
+      const res = await fetchStatic(
+        "/big.html",
+        { renderHTML: ({ html }: { html: string }) => new Response(html) },
+        { headers: { "accept-encoding": "br" } },
+      );
+      expect(res.headers.get("content-encoding")).toBe(null);
+    });
+
+    test("serves the plain file with compress: false", async () => {
+      const res = await fetchEncoded("/big.js", "br", { compress: false });
+      expect(res.headers.get("content-encoding")).toBe(null);
+      await expect(res.text()).resolves.toBe(BIG_JS);
+    });
+
+    test("encodes without probing the disk with encodings: {}", async () => {
+      // `/big-gz.js` has a `.gz` the lookup would have served. With no encodings
+      // configured there is no lookup, so the response is encoded here instead —
+      // which the disk variant's marker contents would give away.
+      const res = await fetchEncoded("/big-gz.js", "gzip", { encodings: {} });
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+      expect(gunzipSync(Buffer.from(await res.arrayBuffer())).toString()).toBe(BIG_JS);
+    });
+
+    test("serves nothing encoded with encodings: {} and compress: false", async () => {
+      const res = await fetchEncoded("/big.js", "br", { encodings: {}, compress: false });
+      expect(res.headers.get("content-encoding")).toBe(null);
+      expect(res.headers.get("vary")).toBe(null);
+      await expect(res.text()).resolves.toBe(BIG_JS);
+    });
+
+    test("reports HEAD headers without encoding a body", async () => {
+      const res = await fetchStatic(
+        "/big.js",
+        {},
+        { method: "HEAD", headers: { "accept-encoding": "br" } },
+      );
+      // Exactly what GET would send: encoded, and chunked rather than declaring
+      // a length...
+      expect(res.headers.get("content-encoding")).toBe("br");
+      expect(res.headers.get("content-length")).toBe(null);
+      // ...except that the bytes are never produced.
+      await expect(res.text()).resolves.toBe("");
+    });
   });
 
   describe("extension-less paths", () => {

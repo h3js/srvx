@@ -1,10 +1,13 @@
 import type { ServerMiddleware } from "./types.ts";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import type { Transform } from "node:stream";
 
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
+import { pipeline } from "node:stream";
+import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
 
@@ -32,13 +35,24 @@ export interface ServeStaticOptions {
   /**
    * Map of `Content-Encoding` to the file extension of its precompressed variant on disk.
    *
-   * Files are never compressed on the fly: for `/app.js` with `Accept-Encoding: br`,
-   * `app.js.br` is served if it exists, otherwise `app.js` is served as-is. Keys are
-   * tried in order, so list the preferred encoding first. Pass `{}` to disable.
+   * For `/app.js` with `Accept-Encoding: br`, `app.js.br` is served if it exists. Keys are
+   * tried in order, so list the preferred encoding first. Pass `{}` to skip the lookup
+   * entirely — `compress` is unaffected, so on-the-fly encoding still applies.
    *
    * @default { br: ".br", gzip: ".gz" }
    */
   encodings?: Record<string, string>;
+
+  /**
+   * Compress a response on the fly when no precompressed variant is found.
+   *
+   * Applies to compressible types only, and only to files between 1 KiB and 10 MiB —
+   * precompress anything larger. A variant from `encodings` always wins, as it costs no
+   * CPU. Pass `false` to serve only what is already on disk.
+   *
+   * @default true
+   */
+  compress?: boolean;
 
   /**
    * A function to modify the HTML content before serving it.
@@ -83,6 +97,40 @@ const COMMON_MIME_TYPES: Record<string, string> = {
 // challenges, `security.txt`), so it is the only dot segment served by default.
 const DEFAULT_DOTFILES = [".well-known"];
 
+const DEFAULT_ENCODINGS: Record<string, string> = { br: ".br", gzip: ".gz" };
+
+// `createBrotliCompress()` defaults to BROTLI_DEFAULT_QUALITY (11), the maximum,
+// which costs roughly 12x quality 4 for a few percent of size — per request, with
+// nothing cached. Quality 4 is what CDNs encode at dynamically. The bill is not
+// only this request's latency: zlib streams run on the same 4-thread libuv pool
+// as every `stat`/`open` here, so an over-tuned quality stalls the fs work too.
+const BROTLI_QUALITY = 4;
+
+// Under a TCP segment there is nothing to win: the encoded body can come out
+// larger than the input, and it costs a round of CPU to find that out.
+const COMPRESS_MIN_SIZE = 1024;
+
+// Compression inverts what normally makes a large file self-limiting — the
+// response gets *smaller* while the server burns CPU proportional to the
+// *uncompressed* size, so the request stops paying for itself in bandwidth.
+// Past this, serve the bytes as-is and let a build step precompress them.
+const COMPRESS_MAX_SIZE = 10 * 1024 * 1024;
+
+const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
+  br: (sizeHint) =>
+    createBrotliCompress({
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
+        // Known here and never a guess, so brotli can size its window and
+        // allocations up front rather than growing them as the stream runs.
+        [zlibConstants.BROTLI_PARAM_SIZE_HINT]: sizeHint,
+      },
+    }),
+  // zlib's own default level (6). gzip is cheap enough at any level — roughly an
+  // order of magnitude under brotli — that the default needs no walking back.
+  gzip: () => createGzip(),
+};
+
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
 const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
@@ -97,6 +145,14 @@ const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + s
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
 type ServableFile = { handle: FileHandle; size: number };
+
+// An encoding this middleware can answer with: by serving a precompressed variant
+// beside the file (`ext`), by encoding on the fly (`compressor`), or either.
+type EncodingSpec = {
+  name: string;
+  ext?: string;
+  compressor?: (sizeHint: number) => Transform;
+};
 
 export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   // `resolve()` also converts separators (`C:/assets` -> `C:\assets`), and
@@ -116,8 +172,26 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
   const isDeniedDotPath = (relPath: string): boolean =>
     !allowAllDots && relPath.split(sep).some((s) => s[0] === "." && !allowedDots.has(s));
 
-  const encodings = options.encodings || { br: ".br", gzip: ".gz" };
-  const varyOnEncoding = Object.keys(encodings).length > 0;
+  const encodings = options.encodings || DEFAULT_ENCODINGS;
+  const compress = options.compress ?? true;
+
+  // Encodings served, in server-preference order. `encodings` leads: its order is
+  // the documented preference, and a variant on disk costs no CPU. An encoding
+  // reachable only by compressing follows, so `encodings: {}` with `compress` is
+  // "never probe the disk, always encode on the fly" rather than a dead option.
+  const served: EncodingSpec[] = [
+    ...Object.entries(encodings).map(([name, ext]) => ({
+      name,
+      ext,
+      compressor: compress ? COMPRESSORS[name] : undefined,
+    })),
+    ...(compress
+      ? Object.keys(COMPRESSORS)
+          .filter((name) => !(name in encodings))
+          .map((name) => ({ name, compressor: COMPRESSORS[name] }))
+      : []),
+  ];
+  const varyOnEncoding = served.length > 0;
 
   // Symlink-resolved `dir` for containment checks — `dir` itself may
   // legitimately be a symlink. Resolved lazily and cached only on success, so
@@ -219,7 +293,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       paths = [path];
     }
     // Parsed lazily: unmatched routes (all non-static traffic) never need it.
-    let acceptEncodings: [encoding: string, ext: string][] | undefined;
+    let acceptEncodings: EncodingSpec[] | undefined;
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
@@ -237,17 +311,21 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       const contentType = COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream";
       // Keyed off the resolved type so `.htm` renders like `.html`.
       const renderHTML = contentType === "text/html" ? options.renderHTML : undefined;
-      // No variant lookup for already-compressed types, nor for `renderHTML`
-      // routes, whose output a variant on disk would not match.
+      // Already-compressed types gain nothing from either path. `renderHTML`
+      // routes are excluded too: a variant on disk would not match the rendered
+      // output, and the rendered `Response` is the caller's to encode.
       const compressible = !renderHTML && isCompressible(contentType);
 
       let encoding = "";
       let servePath = filePath;
       let file: ServableFile | null = null;
       if (compressible) {
-        acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), encodings);
-        for (const [name, ext] of acceptEncodings) {
-          const variantPath = filePath + ext;
+        acceptEncodings ??= parseAcceptEncoding(req.headers.get("accept-encoding"), served);
+        for (const spec of acceptEncodings) {
+          if (!spec.ext) {
+            continue;
+          }
+          const variantPath = filePath + spec.ext;
           // `stat` before `open`: a missing variant (the common case) should cost
           // one syscall rather than an `open`/`fstat`/`close`.
           if (!(await statFile(variantPath))) {
@@ -257,7 +335,7 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           // dot path) is skipped, not fatal: the identity file can still serve.
           const variant = await openServable(variantPath);
           if (variant) {
-            encoding = name;
+            encoding = spec.name;
             servePath = variantPath;
             file = variant;
             break;
@@ -268,6 +346,23 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       file ??= await openServable(filePath);
       if (!file) {
         continue;
+      }
+      // Nothing precompressed on disk: encode on the fly instead, provided the
+      // client takes an encoding we can produce and the file is in the size band
+      // where spending CPU is worth it. `file.size` (an `fstat` on the fd we are
+      // about to read) is the size actually served, not the earlier probe's.
+      let compressor: ((sizeHint: number) => Transform) | undefined;
+      if (
+        compressible &&
+        !encoding &&
+        file.size >= COMPRESS_MIN_SIZE &&
+        file.size <= COMPRESS_MAX_SIZE
+      ) {
+        const spec = acceptEncodings!.find((s) => s.compressor);
+        if (spec) {
+          encoding = spec.name;
+          compressor = spec.compressor;
+        }
       }
       if (renderHTML) {
         let html: string;
@@ -297,11 +392,15 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // is the encoding (`.br`), not the media type. Text carries an explicit
       // charset so browsers do not decode non-ASCII with a guessed fallback.
       const headers: Record<string, string> = {
-        "Content-Length": file.size.toString(),
         "Content-Type": contentType.startsWith("text/")
           ? `${contentType}; charset=utf-8`
           : contentType,
       };
+      // An encoded length is only known once the bytes exist, so an on-the-fly
+      // response is chunked. A variant's length is just its size on disk.
+      if (!compressor) {
+        headers["Content-Length"] = file.size.toString();
+      }
       if (encoding) {
         headers["Content-Encoding"] = encoding;
       }
@@ -311,12 +410,26 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
         headers["Vary"] = "Accept-Encoding";
       }
       if (req.method === "HEAD") {
-        // Node discards a HEAD body at the http layer; skip the read entirely.
+        // Node discards a HEAD body at the http layer, so skip the read — and
+        // with it the compression a GET would pay for. The headers still
+        // describe what GET would send, chunked encoding included.
         await file.handle.close().catch(() => {});
         return new FastResponse(null, { headers });
       }
       // The stream closes the handle when it ends or errors (`autoClose`).
-      return new FastResponse(file.handle.createReadStream() as any, { headers });
+      const stream = file.handle.createReadStream();
+      if (!compressor) {
+        return new FastResponse(stream as any, { headers });
+      }
+      // `pipeline` rather than `stream.pipe(encoded)`: `pipe` leaves the source
+      // running if the destination errors or is destroyed, so a client that
+      // disconnects mid-response would strand the fd until GC. `pipeline` tears
+      // down both. Errors land in the callback (an aborted response is routine)
+      // and destroy the streams, which surfaces to the client as a truncated
+      // body — the response headers are long gone by then.
+      const encoded = compressor(file.size);
+      pipeline(stream, encoded, () => {});
+      return new FastResponse(encoded as any, { headers });
     }
     return next();
   };
@@ -338,13 +451,10 @@ function isCompressible(mimeType: string): boolean {
 }
 
 /**
- * Encodings from `encodings` the client accepts, in server-preference order.
+ * Encodings from `served` the client accepts, in server-preference order.
  * `q=0` is honored as "not acceptable"; `*` applies to encodings not named explicitly.
  */
-function parseAcceptEncoding(
-  header: string | null,
-  encodings: Record<string, string>,
-): [encoding: string, ext: string][] {
+function parseAcceptEncoding(header: string | null, served: EncodingSpec[]): EncodingSpec[] {
   if (!header) {
     return [];
   }
@@ -366,5 +476,5 @@ function parseAcceptEncoding(
     quality.set(name, q);
   }
   const wildcard = quality.get("*");
-  return Object.entries(encodings).filter(([name]) => (quality.get(name) ?? wildcard ?? 0) > 0);
+  return served.filter(({ name }) => (quality.get(name) ?? wildcard ?? 0) > 0);
 }
