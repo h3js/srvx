@@ -124,7 +124,7 @@ export interface ServeStaticOptions {
    * revealed, never file contents.
    *
    * Off by default — it exposes the directory structure, so it is opt-in. The
-   * `srvx` CLI turns it on in dev mode only.
+   * `srvx` CLI turns it on in dev mode by default.
    *
    * @default false
    */
@@ -377,11 +377,14 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       // so a link to a directory lists as one — never by the link itself, whose
       // `isDirectory()` is always false.
       const target = await realpath(join(realPath, d.name)).catch(() => null);
-      if (
-        target === null ||
-        !target.startsWith(root) ||
-        isDeniedDotPath(target.slice(root.length))
-      ) {
+      if (target === null) {
+        continue;
+      }
+      // `asPrefix` like the directory check above, or a link whose target is
+      // exactly the root (`self -> .`) fails the prefix test on the missing
+      // trailing separator and vanishes from a listing while still serving.
+      const targetWithSep = asPrefix(target);
+      if (!targetWithSep.startsWith(root) || isDeniedDotPath(targetWithSep.slice(root.length))) {
         continue;
       }
       const targetStat = await stat(target).catch(() => null);
@@ -744,6 +747,9 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           // The URL reveals directory structure; keep it out of the `Referer`
           // on any outbound navigation.
           "Referrer-Policy": "no-referrer",
+          // The listing mirrors live directory state — without this, heuristic
+          // caching could keep showing a stale listing after files change.
+          "Cache-Control": "no-store",
         };
         // The listing replaces the downstream 404; drop that response's unread
         // body so a streamed one is not left dangling.

@@ -153,11 +153,19 @@ beforeAll(async () => {
 
   // Symlink entries a listing must resolve like a direct request: a contained
   // link to a file, a contained link to a directory (classified by its target),
-  // one escaping the root, and one aliasing a denied dot path.
+  // one escaping the root, one aliasing a denied dot path, and one whose target
+  // is exactly the served root (the containment edge case: root minus its
+  // trailing separator must still count as contained).
   await symlink(join(dir, "files", "a.txt"), join(dir, "files", "good-link.txt"));
   await symlink(join(dir, "files", "nested"), join(dir, "files", "dir-link"));
   await symlink(join(tmp, "outside", "secret.txt"), join(dir, "files", "escape-link.txt"));
   await symlink(join(dir, ".env"), join(dir, "files", "dot-alias.txt"));
+  await symlink(dir, join(dir, "files", "root-link"));
+
+  // A denied dot directory: a listing request for it must fall through, like
+  // any direct request under it.
+  await mkdir(join(dir, ".secret-dir"));
+  await writeFile(join(dir, ".secret-dir", "inner.txt"), "SECRET");
 
   // A root that is itself a symlink must keep working.
   linkedDir = join(tmp, "public-link");
@@ -363,6 +371,8 @@ describe("serveStatic", () => {
       );
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      // Live directory state: never cached, so a listing is never stale.
+      expect(res.headers.get("cache-control")).toBe("no-store");
     });
 
     test("hides denied dot segments from the listing", async () => {
@@ -381,6 +391,15 @@ describe("serveStatic", () => {
       // just as a direct request for it is refused.
       expect(html).not.toContain("escape-link");
       expect(html).not.toContain("dot-alias");
+      // A link to the served root itself is contained (a request through it
+      // serves), so it is listed — as a directory.
+      expect(html).toContain('href="/files/root-link/"');
+    });
+
+    test("a denied dot directory is not listable", async () => {
+      // The request-path deny: `/.secret-dir/` must fall through with the
+      // downstream 404 intact, exactly like a direct request under it.
+      await expectNext(await fetchStatic("/.secret-dir/", { dirListing: true }));
     });
 
     test("parent link is absolute for an extension-less nested directory", async () => {
