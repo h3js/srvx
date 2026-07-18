@@ -307,6 +307,29 @@ describe("serveStatic", () => {
       await expectNext(await fetchStatic("/files/"));
     });
 
+    test("a handled route wins: the listing only replaces a downstream 404", async () => {
+      // The listing is a 404 fallback — `next()` runs first, and a real
+      // response for the same path is returned untouched.
+      const middleware = serveStatic({ dir, dirListing: true });
+      const res = await track(
+        middleware(req("/files/"), () => new Response("app route")) as Promise<Response>,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("app route");
+    });
+
+    test("a custom 404 page passes through when the path is not a listable directory", async () => {
+      const middleware = serveStatic({ dir, dirListing: true });
+      const res = await track(
+        middleware(
+          req("/nope/"),
+          () => new Response("custom 404", { status: 404 }),
+        ) as Promise<Response>,
+      );
+      expect(res.status).toBe(404);
+      await expect(res.text()).resolves.toBe("custom 404");
+    });
+
     test("lists a directory without an index when enabled", async () => {
       const res = await fetchStatic("/files/", { dirListing: true });
       expect(res.status).toBe(200);

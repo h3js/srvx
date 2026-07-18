@@ -113,9 +113,11 @@ export interface ServeStaticOptions {
   ranges?: boolean;
 
   /**
-   * Serve a minimal HTML directory listing when a request resolves to a
-   * directory that has no index file (`index.html`). A directory that does have
-   * one always serves the index instead.
+   * Serve a minimal HTML directory listing as a 404 fallback: when a request
+   * names a directory with no index file (`index.html`), the rest of the app
+   * answers first via `next()`, and only a 404 response is replaced by the
+   * listing. A real route always wins over a listing, and a directory with an
+   * index always serves the index.
    *
    * Entries are the directory's immediate children, with denied dot segments
    * (see `dotfiles`) hidden just as they are for file requests. Only names are
@@ -706,11 +708,19 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
       pipeline(stream, encoded, () => {});
       return new FastResponse(encoded as any, { headers });
     }
-    // No file matched. With `dirListing` on, a request naming a directory (root, a
-    // trailing-slash path, or an extension-less one) that has no index is
-    // answered with a listing rather than falling through. An index always wins:
-    // its `index.html` candidate was probed in the loop above.
-    if (dirListing && (path === "" || trailingSlash || extname(path) === "")) {
+    // No file matched: the rest of the app answers first. With `dirListing` on,
+    // a request naming a directory (root, a trailing-slash path, or an
+    // extension-less one) falls back to a generated listing only when downstream
+    // returned 404 — so a real route always beats a listing, and an index beats
+    // both (its `index.html` candidate was probed in the loop above). Any other
+    // downstream response — including a custom 404 page for a path that is not
+    // a listable directory — passes through untouched.
+    const response = await next();
+    if (
+      dirListing &&
+      response.status === 404 &&
+      (path === "" || trailingSlash || extname(path) === "")
+    ) {
       const entries = await readListing(path);
       if (entries) {
         // Exactly one trailing slash: entry and parent links are absolute paths
@@ -735,12 +745,15 @@ export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
           // on any outbound navigation.
           "Referrer-Policy": "no-referrer",
         };
+        // The listing replaces the downstream 404; drop that response's unread
+        // body so a streamed one is not left dangling.
+        response.body?.cancel().catch(() => {});
         // HEAD mirrors GET's headers without the body.
         const body = req.method === "HEAD" ? null : renderDirListing(base, path, entries);
         return new FastResponse(body, { headers });
       }
     }
-    return next();
+    return response;
   };
 };
 

@@ -161,6 +161,11 @@ describe("cli", () => {
         expect(res.status).toBe(200);
         expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
         expect(await res.text()).toContain("hello.txt");
+        // Static-only mode answers a miss with an ordinary 404 (the status the
+        // listing fallback keys on), not a 501 error page.
+        const miss = await fetch(`http://localhost:${port}/missing.txt`);
+        expect(miss.status).toBe(404);
+        await miss.arrayBuffer();
       } finally {
         child.kill("SIGTERM");
         await child.catch(() => {});
