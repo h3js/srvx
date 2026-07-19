@@ -4,7 +4,7 @@ import { getTLSCert } from "./_utils.ts";
 import { fixture } from "./_fixture.ts";
 import { serve as nodeServe } from "../src/adapters/node.ts";
 import { serve as denoServe } from "../src/adapters/deno.ts";
-import { mtls } from "../src/mtls.ts";
+import { mtlsPlugin } from "../src/mtls.ts";
 
 const tls = await getTLSCert();
 
@@ -18,10 +18,10 @@ function clientAgent(opts: { withClientCert: boolean }) {
   });
 }
 
-// Skipped under a real Bun runtime: mtls() unconditionally refuses to start
+// Skipped under a real Bun runtime: mtlsPlugin() unconditionally refuses to start
 // on Bun (see the throw test below), so `beforeAll` would fail before any of
 // these sub-tests could run.
-describe.skipIf(typeof Bun !== "undefined")("mtls() plugin (Node adapter)", () => {
+describe.skipIf(typeof Bun !== "undefined")("mtlsPlugin() plugin (Node adapter)", () => {
   let server: Awaited<ReturnType<typeof nodeServe>> | undefined;
 
   beforeAll(async () => {
@@ -30,7 +30,7 @@ describe.skipIf(typeof Bun !== "undefined")("mtls() plugin (Node adapter)", () =
         port: 0,
         tls: { cert: tls.cert, key: tls.key },
         plugins: [
-          mtls({
+          mtlsPlugin({
             ca: tls.ca,
             // Inspect the certificate even when self-presented/unauthorized.
             rejectUnauthorized: false,
@@ -85,7 +85,7 @@ describe.skipIf(typeof Bun !== "undefined")("mtls() plugin (Node adapter)", () =
   });
 });
 
-test("request.tls is absent without the mtls() plugin", async () => {
+test("request.tls is absent without the mtlsPlugin() plugin", async () => {
   const server = nodeServe(fixture({ port: 0 }));
   await server.ready();
   try {
@@ -96,16 +96,16 @@ test("request.tls is absent without the mtls() plugin", async () => {
   }
 });
 
-test("mtls() throws when TLS is not configured", () => {
+test("mtlsPlugin() throws when TLS is not configured", () => {
   // On a real Bun runtime, the Bun-support guard fires unconditionally before
   // the TLS-config check (see below), so the thrown message differs there.
   const expected = typeof Bun !== "undefined" ? /not available on Bun/ : /HTTPS server/;
   expect(() =>
-    nodeServe(fixture({ manual: true, port: 0, plugins: [mtls({ ca: tls.ca })] })),
+    nodeServe(fixture({ manual: true, port: 0, plugins: [mtlsPlugin({ ca: tls.ca })] })),
   ).toThrow(expected);
 });
 
-test("mtls() accepts TLS configured via node server options", () => {
+test("mtlsPlugin() accepts TLS configured via node server options", () => {
   // The node adapter also reads cert/key straight from `options.node`, so the
   // plugin must recognize that path as a valid HTTPS server (not throw).
   expect(() =>
@@ -114,13 +114,13 @@ test("mtls() accepts TLS configured via node server options", () => {
         manual: true,
         port: 0,
         node: { cert: tls.cert, key: tls.key },
-        plugins: [mtls({ ca: tls.ca })],
+        plugins: [mtlsPlugin({ ca: tls.ca })],
       }),
     ),
   ).not.toThrow();
 });
 
-test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
+test("mtlsPlugin() throws on the native Deno adapter and points to srvx/node", () => {
   // The native `Deno.serve` cannot expose client certificates, so the plugin must
   // fail loudly instead of silently leaving `request.tls` empty.
   expect(() =>
@@ -129,13 +129,13 @@ test("mtls() throws on the native Deno adapter and points to srvx/node", () => {
         manual: true,
         port: 0,
         tls: { cert: tls.cert, key: tls.key },
-        plugins: [mtls({ ca: tls.ca })],
+        plugins: [mtlsPlugin({ ca: tls.ca })],
       }),
     ),
   ).toThrow(/srvx\/node/);
 });
 
-test("mtls() throws when running under Bun, even with TLS configured", () => {
+test("mtlsPlugin() throws when running under Bun, even with TLS configured", () => {
   // Verified against the real Bun runtime separately (`bun --bun vitest`):
   // Bun's node:http(s) compat does not expose the peer certificate to the
   // handler (https://github.com/oven-sh/bun/issues/16254), so this guard must
@@ -152,7 +152,7 @@ test("mtls() throws when running under Bun, even with TLS configured", () => {
           manual: true,
           port: 0,
           tls: { cert: tls.cert, key: tls.key },
-          plugins: [mtls({ ca: tls.ca })],
+          plugins: [mtlsPlugin({ ca: tls.ca })],
         }),
       ),
     ).toThrow(/not available on Bun/);

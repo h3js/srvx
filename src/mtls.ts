@@ -49,7 +49,7 @@ declare module "srvx" {
     /**
      * TLS connection state, including the client (peer) certificate for mutual TLS.
      *
-     * Populated by the {@link mtls} plugin. `undefined` when the request was not served over TLS.
+     * Populated by the {@link mtlsPlugin}. `undefined` when the request was not served over TLS.
      */
     tls?: ServerRequestTLS | undefined;
   }
@@ -61,9 +61,9 @@ declare module "./types.ts" {
 }
 
 /**
- * Options for the {@link mtls} plugin.
+ * Options for the {@link mtlsPlugin}.
  */
-export interface MTLSOptions {
+export interface MTLSPluginOptions {
   /**
    * File path(s) or inlined CA certificate(s) in PEM format used to verify client certificates.
    *
@@ -113,11 +113,11 @@ export interface MTLSOptions {
  * @example
  * ```js
  * import { serve } from "srvx/node";
- * import { mtls } from "srvx/mtls";
+ * import { mtlsPlugin } from "srvx/mtls";
  *
  * serve({
  *   tls: { cert, key },
- *   plugins: [mtls({ ca, requestCert: true, rejectUnauthorized: false })],
+ *   plugins: [mtlsPlugin({ ca, requestCert: true, rejectUnauthorized: false })],
  *   fetch: (request) => {
  *     if (!request.tls?.authorized) {
  *       return new Response("client certificate required", { status: 401 });
@@ -127,18 +127,18 @@ export interface MTLSOptions {
  * });
  * ```
  */
-export function mtls(options: MTLSOptions = {}): ServerPlugin {
+export function mtlsPlugin(options: MTLSPluginOptions = {}): ServerPlugin {
   return (server) => {
     // Only the Node.js adapter exposes the peer certificate. Fail loudly on anything
     // else instead of silently leaving `request.tls` empty in production.
     if (server.runtime !== "node") {
       throw new Error(
-        `[srvx] mtls() requires srvx's Node.js adapter (import { serve } from "srvx/node"). The "${server.runtime}" server cannot request or expose client certificates.`,
+        `[srvx] mtlsPlugin() requires srvx's Node.js adapter (import { serve } from "srvx/node"). The "${server.runtime}" server cannot request or expose client certificates.`,
       );
     }
     if ("Bun" in globalThis) {
       throw new Error(
-        "[srvx] mtls() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
+        "[srvx] mtlsPlugin() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
       );
     }
     // Mutual TLS is meaningless without TLS. The node adapter accepts cert/key
@@ -149,7 +149,7 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
     const key = server.options.tls?.key ?? nodeOptions?.key;
     if (server.options.protocol === "http" || !cert || !key) {
       throw new Error(
-        "[srvx] mtls() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
+        "[srvx] mtlsPlugin() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
       );
     }
 
@@ -160,7 +160,9 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
       ca = entries.map((entry) => {
         const resolved = resolveCertOrKey(entry);
         if (!resolved) {
-          throw new TypeError("mtls() `ca` entries must be non-empty PEM strings or file paths.");
+          throw new TypeError(
+            "mtlsPlugin() `ca` entries must be non-empty PEM strings or file paths.",
+          );
         }
         return resolved;
       });

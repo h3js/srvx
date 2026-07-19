@@ -29,8 +29,8 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     const { serve: srvxServe } = loaded.nodeCompat
       ? await import("srvx/node")
       : await import("srvx");
-    const { serveStatic } = await import("srvx/static");
-    const { log } = await import("srvx/log");
+    const { staticMiddleware } = await import("srvx/static");
+    const { loggerMiddleware } = await import("srvx/log");
 
     // F43: an explicit `--static` pointing at a missing dir must error; the
     // implicit `public` default may stay silent.
@@ -88,9 +88,9 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
             501,
           )),
       middleware: [
-        log(),
+        loggerMiddleware(),
         cliOpts.static
-          ? serveStatic({
+          ? staticMiddleware({
               dir: cliOpts.static,
             })
           : undefined,

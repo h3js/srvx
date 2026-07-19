@@ -1,7 +1,7 @@
-// Emits three lines through the real `log()` middleware, then dies according to
+// Emits three lines through the real `loggerMiddleware()` middleware, then dies according to
 // process.argv[2]. `log.test.ts` spawns this and asserts on what reaches the
 // pipe: crash-flush behavior only shows in a process that actually terminates.
-import { log } from "../../src/log.ts";
+import { loggerMiddleware } from "../../src/log.ts";
 
 const scenario = process.argv[2];
 
@@ -17,7 +17,7 @@ if (scenario === "once-cleanup") {
   });
 }
 
-const middleware = log();
+const middleware = loggerMiddleware();
 for (let i = 0; i < 3; i++) {
   await middleware(new Request(`http://localhost/${i}`), () => new Response(""));
 }

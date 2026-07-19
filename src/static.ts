@@ -11,7 +11,7 @@ import { constants as zlibConstants, createBrotliCompress, createGzip } from "no
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
 
-export interface ServeStaticOptions {
+export interface StaticMiddlewareOptions {
   /**
    * The directory to serve static files from.
    */
@@ -212,7 +212,7 @@ type EncodingSpec = {
   compressor?: (sizeHint: number) => Transform;
 };
 
-export const serveStatic = (options: ServeStaticOptions): ServerMiddleware => {
+export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddleware => {
   // `resolve()` also converts separators (`C:/assets` -> `C:\assets`), and
   // `join()`/`realpath()` only emit native ones, so every path a `sep`-based
   // check sees is already in platform form.

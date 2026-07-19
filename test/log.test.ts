@@ -35,7 +35,7 @@ const ESC = /\[\d+m/;
  */
 async function withLog(
   env: Record<string, string>,
-  run: (log: (options?: any) => ServerMiddleware) => Promise<void>,
+  run: (loggerMiddleware: (options?: any) => ServerMiddleware) => Promise<void>,
   { tty = false }: { tty?: boolean } = {},
 ): Promise<string[]> {
   for (const [key, value] of Object.entries(env)) {
@@ -52,14 +52,14 @@ async function withLog(
   try {
     process.stdout.isTTY = tty;
     vi.resetModules();
-    const { log } = await import("../src/log.ts");
+    const { loggerMiddleware } = await import("../src/log.ts");
 
     process.stdout.write = ((chunk: any) => {
       chunks.push(String(chunk));
       return true;
     }) as typeof write;
 
-    await run(log);
+    await run(loggerMiddleware);
     // Lines are flushed on the next check phase; give it two turns to land.
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -84,10 +84,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("log", () => {
+describe("loggerMiddleware", () => {
   it("logs method, url, status and duration", async () => {
-    const chunks = await withLog({ NODE_ENV: "production" }, async (log) => {
-      const middleware = log();
+    const chunks = await withLog({ NODE_ENV: "production" }, async (loggerMiddleware) => {
+      const middleware = loggerMiddleware();
       await middleware(request("http://localhost/hello"), respond(200));
     });
 
@@ -98,9 +98,9 @@ describe("log", () => {
 
   it("passes the response through untouched", async () => {
     let response: Response | undefined;
-    await withLog({ NODE_ENV: "production" }, async (log) => {
+    await withLog({ NODE_ENV: "production" }, async (loggerMiddleware) => {
       const original = new Response("body", { status: 201 });
-      response = (await log()(request(), () => original)) as Response;
+      response = (await loggerMiddleware()(request(), () => original)) as Response;
       expect(response).toBe(original);
     });
     expect(await response!.text()).toBe("body");
@@ -109,8 +109,8 @@ describe("log", () => {
   it("emits no colors in production, even on a color-capable stdout", async () => {
     const chunks = await withLog(
       { NODE_ENV: "production" },
-      async (log) => {
-        const middleware = log();
+      async (loggerMiddleware) => {
+        const middleware = loggerMiddleware();
         await middleware(request(), respond(200));
         await middleware(request(), respond(500));
       },
@@ -127,8 +127,8 @@ describe("log", () => {
   it("emits colors outside production", async () => {
     const chunks = await withLog(
       { NODE_ENV: "development" },
-      async (log) => {
-        await log()(request(), respond(200));
+      async (loggerMiddleware) => {
+        await loggerMiddleware()(request(), respond(200));
       },
       { tty: true },
     );
@@ -137,20 +137,26 @@ describe("log", () => {
   });
 
   it("lets FORCE_COLOR override the production default", async () => {
-    const chunks = await withLog({ NODE_ENV: "production", FORCE_COLOR: "1" }, async (log) => {
-      await log()(request(), respond(200));
-    });
+    const chunks = await withLog(
+      { NODE_ENV: "production", FORCE_COLOR: "1" },
+      async (loggerMiddleware) => {
+        await loggerMiddleware()(request(), respond(200));
+      },
+    );
 
     expect(chunks.join("")).toMatch(ESC);
   });
 
   it("colors the status by its leading digit", async () => {
-    const chunks = await withLog({ NODE_ENV: "development", FORCE_COLOR: "1" }, async (log) => {
-      const middleware = log();
-      for (const status of [101, 200, 302, 404, 500]) {
-        await middleware(request(), respondWith(status));
-      }
-    });
+    const chunks = await withLog(
+      { NODE_ENV: "development", FORCE_COLOR: "1" },
+      async (loggerMiddleware) => {
+        const middleware = loggerMiddleware();
+        for (const status of [101, 200, 302, 404, 500]) {
+          await middleware(request(), respondWith(status));
+        }
+      },
+    );
     const lines = chunks.join("").trimEnd().split("\n");
 
     expect(lines[0]).toContain("[[34m101[39m]"); // 1xx blue
@@ -161,8 +167,8 @@ describe("log", () => {
   });
 
   it("coalesces lines logged in the same turn into a single write", async () => {
-    const chunks = await withLog({ NODE_ENV: "production" }, async (log) => {
-      const middleware = log();
+    const chunks = await withLog({ NODE_ENV: "production" }, async (loggerMiddleware) => {
+      const middleware = loggerMiddleware();
       await Promise.all(
         Array.from({ length: 20 }, (_, i) =>
           middleware(request(`http://localhost/${i}`), respond(200)),
@@ -175,8 +181,8 @@ describe("log", () => {
   });
 
   it("preserves order across writes", async () => {
-    const chunks = await withLog({ NODE_ENV: "production" }, async (log) => {
-      const middleware = log();
+    const chunks = await withLog({ NODE_ENV: "production" }, async (loggerMiddleware) => {
+      const middleware = loggerMiddleware();
       for (const i of [0, 1, 2]) {
         await middleware(request(`http://localhost/${i}`), respond(200));
         await new Promise((resolve) => setImmediate(resolve));
@@ -203,14 +209,14 @@ describe("log", () => {
     try {
       process.stdout.isTTY = false;
       vi.resetModules();
-      const { log } = await import("../src/log.ts");
+      const { loggerMiddleware } = await import("../src/log.ts");
 
       process.stdout.write = ((chunk: any) => {
         writes.push(String(chunk));
         return accepting;
       }) as typeof write;
 
-      const middleware = log();
+      const middleware = loggerMiddleware();
       const flushed = () => new Promise((resolve) => setImmediate(resolve));
 
       await middleware(request("http://localhost/a"), respond(200));
@@ -249,14 +255,14 @@ describe("log", () => {
     try {
       process.stdout.isTTY = false;
       vi.resetModules();
-      const { log } = await import("../src/log.ts");
+      const { loggerMiddleware } = await import("../src/log.ts");
 
       process.stdout.write = ((chunk: any) => {
         writes.push(String(chunk));
         return true;
       }) as typeof write;
 
-      const middleware = log({ batch: false });
+      const middleware = loggerMiddleware({ batch: false });
       // No setImmediate turn in between: the line must already be with stdout.
       await middleware(request("http://localhost/a"), respond(200));
       expect(writes).toHaveLength(1);
@@ -283,15 +289,15 @@ describe("log", () => {
     try {
       process.stdout.isTTY = false;
       vi.resetModules();
-      const { log } = await import("../src/log.ts");
+      const { loggerMiddleware } = await import("../src/log.ts");
 
       process.stdout.write = ((chunk: any) => {
         writes.push(String(chunk));
         return accepting;
       }) as typeof write;
 
-      const batched = log();
-      const unbatched = log({ batch: false });
+      const batched = loggerMiddleware();
+      const unbatched = loggerMiddleware({ batch: false });
 
       // The batched line schedules a flush; the unbatched one then writes both
       // and starts a drain wait before that scheduled flush has fired.
@@ -329,14 +335,14 @@ describe("log", () => {
     try {
       process.stdout.isTTY = false;
       vi.resetModules();
-      const { log } = await import("../src/log.ts");
+      const { loggerMiddleware } = await import("../src/log.ts");
 
       process.stdout.write = ((chunk: any) => {
         writes.push(String(chunk));
         return accepting;
       }) as typeof write;
 
-      const middleware = log({ batch: false });
+      const middleware = loggerMiddleware({ batch: false });
       await middleware(request("http://localhost/a"), respond(200));
       // The write returned false: subsequent lines must wait for `drain`
       // instead of being forced onto a full stream.
