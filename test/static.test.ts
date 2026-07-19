@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
-import { serveStatic, type ServeStaticOptions } from "../src/static.ts";
+import { staticMiddleware, type StaticMiddlewareOptions } from "../src/static.ts";
 import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
 
@@ -177,13 +177,16 @@ afterEach(async () => {
   }
 });
 
-const fetchStatic = (path: string, opts: Partial<ServeStaticOptions> = {}, init?: RequestInit) =>
-  track(serveStatic({ dir, ...opts })(req(path, init), notFound) as Promise<Response>);
+const fetchStatic = (
+  path: string,
+  opts: Partial<StaticMiddlewareOptions> = {},
+  init?: RequestInit,
+) => track(staticMiddleware({ dir, ...opts })(req(path, init), notFound) as Promise<Response>);
 
 const fetchEncoded = (
   path: string,
   acceptEncoding: string,
-  opts: Partial<ServeStaticOptions> = {},
+  opts: Partial<StaticMiddlewareOptions> = {},
 ) => fetchStatic(path, opts, { headers: { "accept-encoding": acceptEncoding } });
 
 // The precompressed-variant lookup is opt-in (off by default), so any test that
@@ -191,7 +194,7 @@ const fetchEncoded = (
 const fetchVariant = (
   path: string,
   acceptEncoding: string,
-  opts: Partial<ServeStaticOptions> = {},
+  opts: Partial<StaticMiddlewareOptions> = {},
 ) => fetchEncoded(path, acceptEncoding, { encodings: true, ...opts });
 
 // Every denial falls through to the app rather than being answered here, so the
@@ -215,9 +218,9 @@ const rawReq = (path: string) => {
 };
 
 const fetchRaw = (path: string) =>
-  track(serveStatic({ dir })(rawReq(path), notFound) as Promise<Response>);
+  track(staticMiddleware({ dir })(rawReq(path), notFound) as Promise<Response>);
 
-describe("serveStatic", () => {
+describe("staticMiddleware", () => {
   test("serves a file", async () => {
     const res = await fetchStatic("/sub/inside.txt");
     expect(res.status).toBe(200);
@@ -1140,7 +1143,7 @@ describe("serveStatic", () => {
   });
 
   describe("byte ranges", () => {
-    const fetchRange = (path: string, range: string, opts: Partial<ServeStaticOptions> = {}) =>
+    const fetchRange = (path: string, range: string, opts: Partial<StaticMiddlewareOptions> = {}) =>
       fetchStatic(path, opts, { headers: { range } });
 
     test("serves a leading slice as 206", async () => {
@@ -1346,7 +1349,7 @@ describe("serveStatic", () => {
   describe("unresolved pathname", () => {
     // Every request here bypasses `new Request()` — see `rawReq`. Without that,
     // the pathname arrives already collapsed and these assert nothing: they pass
-    // against a `serveStatic` with both containment checks deleted.
+    // against a `staticMiddleware` with both containment checks deleted.
     test.each([
       "/../outside/secret.txt",
       "/sub/../../outside/secret.txt",

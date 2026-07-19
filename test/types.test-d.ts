@@ -1,7 +1,7 @@
 import { describe, test, expectTypeOf } from "vitest";
 import type { PeerCertificate } from "node:tls";
 import type { ServerRequest } from "../src/types.ts";
-import type { MTLSOptions } from "../src/mtls.ts";
+import type { MTLSPluginOptions } from "../src/mtls.ts";
 
 describe("types", () => {
   describe("ServerRequest", () => {
@@ -13,7 +13,7 @@ describe("types", () => {
         >();
       });
     });
-    // `request.tls` is contributed by the `srvx/mtls` mtls() module augmentation.
+    // `request.tls` is contributed by the `srvx/mtls` mtlsPlugin() module augmentation.
     describe("tls", () => {
       test("peerCertificate", () => {
         expectTypeOf(request.tls?.peerCertificate).toEqualTypeOf<undefined | PeerCertificate>();
@@ -24,9 +24,12 @@ describe("types", () => {
     });
   });
 
-  describe("MTLSOptions", () => {
+  describe("MTLSPluginOptions", () => {
     test("requestCert / ca", () => {
-      expectTypeOf<MTLSOptions>().toExtend<{ requestCert?: boolean; ca?: string | string[] }>();
+      expectTypeOf<MTLSPluginOptions>().toExtend<{
+        requestCert?: boolean;
+        ca?: string | string[];
+      }>();
     });
   });
 });

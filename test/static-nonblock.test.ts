@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ServerRequest } from "../src/types.ts";
 
-// `serveStatic` reads a candidate's mode with `stat()` and opens it a syscall
+// `staticMiddleware` reads a candidate's mode with `stat()` and opens it a syscall
 // later, so an attacker who can write into the root can swap a regular file for
 // a FIFO in between and `open()` will wait for a writer that never comes. That
 // window is too narrow to hit deterministically, so it is reproduced here by
@@ -25,7 +25,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { serveStatic } = await import("../src/static.ts");
+const { staticMiddleware } = await import("../src/static.ts");
 
 let tmp: string;
 let dir: string;
@@ -42,7 +42,7 @@ afterAll(async () => {
 });
 
 const fetchStatic = (path: string) =>
-  serveStatic({ dir })(
+  staticMiddleware({ dir })(
     new Request(`http://localhost${path}`) as unknown as ServerRequest,
     () => new Response("next()", { status: 404 }),
   ) as Promise<Response>;

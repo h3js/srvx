@@ -1,7 +1,7 @@
 import * as c from "./cli/_utils.ts";
 import type { ServerMiddleware } from "./types.ts";
 
-export interface LogOptions {
+export interface LoggerMiddlewareOptions {
   /**
    * Batch lines and write once per event-loop turn (default: `true`). Set to
    * `false` to hand each line to stdout in the request's own turn: slower
@@ -23,7 +23,7 @@ const paintForStatus = (code: number): Paint =>
  * which is the norm in production. `FORCE_COLOR` still wins, and `cli/_utils.ts`
  * covers the `NO_COLOR` and non-TTY cases on top of this.
  *
- * Resolved per `log()` call rather than at module scope: the CLI assigns
+ * Resolved per `loggerMiddleware()` call rather than at module scope: the CLI assigns
  * `NODE_ENV` while booting, after this module has already been imported.
  */
 function colorsEnabled(): boolean {
@@ -203,7 +203,9 @@ function hookExit(): void {
   }
 }
 
-export const log: (options?: LogOptions) => ServerMiddleware = (options = {}) => {
+export const loggerMiddleware: (options?: LoggerMiddlewareOptions) => ServerMiddleware = (
+  options = {},
+) => {
   const emit = options.batch === false ? writeNow : enqueue;
   const colors = colorsEnabled();
   const paint = (fn: Paint): Paint => (colors ? fn : plain);
