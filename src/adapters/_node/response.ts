@@ -25,6 +25,10 @@ export const NodeResponse: {
   ): globalThis.Response & {
     _toNodeResponse: () => PreparedNodeResponse;
   };
+  json(
+    data: unknown,
+    init?: ResponseInit,
+  ): globalThis.Response & { _toNodeResponse: () => PreparedNodeResponse };
 } = /* @__PURE__ */ (() => {
   const NativeResponse = globalThis.Response;
 
@@ -41,6 +45,24 @@ export const NodeResponse: {
 
     static [Symbol.hasInstance](val: unknown) {
       return val instanceof NativeResponse;
+    }
+
+    static json(data: unknown, init?: ResponseInit) {
+      const body = JSON.stringify(data);
+      if (body === undefined) {
+        throw new TypeError("Value is not JSON serializable");
+      }
+      let headers = init?.headers;
+      if (!headers) {
+        headers = { "content-type": "application/json" };
+      } else {
+        const merged = new Headers(headers);
+        if (!merged.has("content-type")) {
+          merged.set("content-type", "application/json");
+        }
+        headers = merged;
+      }
+      return new NodeResponse(body, init ? { ...init, headers } : { headers });
     }
 
     get status(): number {

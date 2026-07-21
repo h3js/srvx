@@ -265,6 +265,14 @@ export function addTests(opts: {
         expect(await res.text()).toBe("chunk0\nchunk1\nchunk2\n");
       });
 
+      test("from static json()", async () => {
+        const res = await fetch(url("/response/NodeResponse/json"));
+        expect(res.status).toBe(201);
+        expect(res.headers.get("content-type")).toBe("application/json");
+        expect(res.headers.get("x-node-response")).toBe("1");
+        expect(await res.json()).toEqual({ hello: "world" });
+      });
+
       test("from middleware", async () => {
         const res = await fetch(url("/"), {
           headers: { "X-node-response-mw": "1" },

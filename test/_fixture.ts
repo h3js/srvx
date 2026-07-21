@@ -212,6 +212,14 @@ export const fixture: (
             headers: { "x-node-response": "1" },
           });
         }
+        case "/response/NodeResponse/json": {
+          // The static `NodeResponse.json()` fast path must also normalize to a
+          // native Response for bun/deno and set `content-type: application/json`.
+          return NodeResponse.json(
+            { hello: "world" },
+            { status: 201, headers: { "x-node-response": "1" } },
+          );
+        }
         case "/response/NodeResponse/stream": {
           // Same, but with a streaming body to verify the unwrapped native
           // Response still streams correctly under bun/deno.
