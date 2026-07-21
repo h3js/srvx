@@ -6,7 +6,7 @@
 
 ### 🚀 Enhancements
 
-- **static:** ⚠️  Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- **static:** ⚠️ Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
 - **static:** Add `Last-Modified` and `ETag` conditional caching ([#269](https://github.com/h3js/srvx/pull/269))
 - **static:** Add opt-in `Cache-Control` via `maxAge`/`immutable` ([#273](https://github.com/h3js/srvx/pull/273))
 - **log:** Flush on default-handled SIGTERM/SIGINT and add `batch` option ([#274](https://github.com/h3js/srvx/pull/274))
@@ -46,7 +46,7 @@
 ### 💅 Refactors
 
 - Improve edge adapters and tests ([#242](https://github.com/h3js/srvx/pull/242))
-- ⚠️  Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+- ⚠️ Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
 
 ### 📖 Documentation
 
@@ -69,8 +69,8 @@
 
 #### ⚠️ Breaking Changes
 
-- **static:** ⚠️  Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
-- ⚠️  Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+- **static:** ⚠️ Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- ⚠️ Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
 
 ### ❤️ Contributors
 
