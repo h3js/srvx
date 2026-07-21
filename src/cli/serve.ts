@@ -81,17 +81,23 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
       },
       fetch:
         loaded.fetch ||
-        (() =>
-          renderError(
-            cliOpts,
-            loaded.notFound ? "Server Entry Not Found" : "No Fetch Handler Exported",
-            501,
-          )),
+        (loaded.notFound
+          ? // Static-only mode (no entry): an unmatched request is an ordinary
+            // 404, not a server misconfiguration — and 404 is what the static
+            // middleware's `dirListing` fallback keys on.
+            () => new Response("Not Found", { status: 404 })
+          : () => renderError(cliOpts, "No Fetch Handler Exported", 501)),
       middleware: [
         loggerMiddleware(),
         cliOpts.static
           ? staticMiddleware({
               dir: cliOpts.static,
+              // Dev convenience: browse directories without an index. A 404
+              // fallback — static files win first, then the user handler runs,
+              // and only a 404 falls back to the listing. Off in prod so the
+              // structure is never exposed by default, unless the explicit
+              // `--dir-listing` / `--no-dir-listing` flag overrides either way.
+              dirListing: cliOpts.dirListing ?? !cliOpts.prod,
             })
           : undefined,
         ...(serverOptions.middleware || []),

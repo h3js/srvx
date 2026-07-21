@@ -37,6 +37,12 @@ export type CLIOptions = {
   prod?: boolean;
   /** Serve static files from the specified directory (default: "public") */
   static?: string;
+  /**
+   * Serve an HTML directory listing for directories without an index file.
+   * Defaults to on in dev mode and off with `--prod`; set explicitly to override
+   * either way (`--dir-listing` / `--no-dir-listing`).
+   */
+  dirListing?: boolean;
   /** ES module to preload */
   import?: string;
   /** Host to bind to (default: all interfaces) */

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createServer } from "node:http";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,6 +38,9 @@ describe("cli", () => {
         expect(exitCode, `${flag} should exit 0`).toBe(0);
         expect(stdout).toContain("SERVE MODE");
         expect(stdout).toContain("FETCH MODE");
+        // The directory-listing opt-in/opt-out flags are documented.
+        expect(stdout).toContain("--dir-listing");
+        expect(stdout).toContain("--no-dir-listing");
       }
     });
 
@@ -143,6 +146,30 @@ describe("cli", () => {
       } finally {
         child.kill("SIGTERM");
         await child.catch(() => {});
+      }
+    });
+
+    it("--dir-listing opts the directory listing into prod", async () => {
+      // Listing is dev-only by default; the explicit flag turns it on in prod.
+      const dir = await mkdtemp(join(tmpdir(), "srvx-cli-list-"));
+      await writeFile(join(dir, "hello.txt"), "hi");
+      const port = await getRandomPort("localhost");
+      const child = runCli(["--prod", "--static", dir, "--dir-listing", "--port", String(port)]);
+      try {
+        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        const res = await fetch(`http://localhost:${port}/`);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+        expect(await res.text()).toContain("hello.txt");
+        // Static-only mode answers a miss with an ordinary 404 (the status the
+        // listing fallback keys on), not a 501 error page.
+        const miss = await fetch(`http://localhost:${port}/missing.txt`);
+        expect(miss.status).toBe(404);
+        await miss.arrayBuffer();
+      } finally {
+        child.kill("SIGTERM");
+        await child.catch(() => {});
+        await rm(dir, { recursive: true, force: true });
       }
     });
 

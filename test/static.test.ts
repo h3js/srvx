@@ -144,6 +144,29 @@ beforeAll(async () => {
   await writeFile(join(dir, "alias-variant.js"), "PLAIN_ALIAS_VARIANT");
   await symlink(join(dir, ".env"), join(dir, "alias-variant.js.br"));
 
+  // A directory with no index, for directory-listing tests. Holds a nested
+  // directory, plain files, and a dotfile that a listing must hide.
+  await mkdir(join(dir, "files", "nested"), { recursive: true });
+  await writeFile(join(dir, "files", "a.txt"), "A");
+  await writeFile(join(dir, "files", "b.txt"), "B");
+  await writeFile(join(dir, "files", ".hidden"), "HIDDEN");
+
+  // Symlink entries a listing must resolve like a direct request: a contained
+  // link to a file, a contained link to a directory (classified by its target),
+  // one escaping the root, one aliasing a denied dot path, and one whose target
+  // is exactly the served root (the containment edge case: root minus its
+  // trailing separator must still count as contained).
+  await symlink(join(dir, "files", "a.txt"), join(dir, "files", "good-link.txt"));
+  await symlink(join(dir, "files", "nested"), join(dir, "files", "dir-link"));
+  await symlink(join(tmp, "outside", "secret.txt"), join(dir, "files", "escape-link.txt"));
+  await symlink(join(dir, ".env"), join(dir, "files", "dot-alias.txt"));
+  await symlink(dir, join(dir, "files", "root-link"));
+
+  // A denied dot directory: a listing request for it must fall through, like
+  // any direct request under it.
+  await mkdir(join(dir, ".secret-dir"));
+  await writeFile(join(dir, ".secret-dir", "inner.txt"), "SECRET");
+
   // A root that is itself a symlink must keep working.
   linkedDir = join(tmp, "public-link");
   await symlink(dir, linkedDir);
@@ -288,6 +311,143 @@ describe("staticMiddleware", () => {
         await expectNext(await fetchStatic(path));
       },
     );
+  });
+
+  describe("directory listing (dirListing)", () => {
+    test("off by default: a directory without an index falls through", async () => {
+      await expectNext(await fetchStatic("/files/"));
+    });
+
+    test("a handled route wins: the listing only replaces a downstream 404", async () => {
+      // The listing is a 404 fallback — `next()` runs first, and a real
+      // response for the same path is returned untouched.
+      const middleware = serveStatic({ dir, dirListing: true });
+      const res = await track(
+        middleware(req("/files/"), () => new Response("app route")) as Promise<Response>,
+      );
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("app route");
+    });
+
+    test("a custom 404 page passes through when the path is not a listable directory", async () => {
+      const middleware = serveStatic({ dir, dirListing: true });
+      const res = await track(
+        middleware(
+          req("/nope/"),
+          () => new Response("custom 404", { status: 404 }),
+        ) as Promise<Response>,
+      );
+      expect(res.status).toBe(404);
+      await expect(res.text()).resolves.toBe("custom 404");
+    });
+
+    test("lists a directory without an index when enabled", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      const html = await res.text();
+      expect(html).toContain("Index of /files/");
+      expect(html).toContain('href="/files/a.txt"');
+      expect(html).toContain('href="/files/b.txt"');
+      // A nested directory is linked with a trailing slash.
+      expect(html).toContain('href="/files/nested/"');
+      // The parent link is absolute — one segment up from `/files/`.
+      expect(html).toContain('href="/"');
+    });
+
+    test("follows the OS dark theme", async () => {
+      const html = await (await fetchStatic("/files/", { dirListing: true })).text();
+      expect(html).toContain("prefers-color-scheme:dark");
+    });
+
+    test("marks the listing noindex (meta tag and header)", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true });
+      expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+      await expect(res.text()).resolves.toContain('name="robots" content="noindex, nofollow"');
+    });
+
+    test("locks the listing down with security headers", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true });
+      // A self-contained page: no scripts, no external origins.
+      expect(res.headers.get("content-security-policy")).toBe(
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+      );
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      // Live directory state: never cached, so a listing is never stale.
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    });
+
+    test("hides denied dot segments from the listing", async () => {
+      const html = await (await fetchStatic("/files/", { dirListing: true })).text();
+      expect(html).not.toContain(".hidden");
+    });
+
+    test("resolves symlink entries by their target and hides unservable ones", async () => {
+      const html = await (await fetchStatic("/files/", { dirListing: true })).text();
+      // A contained symlink to a file is listed as a file.
+      expect(html).toContain('href="/files/good-link.txt"');
+      // A contained symlink to a directory is classified by its target — listed
+      // as a directory (trailing slash), not as the (non-directory) link.
+      expect(html).toContain('href="/files/dir-link/"');
+      // A symlink escaping the root, or aliasing a denied dot path, is hidden —
+      // just as a direct request for it is refused.
+      expect(html).not.toContain("escape-link");
+      expect(html).not.toContain("dot-alias");
+      // A link to the served root itself is contained (a request through it
+      // serves), so it is listed — as a directory.
+      expect(html).toContain('href="/files/root-link/"');
+    });
+
+    test("a denied dot directory is not listable", async () => {
+      // The request-path deny: `/.secret-dir/` must fall through with the
+      // downstream 404 intact, exactly like a direct request under it.
+      await expectNext(await fetchStatic("/.secret-dir/", { dirListing: true }));
+    });
+
+    test("parent link is absolute for an extension-less nested directory", async () => {
+      // `nested/` has no index; requested without a trailing slash, `../` must
+      // point to `/files/`, not `/`.
+      const html = await (await fetchStatic("/files/nested", { dirListing: true })).text();
+      expect(html).toContain('href="/files/"');
+    });
+
+    test("an index always wins over a listing", async () => {
+      // `/sub/` has an index.html, so it serves that rather than a listing.
+      const res = await fetchStatic("/sub/", { dirListing: true });
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toContain("sub index");
+    });
+
+    test("root serves its index rather than a listing", async () => {
+      // Root has an index.html, so it is served even with listing enabled.
+      const html = await (await fetchStatic("/", { dirListing: true })).text();
+      expect(html).toContain("<h1>index</h1>");
+    });
+
+    test("serves a listing for an extension-less directory route", async () => {
+      // No trailing slash: hrefs are still absolute, so relative links resolve
+      // the same as under `/files/`.
+      const res = await fetchStatic("/files", { dirListing: true });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain('href="/files/a.txt"');
+    });
+
+    test("HEAD returns the listing headers without a body", async () => {
+      const res = await fetchStatic("/files/", { dirListing: true }, { method: "HEAD" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      await expect(res.text()).resolves.toBe("");
+    });
+
+    test("does not list through a symlinked directory escaping the root", async () => {
+      await expectNext(await fetchStatic("/escape-dir/", { dirListing: true }));
+    });
+
+    test("a missing directory still falls through", async () => {
+      await expectNext(await fetchStatic("/nope/", { dirListing: true }));
+    });
   });
 
   describe("symlinks", () => {

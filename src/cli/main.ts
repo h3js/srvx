@@ -113,6 +113,10 @@ function parseArgs(args: string[]): CLIOptions {
     prod: { type: "boolean" },
     port: { type: "string", short: "p" },
     static: { type: "string", short: "s" },
+    // `parseArgs` has no native `--no-*` negation, so the opt-out is its own
+    // flag; the two collapse into a tri-state `dirListing` below.
+    "dir-listing": { type: "boolean" },
+    "no-dir-listing": { type: "boolean" },
     import: { type: "string" },
     cert: { type: "string" },
     key: { type: "string" },
@@ -142,6 +146,10 @@ function parseArgs(args: string[]): CLIOptions {
     return { mode, ...values, url, method };
   }
 
+  // Collapse the two listing flags into a tri-state: explicit on/off, or
+  // `undefined` to leave the dev/prod default to `cliServe`.
+  const dirListing = values["dir-listing"] ? true : values["no-dir-listing"] ? false : undefined;
+
   // Serve mode: allow entry or dir as a positional argument
   const maybeEntryOrDir = positionals[0];
   if (maybeEntryOrDir) {
@@ -159,7 +167,7 @@ function parseArgs(args: string[]): CLIOptions {
     }
   }
 
-  return { mode, ...values };
+  return { mode, ...values, dirListing };
 }
 
 async function startServer(cliOpts: CLIOptions) {
