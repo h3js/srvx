@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.12.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.0...v0.12.1)
+
+### 🔥 Performance
+
+- **node:** Fast path for `FastResponse.json` ([2d28bae](https://github.com/h3js/srvx/commit/2d28bae))
+
+### 🏡 Chore
+
+- Apply automated updates ([b0e2274](https://github.com/h3js/srvx/commit/b0e2274))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.12.0
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.22...v0.12.0)
