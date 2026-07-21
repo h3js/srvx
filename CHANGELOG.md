@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.12.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.22...v0.12.0)
+
+### 🚀 Enhancements
+
+- **static:** ⚠️  Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- **static:** Add `Last-Modified` and `ETag` conditional caching ([#269](https://github.com/h3js/srvx/pull/269))
+- **static:** Add opt-in `Cache-Control` via `maxAge`/`immutable` ([#273](https://github.com/h3js/srvx/pull/273))
+- **log:** Flush on default-handled SIGTERM/SIGINT and add `batch` option ([#274](https://github.com/h3js/srvx/pull/274))
+- **static:** Add byte-range request support ([#275](https://github.com/h3js/srvx/pull/275))
+
+### 🔥 Performance
+
+- **middleware:** Precompose the middleware chain at construction time ([#264](https://github.com/h3js/srvx/pull/264))
+- **log:** Batch stdout writes and cache the timestamp ([#266](https://github.com/h3js/srvx/pull/266))
+
+### 🩹 Fixes
+
+- **service-worker:** Call respondWith synchronously and drop extension bypass ([#226](https://github.com/h3js/srvx/pull/226))
+- **node/web:** Correct body handling in toFetchHandler compat layer ([#232](https://github.com/h3js/srvx/pull/232))
+- Handle `file://` entry in loader and node-level TLS in mtls ([#231](https://github.com/h3js/srvx/pull/231))
+- **node:** Prevent body-read crashes and wire corruption in the Node adapter ([#228](https://github.com/h3js/srvx/pull/228))
+- Prevent waitUntil leak and reject NaN ports ([#225](https://github.com/h3js/srvx/pull/225))
+- **cli:** Stabilization batch and add CLI test suite ([#234](https://github.com/h3js/srvx/pull/234))
+- **url:** Repair FastURL origin-form string and HTTP/2 char normalization ([#227](https://github.com/h3js/srvx/pull/227))
+- Resolve `x-forwarded-*` hop-aware, right-to-left ([#229](https://github.com/h3js/srvx/pull/229))
+- **node:** Node adapter correctness fixes (statusText, empty body, HEAD streaming, send errors, sync bridge) ([#243](https://github.com/h3js/srvx/pull/243))
+- **node:** Make patchGlobalRequest idempotent ([#255](https://github.com/h3js/srvx/pull/255))
+- **node/web:** Remove "data" listener from the socket it was added to ([#261](https://github.com/h3js/srvx/pull/261))
+- **node:** Guard already-destroyed streamBody cancel against unhandled rejection ([#257](https://github.com/h3js/srvx/pull/257))
+- **node:** Enable SO_REUSEPORT for `reusePort` option ([#258](https://github.com/h3js/srvx/pull/258))
+- **node:** Don't permanently cache a missed kNeedDrain symbol lookup ([#256](https://github.com/h3js/srvx/pull/256))
+- **node:** Reject body reads after the body is consumed ([#254](https://github.com/h3js/srvx/pull/254))
+- **node/web:** Supply `next` to connect-style middleware on the synthetic bridge path ([#259](https://github.com/h3js/srvx/pull/259))
+- **node:** Answer 500 for unhandled handler errors ([#251](https://github.com/h3js/srvx/pull/251))
+- **node:** Copy `FastResponse` init headers instead of adopting them ([#263](https://github.com/h3js/srvx/pull/263))
+- **node:** Keep req.headers live and consistent across _request materialization ([#265](https://github.com/h3js/srvx/pull/265))
+- **node/web:** Strip explicit Transfer-Encoding to avoid corrupting the bridged body ([#268](https://github.com/h3js/srvx/pull/268))
+- **node/web:** Strip hop-by-hop headers from toWebResponse() ([#270](https://github.com/h3js/srvx/pull/270))
+- **node/web:** Stream bridged responses instead of buffering until end() ([#248](https://github.com/h3js/srvx/pull/248), [#271](https://github.com/h3js/srvx/pull/271))
+- **url:** Keep `searchParams` identity and reflect mutations across deopt ([#276](https://github.com/h3js/srvx/pull/276))
+
+### 💅 Refactors
+
+- Improve edge adapters and tests ([#242](https://github.com/h3js/srvx/pull/242))
+- ⚠️  Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+
+### 📖 Documentation
+
+- Improvements ([#238](https://github.com/h3js/srvx/pull/238))
+- Rename `onError` option to `error` ([#246](https://github.com/h3js/srvx/pull/246))
+
+### 🏡 Chore
+
+- Ignore `deno.lock` ([45f843f](https://github.com/h3js/srvx/commit/45f843f))
+- Update deps ([8e4e073](https://github.com/h3js/srvx/commit/8e4e073))
+- Pin undici to 8.4 ([d2e2b0d](https://github.com/h3js/srvx/commit/d2e2b0d))
+
+### ✅ Tests
+
+- **node-adapters:** Run fetch(nodeHandler) suite on Deno and Bun in CI ([#272](https://github.com/h3js/srvx/pull/272))
+
+### 🤖 CI
+
+- Run the full test suite ([#224](https://github.com/h3js/srvx/pull/224))
+
+#### ⚠️ Breaking Changes
+
+- **static:** ⚠️  Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- ⚠️  Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.22
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.21...v0.11.22)
