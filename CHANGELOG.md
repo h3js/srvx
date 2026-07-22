@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.12.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.2...v0.12.3)
+
+### 🩹 Fixes
+
+- **body-limit:** Preserve ServerRequest in limitRequestBody ([#281](https://github.com/h3js/srvx/pull/281))
+
+### 📖 Documentation
+
+- Fix order! ([f9e9c4b](https://github.com/h3js/srvx/commit/f9e9c4b))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.12.2
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.1...v0.12.2)
