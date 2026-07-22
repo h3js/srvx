@@ -15,6 +15,7 @@ export default defineBuildConfig({
         "src/tracing.ts",
         "src/loader.ts",
         "src/mtls.ts",
+        "src/body-limit.ts",
         ...[
           "deno",
           "bun",

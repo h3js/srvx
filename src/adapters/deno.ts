@@ -10,7 +10,7 @@ import {
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
 import { trustProxyPlugin } from "../_trust-proxy.ts";
-import { limitRequestBody } from "../_body-limit.ts";
+import { limitRequestBody } from "../body-limit.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
