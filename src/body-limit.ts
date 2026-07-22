@@ -32,12 +32,24 @@
  * the body is consumed (`request.text()` / `.json()` / `.arrayBuffer()` /
  * `.body`), matching the streamed-limit behaviour.
  *
+ * Pass {@link BodyLimitOptions.createError | `options.createError`} to throw your
+ * own error on overflow (e.g. a framework's native HTTP error) instead of the
+ * default {@link createBodyTooLargeError | `413`-style error}. It is used for both
+ * the `Content-Length` fast path and the streaming limit, and is forwarded to
+ * `clone()` so clones stay limited with the same error.
+ *
  * @see https://srvx.h3.dev/guide/body-limit
  */
-export function limitRequestBody<T extends Request>(request: T, maxRequestBodySize: number): T {
+export function limitRequestBody<T extends Request>(
+  request: T,
+  maxRequestBodySize: number,
+  options?: BodyLimitOptions,
+): T {
   if (!request.body) {
     return request;
   }
+
+  const createError = options?.createError ?? createBodyTooLargeError;
 
   // Fast path: reject before reading a single byte when the declared size is
   // already over the limit. `Content-Length` is `1*DIGIT` per HTTP, so anything
@@ -58,7 +70,7 @@ export function limitRequestBody<T extends Request>(request: T, maxRequestBodySi
   if (overLimit) {
     // Cancel the original body up front (without reading it), matching the
     // rejected-early contract even if the returned request is never consumed.
-    request.body.cancel(createBodyTooLargeError(maxRequestBodySize)).catch(() => {});
+    request.body.cancel(createError(maxRequestBodySize)).catch(() => {});
   }
 
   // A `Response` fronts the size-limited stream so every read method resolves
@@ -69,8 +81,8 @@ export function limitRequestBody<T extends Request>(request: T, maxRequestBodySi
   const limitedBody = (): Response =>
     (limited ??= new Response(
       overLimit
-        ? erroredStream(createBodyTooLargeError(maxRequestBodySize))
-        : limitBodyStream(request.body!, maxRequestBodySize),
+        ? erroredStream(createError(maxRequestBodySize))
+        : limitBodyStream(request.body!, maxRequestBodySize, options),
     ));
 
   return new Proxy(request, {
@@ -92,7 +104,7 @@ export function limitRequestBody<T extends Request>(request: T, maxRequestBodySi
         // unbounded body (the pre-proxy rebuild tee'd the limited stream, so
         // `clone()` stayed limited). Cloning after the body has been routed
         // through `limited` throws, matching native `Request.clone()` semantics.
-        return () => limitRequestBody(target.clone() as T, maxRequestBodySize);
+        return () => limitRequestBody(target.clone() as T, maxRequestBodySize, options);
       }
       // Read from the original with `target` as the receiver (never the proxy):
       // `ServerRequest` getters and native `Request` methods reach for internal
@@ -116,12 +128,18 @@ export function limitRequestBody<T extends Request>(request: T, maxRequestBodySi
  * producing / release the socket). Cancelling the wrapped stream propagates to
  * the upstream stream.
  *
+ * Pass {@link BodyLimitOptions.createError | `options.createError`} to error the
+ * stream with your own error on overflow instead of the default
+ * {@link createBodyTooLargeError | `413`-style error}.
+ *
  * @see https://srvx.h3.dev/guide/body-limit
  */
 export function limitBodyStream(
   stream: ReadableStream<Uint8Array>,
   maxRequestBodySize: number,
+  options?: BodyLimitOptions,
 ): ReadableStream<Uint8Array> {
+  const createError = options?.createError ?? createBodyTooLargeError;
   const reader = stream.getReader();
   let size = 0;
   return new ReadableStream<Uint8Array>({
@@ -133,7 +151,7 @@ export function limitBodyStream(
       }
       size += value.byteLength;
       if (size > maxRequestBodySize) {
-        const error = createBodyTooLargeError(maxRequestBodySize);
+        const error = createError(maxRequestBodySize);
         reader.cancel(error).catch(() => {});
         controller.error(error);
         return;
@@ -171,6 +189,26 @@ export interface BodyTooLargeError extends Error {
   statusCode: 413;
   /** Alias of {@link statusCode}. */
   status: 413;
+}
+
+/**
+ * Factory for the error thrown when a body exceeds `maxRequestBodySize`, injectable
+ * via {@link BodyLimitOptions.createError} to override the default.
+ *
+ * @see https://srvx.h3.dev/guide/body-limit
+ */
+export type BodyLimitErrorFactory = (maxRequestBodySize: number) => unknown;
+
+/**
+ * Options for {@link limitRequestBody} and {@link limitBodyStream}.
+ *
+ * @see https://srvx.h3.dev/guide/body-limit
+ */
+export interface BodyLimitOptions {
+  /**
+   * Factory for the error thrown on overflow. Defaults to {@link createBodyTooLargeError}.
+   */
+  createError?: BodyLimitErrorFactory;
 }
 
 /**

@@ -324,4 +324,80 @@ describe("limitRequestBody", () => {
     await expect(limited.arrayBuffer()).rejects.toMatchObject({ code: "ERR_BODY_TOO_LARGE" });
     expect(limited.bodyUsed).toBe(true);
   });
+
+  describe("createError injection", () => {
+    class CustomError extends Error {
+      status = 413;
+      constructor(max: number) {
+        super(`too big: ${max}`);
+      }
+    }
+    const createError = (max: number): CustomError => new CustomError(max);
+
+    test("throws the injected error on the streaming limit", async () => {
+      const limited = limitRequestBody(bodyRequest("0123456789"), 8, { createError });
+      const error = await limited.text().then(
+        () => undefined,
+        (error_) => error_,
+      );
+      expect(error).toBeInstanceOf(CustomError);
+      expect(error).toMatchObject({ status: 413, message: "too big: 8" });
+    });
+
+    test("throws the injected error on the over-limit content-length fast path", async () => {
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": "100" },
+        body: "0123456789",
+        // @ts-expect-error duplex required for a streaming body
+        duplex: "half",
+      });
+      await expect(
+        limitRequestBody(request, 8, { createError }).arrayBuffer(),
+      ).rejects.toBeInstanceOf(CustomError);
+    });
+
+    test("forwards the injected error to clone()", async () => {
+      const limited = limitRequestBody(bodyRequest("0123456789"), 8, { createError });
+      await expect(limited.clone().text()).rejects.toBeInstanceOf(CustomError);
+    });
+
+    test("cancels the original body with the injected error on the fast path", async () => {
+      let cancelReason: unknown;
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": "100" },
+        body: new ReadableStream<Uint8Array>({
+          cancel(reason) {
+            cancelReason = reason;
+          },
+        }),
+        // @ts-expect-error duplex required for a streaming body
+        duplex: "half",
+      });
+      limitRequestBody(request, 8, { createError });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(cancelReason).toBeInstanceOf(CustomError);
+    });
+
+    test("limitBodyStream errors with the injected error", async () => {
+      const stream = limitBodyStream(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encode("0123456789"));
+            controller.close();
+          },
+        }),
+        8,
+        { createError },
+      );
+      await expect(new Response(stream).arrayBuffer()).rejects.toBeInstanceOf(CustomError);
+    });
+
+    test("defaults to the canonical 413 error when omitted", async () => {
+      await expect(limitRequestBody(bodyRequest("0123456789"), 8).text()).rejects.toMatchObject({
+        code: "ERR_BODY_TOO_LARGE",
+      });
+    });
+  });
 });
