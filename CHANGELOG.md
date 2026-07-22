@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.12.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.1...v0.12.2)
+
+### 🚀 Enhancements
+
+- Export body size limit helpers via `srvx/body-limit` ([#280](https://github.com/h3js/srvx/pull/280))
+
+### 🏡 Chore
+
+- Remove npmrc ([119de32](https://github.com/h3js/srvx/commit/119de32))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+
 ## v0.12.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.0...v0.12.1)
