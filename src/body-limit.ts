@@ -5,22 +5,32 @@
 // Bun enforces natively via `maxRequestBodySize`.
 
 /**
- * Creates the canonical `413 Payload Too Large` error used across srvx when a
- * request body exceeds the configured `maxRequestBodySize`.
+ * The canonical error thrown when a request body exceeds `maxRequestBodySize`.
  *
- * The returned error carries a stable, documented shape so any layer can map it
- * to an HTTP `413 Payload Too Large` response without string matching:
- *
- * - `code`: `"ERR_BODY_TOO_LARGE"`
- * - `statusCode`: `413`
- * - `status`: `413`
+ * It carries a stable, documented shape so any layer can map it to an HTTP
+ * `413 Payload Too Large` response without string matching.
  *
  * @see https://srvx.h3.dev/guide/body-limit
  */
-export function createBodyTooLargeError(maxRequestBodySize: number): Error {
+export interface BodyTooLargeError extends Error {
+  /** Stable machine-readable code. */
+  code: "ERR_BODY_TOO_LARGE";
+  /** HTTP status to respond with. */
+  statusCode: 413;
+  /** Alias of {@link statusCode}. */
+  status: 413;
+}
+
+/**
+ * Creates the canonical {@link BodyTooLargeError | `413 Payload Too Large` error}
+ * used across srvx when a request body exceeds the configured `maxRequestBodySize`.
+ *
+ * @see https://srvx.h3.dev/guide/body-limit
+ */
+export function createBodyTooLargeError(maxRequestBodySize: number): BodyTooLargeError {
   return Object.assign(
     new Error(`Request body exceeds the maximum allowed size of ${maxRequestBodySize} bytes.`),
-    { code: "ERR_BODY_TOO_LARGE", statusCode: 413, status: 413 },
+    { code: "ERR_BODY_TOO_LARGE", statusCode: 413, status: 413 } as const,
   );
 }
 
@@ -91,9 +101,14 @@ export function limitRequestBody(request: Request, maxRequestBodySize: number): 
   }
 
   // Fast path: reject before reading a single byte when the declared size is
-  // already over the limit. `Number(null)` / `Number("")` is `0` and `Number`
-  // of a non-numeric header is `NaN` — both fall through to the streaming limit.
-  const contentLength = Number(request.headers.get("content-length"));
+  // already over the limit. `Content-Length` is `1*DIGIT` per HTTP, so anything
+  // else (absent, empty, decimal, hex, `Infinity`, whitespace) is treated as
+  // unavailable and falls through to the authoritative streaming limit.
+  const contentLengthHeader = request.headers.get("content-length");
+  const contentLength =
+    contentLengthHeader && /^\d+$/.test(contentLengthHeader)
+      ? Number(contentLengthHeader)
+      : Number.NaN;
   if (contentLength > maxRequestBodySize) {
     const error = createBodyTooLargeError(maxRequestBodySize);
     request.body.cancel(error).catch(() => {});

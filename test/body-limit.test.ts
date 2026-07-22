@@ -5,7 +5,7 @@ const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 describe("createBodyTooLargeError", () => {
   test("carries the canonical 413 shape", () => {
-    const error = createBodyTooLargeError(8) as any;
+    const error = createBodyTooLargeError(8);
     expect(error).toBeInstanceOf(Error);
     expect(error.code).toBe("ERR_BODY_TOO_LARGE");
     expect(error.statusCode).toBe(413);
@@ -135,4 +135,24 @@ describe("limitRequestBody", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pulled).toBe(false);
   });
+
+  test.each(["2.5", "0x9", "Infinity", "abc"])(
+    "ignores a malformed content-length %j and enforces via streaming",
+    async (contentLength) => {
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers: { "content-length": contentLength },
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encode("hi"));
+            controller.close();
+          },
+        }),
+        // @ts-expect-error duplex required for a streaming body
+        duplex: "half",
+      });
+      // Small body within the limit: a false fast-path 413 would break this.
+      expect(await limitRequestBody(request, 8).text()).toBe("hi");
+    },
+  );
 });
