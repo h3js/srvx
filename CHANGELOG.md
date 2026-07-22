@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.12.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.3...v0.12.4)
+
+### 🚀 Enhancements
+
+- **body-limit:** Allow injecting the over-limit error ([#282](https://github.com/h3js/srvx/pull/282))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.12.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.2...v0.12.3)
