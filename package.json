@@ -27,6 +27,7 @@
     "./cli": "./dist/cli.mjs",
     "./mtls": "./dist/mtls.mjs",
     "./static": "./dist/static.mjs",
+    "./body-limit": "./dist/body-limit.mjs",
     "./log": "./dist/log.mjs",
     "./tracing": "./dist/tracing.mjs",
     "./loader": "./dist/loader.mjs",

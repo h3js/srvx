@@ -4,7 +4,7 @@ import { resolveClientIP, trustedHops } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
 import { lazyInherit } from "../../_inherit.ts";
-import { createBodyTooLargeError, limitBodyStream } from "../../_body-limit.ts";
+import { createBodyTooLargeError, limitBodyStream } from "../../body-limit.ts";
 import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
