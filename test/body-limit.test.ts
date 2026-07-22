@@ -115,6 +115,7 @@ describe("limitRequestBody", () => {
 
   test("rejects early on an over-limit content-length without reading the body", async () => {
     let pulled = false;
+    let cancelReason: unknown;
     const request = new Request("http://localhost/", {
       method: "POST",
       headers: { "content-length": "100" },
@@ -123,6 +124,9 @@ describe("limitRequestBody", () => {
           pulled = true;
           controller.enqueue(new Uint8Array(100));
           controller.close();
+        },
+        cancel(reason) {
+          cancelReason = reason;
         },
       }),
       // @ts-expect-error duplex required for a streaming body
@@ -134,6 +138,8 @@ describe("limitRequestBody", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pulled).toBe(false);
+    // The original body is cancelled (not read) with the same 413 error.
+    expect((cancelReason as any)?.code).toBe("ERR_BODY_TOO_LARGE");
   });
 
   test.each(["2.5", "0x9", "Infinity", "abc"])(

@@ -89,8 +89,10 @@ export function limitBodyStream(
  * and the returned request's body errors immediately with the
  * {@link createBodyTooLargeError | `413`-style error}. `Content-Length` is only
  * a fast path — it may be absent (chunked transfer encoding) or understated, so
- * the streaming limit is always enforced regardless. The error still surfaces
- * when the body is consumed (`request.text()` / `.json()` / `.arrayBuffer()` /
+ * the streaming limit is always enforced regardless. A request that overstates
+ * its `Content-Length` is rejected on the declared length (a malformed request,
+ * matching how e.g. Bun and nginx enforce limits). The error still surfaces when
+ * the body is consumed (`request.text()` / `.json()` / `.arrayBuffer()` /
  * `.body`), matching the streamed-limit behaviour.
  *
  * @see https://srvx.h3.dev/guide/body-limit
