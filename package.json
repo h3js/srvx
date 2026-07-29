@@ -95,6 +95,34 @@
     "undici": "8.4.0",
     "vitest": "^4.1.10"
   },
+  "peerDependencies": {
+    "@cloudflare/workers-types": "*",
+    "@types/aws-lambda": "*",
+    "@types/bun": "*",
+    "@types/deno": "*",
+    "@types/node": "*",
+    "@types/serviceworker": "*"
+  },
+  "peerDependenciesMeta": {
+    "@cloudflare/workers-types": {
+      "optional": true
+    },
+    "@types/aws-lambda": {
+      "optional": true
+    },
+    "@types/bun": {
+      "optional": true
+    },
+    "@types/deno": {
+      "optional": true
+    },
+    "@types/node": {
+      "optional": true
+    },
+    "@types/serviceworker": {
+      "optional": true
+    }
+  },
   "resolutions": {
     "srvx": "link:."
   },
