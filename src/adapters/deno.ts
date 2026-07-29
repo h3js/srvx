@@ -1,4 +1,5 @@
 import type { DenoFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
+import type { DenoServeOptions } from "../types/deno.ts";
 import {
   createWaitUntil,
   fmtURL,
@@ -25,10 +26,7 @@ class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
   readonly options: Server["options"];
   readonly deno: Server["deno"] = {};
-  readonly serveOptions:
-    | Deno.ServeTcpOptions
-    | (Deno.ServeTcpOptions & Deno.TlsCertifiedKeyPem)
-    | undefined;
+  readonly serveOptions: DenoServeOptions | undefined;
   readonly fetch: DenoFetchHandler;
   readonly waitUntil?: Server["waitUntil"];
 
@@ -80,7 +78,7 @@ class DenoServer implements Server<DenoFetchHandler> {
           // `X-Forwarded-For` when the peer is trusted.
           configurable: true,
           get() {
-            return (info?.remoteAddr as Deno.NetAddr)?.hostname;
+            return info?.remoteAddr?.hostname;
           },
         },
       });
@@ -112,7 +110,7 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.deno!.server = Deno.serve(
       {
         ...this.serveOptions,
-        onListen: (info) => {
+        onListen: (info: { hostname: string; port: number }) => {
           this.#listeningInfo = info;
           if (this.options.deno?.onListen) {
             this.options.deno.onListen(info);

@@ -1,5 +1,11 @@
-import type * as AWS from "aws-lambda";
 import type { FetchHandler, Server, ServerOptions } from "../types.ts";
+import type {
+  AWSLambdaContext,
+  AWSLambdaProxyEvent,
+  AWSLambdaProxyEventV2,
+  AWSLambdaProxyResult,
+  AWSLambdaProxyResultV2,
+} from "../types/aws-lambda.ts";
 import type { TrustProxyOption } from "../_trust-proxy.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -16,19 +22,19 @@ import {
 
 type MaybePromise<T> = T | Promise<T>;
 
-export type AwsLambdaEvent = AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
+export type AwsLambdaEvent = AWSLambdaProxyEvent | AWSLambdaProxyEventV2;
 
 export type { AWSLambdaResponseStream };
 
 export type AWSLambdaHandler = (
   event: AwsLambdaEvent,
-  context: AWS.Context,
-) => MaybePromise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2>;
+  context: AWSLambdaContext,
+) => MaybePromise<AWSLambdaProxyResult | AWSLambdaProxyResultV2>;
 
 export type AWSLambdaStreamingHandler = (
   event: AwsLambdaEvent,
   responseStream: AWSLambdaResponseStream,
-  context: AWS.Context,
+  context: AWSLambdaContext,
 ) => MaybePromise<void>;
 
 export function toLambdaHandler(options: ServerOptions): AWSLambdaHandler {
@@ -39,9 +45,9 @@ export function toLambdaHandler(options: ServerOptions): AWSLambdaHandler {
 export async function handleLambdaEvent(
   fetchHandler: FetchHandler,
   event: AwsLambdaEvent,
-  context: AWS.Context,
+  context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
-): Promise<AWS.APIGatewayProxyResult | AWS.APIGatewayProxyResultV2> {
+): Promise<AWSLambdaProxyResult | AWSLambdaProxyResultV2> {
   const request = awsRequest(event, context, trustProxy);
   const response = await fetchHandler(request);
   return {
@@ -55,7 +61,7 @@ export async function handleLambdaEventWithStream(
   fetchHandler: FetchHandler,
   event: AwsLambdaEvent,
   responseStream: AWSLambdaResponseStream,
-  context: AWS.Context,
+  context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
 ): Promise<void> {
   const request = awsRequest(event, context, trustProxy);
@@ -85,7 +91,7 @@ class AWSLambdaServer implements Server<AWSLambdaHandler> {
 
     const fetchHandler = wrapFetch(this as unknown as Server);
 
-    this.fetch = (event: AwsLambdaEvent, context: AWS.Context) =>
+    this.fetch = (event: AwsLambdaEvent, context: AWSLambdaContext) =>
       handleLambdaEvent(fetchHandler, event, context, this.options.trustProxy);
   }
 

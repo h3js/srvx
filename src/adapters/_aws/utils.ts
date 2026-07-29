@@ -1,11 +1,14 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { resolveClientIP, trustedHops, forwardedHopValue } from "../../_trust-proxy.ts";
+import type { ResponseBody } from "../../types.ts";
 import type {
-  APIGatewayProxyEvent,
-  Context as AWSContext,
-  APIGatewayProxyEventV2,
-} from "aws-lambda";
+  AWSLambdaContext,
+  AWSLambdaProxyEvent,
+  AWSLambdaProxyEventV2,
+  AWSLambdaProxyResult,
+  AWSLambdaProxyResultV2,
+} from "../../types/aws-lambda.ts";
 
 // -- Streaming types --
 
@@ -30,8 +33,8 @@ export interface AWSResponseHeaders {
 // Incoming (AWS => Web)
 
 export function awsRequest(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  context: AWSContext,
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
   // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
@@ -57,27 +60,27 @@ export function awsRequest(
   return req;
 }
 
-function awsForwardedFor(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string | undefined {
+function awsForwardedFor(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
   return event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"];
 }
 
-function awsEventMethod(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string {
+function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string {
   return (
-    (event as APIGatewayProxyEvent).httpMethod ||
-    (event as APIGatewayProxyEventV2).requestContext?.http?.method ||
+    (event as AWSLambdaProxyEvent).httpMethod ||
+    (event as AWSLambdaProxyEventV2).requestContext?.http?.method ||
     "GET"
   );
 }
 
-function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string | undefined {
+function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
   return (
-    (event as APIGatewayProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
-    (event as APIGatewayProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
+    (event as AWSLambdaProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
+    (event as AWSLambdaProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
   );
 }
 
-function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, hops: number): URL {
-  const path = (event as APIGatewayProxyEvent).path || (event as APIGatewayProxyEventV2).rawPath;
+function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: number): URL {
+  const path = (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath;
 
   const query = awsEventQuery(event);
 
@@ -105,18 +108,18 @@ function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, hops:
   return new URL(`${path}${query ? `?${query}` : ""}`, `${protocol}://${hostname}`);
 }
 
-function awsEventQuery(event: APIGatewayProxyEvent | APIGatewayProxyEventV2) {
-  if (typeof (event as APIGatewayProxyEventV2).rawQueryString === "string") {
-    return (event as APIGatewayProxyEventV2).rawQueryString;
+function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
+  if (typeof (event as AWSLambdaProxyEventV2).rawQueryString === "string") {
+    return (event as AWSLambdaProxyEventV2).rawQueryString;
   }
   const queryObj = {
     ...event.queryStringParameters,
-    ...(event as APIGatewayProxyEvent).multiValueQueryStringParameters,
+    ...(event as AWSLambdaProxyEvent).multiValueQueryStringParameters,
   };
   return stringifyQuery(queryObj);
 }
 
-function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): Headers {
+function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(event.headers)) {
     if (value) {
@@ -132,8 +135,8 @@ function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): 
 }
 
 export function awsEventBody(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-): BodyInit | undefined {
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+): ResponseBody | undefined {
   if (!event.body) {
     return undefined;
   }
@@ -147,7 +150,7 @@ export function awsEventBody(
 
 export function awsResponseHeaders(
   response: Response,
-  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
 ): AWSResponseHeaders {
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
@@ -163,8 +166,8 @@ export function awsResponseHeaders(
   }
 
   const isV2 =
-    (event as APIGatewayProxyEventV2)?.version === "2.0" ||
-    !!(event as APIGatewayProxyEventV2)?.requestContext?.http;
+    (event as AWSLambdaProxyEventV2)?.version === "2.0" ||
+    !!(event as AWSLambdaProxyEventV2)?.requestContext?.http;
 
   return isV2
     ? { headers, cookies }
@@ -192,7 +195,7 @@ export async function awsResponseBody(
 export async function awsStreamResponse(
   response: Response,
   responseStream: AWSLambdaResponseStream,
-  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
 ): Promise<void> {
   const metadata: AWSLambdaStreamResponseMetadata = {
     statusCode: response.status,
@@ -282,7 +285,7 @@ function stringifyQuery(obj: Record<string, unknown>) {
 
 // Reverse: Web Request => AWS Event (v1/v2 compatible)
 
-export type AwsLambdaEvent = APIGatewayProxyEvent & APIGatewayProxyEventV2;
+export type AwsLambdaEvent = AWSLambdaProxyEvent & AWSLambdaProxyEventV2;
 
 export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEvent> {
   const url = new URL(request.url);
@@ -395,9 +398,7 @@ function parseMultiValueQuery(params: URLSearchParams): Record<string, string[]>
 
 // Reverse: AWS Result => Web Response
 
-export type AwsLambdaResult =
-  | import("aws-lambda").APIGatewayProxyResult
-  | import("aws-lambda").APIGatewayProxyResultV2;
+export type AwsLambdaResult = AWSLambdaProxyResult | AWSLambdaProxyResultV2;
 
 export function awsResultToResponse(result: AwsLambdaResult): Response {
   // APIGatewayProxyResultV2 can be a plain string for simple responses
@@ -435,7 +436,7 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
   }
 
   // Handle body
-  let body: BodyInit | undefined;
+  let body: ResponseBody | undefined;
   if (typeof result.body === "string") {
     if (result.isBase64Encoded) {
       body = Buffer.from(result.body, "base64");
@@ -452,7 +453,7 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
   });
 }
 
-export function createMockContext(): AWSContext {
+export function createMockContext(): AWSLambdaContext {
   const id = crypto.randomUUID();
   return {
     callbackWaitsForEmptyEventLoop: true,
