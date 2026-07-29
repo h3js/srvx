@@ -28,6 +28,7 @@ export interface DenoHttpServer {
   shutdown(): Promise<void>;
   ref(): void;
   unref(): void;
+  [Symbol.asyncDispose](): PromiseLike<void>;
 }
 
 /**
