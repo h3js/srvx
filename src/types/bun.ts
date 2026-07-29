@@ -27,7 +27,15 @@ export interface BunHttpServer {
   readonly hostname?: string;
   readonly development?: boolean;
   readonly pendingRequests?: number;
+  readonly pendingWebSockets?: number;
   requestIP(request: Request): { address: string; family: "IPv4" | "IPv6"; port: number } | null;
+  timeout(request: Request, seconds: number): void;
+  /** Upgrade an incoming request to a WebSocket connection. */
+  upgrade(request: Request, options?: { headers?: HeadersInit; data?: any }): boolean;
+  /** Publish a message to every client subscribed to `topic`. */
+  publish(topic: string, data: any, compress?: boolean): number;
+  subscriberCount(topic: string): number;
+  reload(options: any): void;
   stop(closeActiveConnections?: boolean): Promise<void>;
   ref(): void;
   unref(): void;

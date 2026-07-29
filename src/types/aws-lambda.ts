@@ -12,6 +12,8 @@ export interface AWSLambdaContext {
   awsRequestId: string;
   logGroupName: string;
   logStreamName: string;
+  identity?: any;
+  clientContext?: any;
   getRemainingTimeInMillis(): number;
   done(error?: Error, result?: any): void;
   fail(error: Error | string): void;
@@ -24,15 +26,28 @@ export interface AWSLambdaContext {
 export interface AWSLambdaProxyEvent {
   httpMethod: string;
   path: string;
+  resource?: string;
   headers: Record<string, string | undefined>;
   multiValueHeaders?: Record<string, string[] | undefined>;
   queryStringParameters?: Record<string, string | undefined> | null;
   multiValueQueryStringParameters?: Record<string, string[] | undefined> | null;
+  pathParameters?: Record<string, string | undefined> | null;
+  stageVariables?: Record<string, string | undefined> | null;
   body: string | null;
   isBase64Encoded: boolean;
   requestContext: {
+    accountId?: string;
+    apiId?: string;
+    authorizer?: any;
     domainName?: string;
+    httpMethod?: string;
     identity?: { sourceIp?: string };
+    path?: string;
+    protocol?: string;
+    requestId?: string;
+    requestTimeEpoch?: number;
+    resourcePath?: string;
+    stage?: string;
   };
 }
 
@@ -47,10 +62,21 @@ export interface AWSLambdaProxyEventV2 {
   cookies?: string[];
   headers: Record<string, string | undefined>;
   queryStringParameters?: Record<string, string | undefined>;
+  pathParameters?: Record<string, string | undefined>;
+  stageVariables?: Record<string, string | undefined>;
   body?: string;
   isBase64Encoded: boolean;
   requestContext: {
+    accountId?: string;
+    apiId?: string;
+    authorizer?: any;
     domainName?: string;
+    domainPrefix?: string;
+    requestId?: string;
+    routeKey?: string;
+    stage?: string;
+    time?: string;
+    timeEpoch?: number;
     http?: {
       method: string;
       path?: string;
