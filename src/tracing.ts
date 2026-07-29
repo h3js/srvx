@@ -1,4 +1,4 @@
-import type { Server, ServerRequest, ServerPlugin, ServerMiddleware } from "./types.ts";
+import type { Server, ServerRequest, ServerPlugin, ServerMiddleware } from "./_types/core.mjs";
 
 /**
  * @experimental Channel names, event types and config options may change in future releases.

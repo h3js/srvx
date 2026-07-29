@@ -1,4 +1,4 @@
-import type { Server, ServerHandler } from "./types.ts";
+import type { Server, ServerHandler } from "./_types/core.mjs";
 
 export function wrapFetch(server: Server): ServerHandler {
   // Fold the middleware into a composed handler once at construction time —

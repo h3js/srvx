@@ -1,5 +1,5 @@
 import * as c from "./cli/_utils.ts";
-import type { ServerMiddleware } from "./types.ts";
+import type { ServerMiddleware } from "./_types/core.mjs";
 
 export interface LoggerMiddlewareOptions {
   /**

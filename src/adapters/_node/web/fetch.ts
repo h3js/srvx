@@ -1,4 +1,5 @@
-import type { ServerRequest, NodeHttpHandler, NodeHTTPMiddleware } from "../../../types.ts";
+import type { ServerRequest } from "../../../_types/core.mjs";
+import type { NodeHttpHandler, NodeHTTPMiddleware } from "../../../_types/node.mjs";
 
 import { WebIncomingMessage } from "./incoming.ts";
 import { WebRequestSocket } from "./socket.ts";

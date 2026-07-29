@@ -1,4 +1,5 @@
-import type { CloudflareFetchHandler, Server, ServerOptions } from "../types.ts";
+import type { Server, ServerOptions } from "../_types/core.mjs";
+import type { CloudflareFetchHandler } from "../_types/cloudflare.mjs";
 import type * as CF from "@cloudflare/workers-types";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";

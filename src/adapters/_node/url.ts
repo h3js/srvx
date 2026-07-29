@@ -1,4 +1,4 @@
-import type { NodeServerRequest } from "../../types.ts";
+import type { NodeServerRequest } from "../../_types/node.mjs";
 import { HOST_RE, forwardedHopValue } from "../../_trust-proxy.ts";
 import { FastURL } from "../../_url.ts";
 

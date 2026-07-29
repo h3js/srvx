@@ -17,13 +17,8 @@ import nodeHTTP2 from "node:http2";
 import type NodeHttp from "node:http";
 import type NodeHttps from "node:https";
 import type NodeHttp2 from "node:http2";
-import type {
-  NodeServerRequest,
-  NodeServerResponse,
-  Server,
-  ServerHandler,
-  ServerOptions,
-} from "../types.ts";
+import type { Server, ServerHandler, ServerOptions } from "../_types/core.mjs";
+import type { NodeServerRequest, NodeServerResponse } from "../_types/node.mjs";
 
 export { FastURL } from "../_url.ts";
 export { NodeRequest, patchGlobalRequest } from "./_node/request.ts";

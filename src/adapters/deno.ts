@@ -1,4 +1,5 @@
-import type { DenoFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
+import type { Server, ServerHandler, ServerOptions } from "../_types/core.mjs";
+import type { DenoFetchHandler } from "../_types/deno.mjs";
 import {
   createWaitUntil,
   fmtURL,

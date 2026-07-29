@@ -1,4 +1,4 @@
-import type { ServerPlugin, ServerRequest } from "./types.ts";
+import type { ServerPlugin, ServerRequest } from "./_types/core.mjs";
 
 /**
  * Controls whether `X-Forwarded-*` headers (proto, host, for, and the HTTP/2

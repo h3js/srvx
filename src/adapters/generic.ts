@@ -1,4 +1,4 @@
-import type { Server, ServerHandler, ServerOptions } from "../types.ts";
+import type { Server, ServerHandler, ServerOptions } from "../_types/core.mjs";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 import { createWaitUntil } from "../_utils.ts";

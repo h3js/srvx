@@ -1,10 +1,10 @@
+import type { ServerRequest } from "../../_types/core.mjs";
 import type {
   NodeHttpHandler,
   NodeHTTPMiddleware,
   NodeServerRequest,
   NodeServerResponse,
-  ServerRequest,
-} from "../../types.ts";
+} from "../../_types/node.mjs";
 
 import { NodeResponse } from "./response.ts";
 

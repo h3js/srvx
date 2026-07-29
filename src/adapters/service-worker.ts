@@ -1,15 +1,13 @@
 /* eslint-disable unicorn/prefer-global-this */
-import type { Server, ServerOptions, ServerRequest } from "../types.ts";
+import type { Server, ServerOptions, ServerRequest } from "../_types/core.mjs";
+import type { ServiceWorkerHandler } from "../_types/service-worker.mjs";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
 export const FastURL: typeof globalThis.URL = URL;
 export const FastResponse: typeof globalThis.Response = Response;
 
-export type ServiceWorkerHandler = (
-  request: ServerRequest,
-  event: FetchEvent,
-) => Response | Promise<Response>;
+export type { ServiceWorkerHandler } from "../_types/service-worker.mjs";
 
 const isBrowserWindow = typeof window !== "undefined" && typeof navigator !== "undefined";
 

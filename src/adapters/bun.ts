@@ -1,4 +1,5 @@
-import type { BunFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
+import type { Server, ServerHandler, ServerOptions } from "../_types/core.mjs";
+import type { BunFetchHandler } from "../_types/bun.mjs";
 import type * as bun from "bun";
 import {
   fmtURL,

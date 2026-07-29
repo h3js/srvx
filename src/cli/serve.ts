@@ -1,4 +1,4 @@
-import type { Server, ServerMiddleware, ServerOptions } from "../types.ts";
+import type { Server, ServerMiddleware, ServerOptions } from "../_types/core.mjs";
 import type { CLIOptions } from "./types.ts";
 import { dirname, relative, resolve } from "node:path";
 import { loadServerEntry } from "../loader.ts";

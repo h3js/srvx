@@ -1,3 +1,4 @@
+import type { ResponseBodyInit } from "../../_types/core.mjs";
 import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
 import { lazyInherit } from "../../_inherit.ts";
@@ -20,7 +21,7 @@ export interface PreparedNodeResponse {
  */
 export const NodeResponse: {
   new (
-    body?: BodyInit | null,
+    body?: ResponseBodyInit | null,
     init?: ResponseInit,
   ): globalThis.Response & {
     _toNodeResponse: () => PreparedNodeResponse;
@@ -33,12 +34,12 @@ export const NodeResponse: {
   const NativeResponse = globalThis.Response;
 
   class NodeResponse implements Partial<Response> {
-    #body?: BodyInit | null;
+    #body?: ResponseBodyInit | null;
     #init?: ResponseInit;
     #headers?: Headers;
     #response?: globalThis.Response;
 
-    constructor(body?: BodyInit | null, init?: ResponseInit) {
+    constructor(body?: ResponseBodyInit | null, init?: ResponseInit) {
       this.#body = body;
       this.#init = init;
     }
@@ -108,7 +109,7 @@ export const NodeResponse: {
 
       // Undici accepts standard Response body or async iterators (which Node Readable implements too).
       // Pipeable objects, like React's renderToPipeableStream, do not implement async iterators.
-      let body: BodyInit | null | undefined = this.#body;
+      let body: ResponseBodyInit | null | undefined = this.#body;
       if (
         body &&
         typeof (body as unknown as NodeReadable).pipe === "function" &&
@@ -120,7 +121,7 @@ export const NodeResponse: {
         if (abort) {
           stream.once("close", () => abort());
         }
-        body = stream as unknown as BodyInit;
+        body = stream as unknown as ResponseBodyInit;
       }
 
       this.#response = new NativeResponse(

@@ -1,6 +1,6 @@
 import type * as TLS from "node:tls";
 import { resolveCertOrKey } from "./_utils.ts";
-import type { ServerPlugin } from "./types.ts";
+import type { ServerPlugin } from "./_types/core.mjs";
 
 /**
  * TLS connection state for the current request.
@@ -41,21 +41,15 @@ export interface ServerRequestTLS {
 // Opting into the plugin augments `request.tls` onto the request. Consumers that
 // don't import `srvx/mtls` don't get the field — keeping it truly opt-in.
 //
-// `"srvx"` is the public specifier consumers resolve `ServerRequest` through, so the
-// augmentation must target it. `"./types.ts"` mirrors it for srvx's own internal
-// type-check, where `ServerRequest` is reached through the relative source module.
-declare module "srvx" {
+// `srvx/types` is the runtime-agnostic types entry every other entry reaches
+// `ServerRequest` through, so augmenting it covers all of them.
+declare module "./_types/core.mjs" {
   interface ServerRequest {
     /**
      * TLS connection state, including the client (peer) certificate for mutual TLS.
      *
      * Populated by the {@link mtlsPlugin}. `undefined` when the request was not served over TLS.
      */
-    tls?: ServerRequestTLS | undefined;
-  }
-}
-declare module "./types.ts" {
-  interface ServerRequest {
     tls?: ServerRequestTLS | undefined;
   }
 }

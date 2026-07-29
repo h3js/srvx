@@ -1,4 +1,4 @@
-import type { Server, ServerOptions } from "../types.ts";
+import type { Server, ServerOptions } from "../_types/core.mjs";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 

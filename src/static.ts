@@ -1,4 +1,4 @@
-import type { ServerMiddleware } from "./types.ts";
+import type { ServerMiddleware } from "./_types/core.mjs";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import type { Transform } from "node:stream";

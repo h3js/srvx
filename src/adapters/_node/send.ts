@@ -1,7 +1,7 @@
 import { type Readable as NodeReadable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type NodeHttp from "node:http";
-import type { NodeServerResponse } from "../../types.ts";
+import type { NodeServerResponse } from "../../_types/node.mjs";
 import type { NodeResponse } from "./response.ts";
 
 /**

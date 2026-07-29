@@ -16,6 +16,7 @@
   "sideEffects": false,
   "types": "./dist/types.d.mts",
   "exports": {
+    "./types": "./dist/_types/core.mjs",
     "./deno": "./dist/adapters/deno.mjs",
     "./bun": "./dist/adapters/bun.mjs",
     "./node": "./dist/adapters/node.mjs",
@@ -100,8 +101,7 @@
     "@types/aws-lambda": "*",
     "@types/bun": "*",
     "@types/deno": "*",
-    "@types/node": "*",
-    "@types/serviceworker": "*"
+    "@types/node": "*"
   },
   "peerDependenciesMeta": {
     "@cloudflare/workers-types": {
@@ -117,9 +117,6 @@
       "optional": true
     },
     "@types/node": {
-      "optional": true
-    },
-    "@types/serviceworker": {
       "optional": true
     }
   },

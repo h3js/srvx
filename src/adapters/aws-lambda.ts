@@ -1,5 +1,6 @@
 import type * as AWS from "aws-lambda";
-import type { FetchHandler, Server, ServerOptions } from "../types.ts";
+import type { FetchHandler, Server, ServerOptions } from "../_types/core.mjs";
+import type { AwsLambdaEvent } from "../_types/aws-lambda.mjs";
 import type { TrustProxyOption } from "../_trust-proxy.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -16,7 +17,7 @@ import {
 
 type MaybePromise<T> = T | Promise<T>;
 
-export type AwsLambdaEvent = AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
+export type { AwsLambdaEvent } from "../_types/aws-lambda.mjs";
 
 export type { AWSLambdaResponseStream };
 

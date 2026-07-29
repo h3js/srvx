@@ -1,4 +1,4 @@
-import type { ServerRequest } from "../../../types.ts";
+import type { ServerRequest } from "../../../_types/core.mjs";
 import { IncomingMessage } from "node:http";
 import { WebRequestSocket } from "./socket.ts";
 import { FastURL } from "../../../_url.ts";

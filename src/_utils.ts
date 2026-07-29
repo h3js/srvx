@@ -1,6 +1,6 @@
 // *** This file should be only imported in the runtime adapters with Node.js compatibility. ***
 
-import type { ServerOptions } from "./types.ts";
+import type { ServerOptions } from "./_types/core.mjs";
 
 export function resolvePortAndHost(opts: ServerOptions): {
   port: number;

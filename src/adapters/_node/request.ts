@@ -1,4 +1,5 @@
-import type { NodeServerRequest, NodeServerResponse, ServerRequest } from "../../types.ts";
+import type { ServerRequest } from "../../_types/core.mjs";
+import type { NodeServerRequest, NodeServerResponse } from "../../_types/node.mjs";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { resolveClientIP, trustedHops } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";

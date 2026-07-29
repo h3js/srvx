@@ -1,10 +1,5 @@
-import type {
-  FetchHandler,
-  NodeHttpHandler,
-  NodeServerRequest,
-  NodeServerResponse,
-  ServerRequest,
-} from "../../types.ts";
+import type { FetchHandler, ServerRequest } from "../../_types/core.mjs";
+import type { NodeHttpHandler, NodeServerRequest, NodeServerResponse } from "../../_types/node.mjs";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";

@@ -1,5 +1,5 @@
 import * as c from "./cli/_utils.ts";
-import type { ServerPlugin } from "./types.ts";
+import type { ServerPlugin } from "./_types/core.mjs";
 
 export const errorPlugin: ServerPlugin = (server) => {
   const errorHandler = server.options.error;

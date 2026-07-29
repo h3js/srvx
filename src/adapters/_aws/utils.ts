@@ -1,4 +1,4 @@
-import type { ServerRequest } from "../../types.ts";
+import type { ServerRequest, ResponseBodyInit } from "../../_types/core.mjs";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { resolveClientIP, trustedHops, forwardedHopValue } from "../../_trust-proxy.ts";
 import type {
@@ -133,7 +133,7 @@ function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): 
 
 export function awsEventBody(
   event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-): BodyInit | undefined {
+): ResponseBodyInit | undefined {
   if (!event.body) {
     return undefined;
   }
@@ -435,7 +435,7 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
   }
 
   // Handle body
-  let body: BodyInit | undefined;
+  let body: ResponseBodyInit | undefined;
   if (typeof result.body === "string") {
     if (result.isBase64Encoded) {
       body = Buffer.from(result.body, "base64");

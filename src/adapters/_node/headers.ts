@@ -1,4 +1,4 @@
-import type { NodeServerRequest } from "../../types.ts";
+import type { NodeServerRequest } from "../../_types/node.mjs";
 import { lazyInherit } from "../../_inherit.ts";
 
 // https://github.com/nodejs/node/blob/main/lib/_http_incoming.js

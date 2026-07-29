@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 
 import { loadServerEntry, type LoadOptions } from "../loader.ts";
 import type { CLIOptions } from "./types.ts";
-import type { ServerHandler } from "../types.ts";
+import type { ServerHandler, ResponseBodyInit } from "../_types/core.mjs";
 import { resolve } from "node:path";
 
 export async function cliFetch(
@@ -87,7 +87,7 @@ export async function cliFetch(
   }
 
   // Build body
-  let body: BodyInit | undefined;
+  let body: ResponseBodyInit | undefined;
   let isStream = false;
   if (cliOpts.data !== undefined) {
     if (cliOpts.data === "@-") {
