@@ -1,4 +1,5 @@
 import type { CloudflareFetchHandler, Server, ServerOptions } from "../types.ts";
+import type { CloudflareExecutionContext } from "../types/cloudflare.ts";
 import type { ServiceWorkerFetchEvent } from "../types/service-worker.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
@@ -82,7 +83,17 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
     this.#fetchListener = (event) => {
       // Service-worker events carry no `env`; bindings are only reachable in
       // module-worker syntax (see the class doc comment).
-      event.respondWith(this.fetch(event.request, (event as any).env || {}, event));
+      //
+      // Cloudflare's `FetchEvent` doubles as the execution context: it adds
+      // `passThroughOnException()` on top of `waitUntil()`, which the generic
+      // service worker event does not have, hence the cast.
+      event.respondWith(
+        this.fetch(
+          event.request,
+          (event as any).env || {},
+          event as unknown as CloudflareExecutionContext,
+        ),
+      );
     };
     addEventListener("fetch", this.#fetchListener as unknown as EventListener);
   }

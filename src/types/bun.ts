@@ -33,7 +33,11 @@ export interface BunHttpServer {
   /** Upgrade an incoming request to a WebSocket connection. */
   upgrade(request: Request, options?: { headers?: HeadersInit; data?: any }): boolean;
   /** Publish a message to every client subscribed to `topic`. */
-  publish(topic: string, data: any, compress?: boolean): number;
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    compress?: boolean,
+  ): number;
   subscriberCount(topic: string): number;
   reload(options: any): void;
   stop(closeActiveConnections?: boolean): Promise<void>;

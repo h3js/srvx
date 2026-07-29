@@ -5,7 +5,7 @@
  */
 export interface CloudflareExecutionContext {
   waitUntil(promise: Promise<any>): void;
-  passThroughOnException?(): void;
+  passThroughOnException(): void;
   props?: any;
 }
 
