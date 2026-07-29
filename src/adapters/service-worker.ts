@@ -1,5 +1,6 @@
 /* eslint-disable unicorn/prefer-global-this */
 import type { Server, ServerOptions, ServerRequest } from "../types.ts";
+import type { ServiceWorkerFetchEvent } from "../types/service-worker.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
@@ -8,7 +9,7 @@ export const FastResponse: typeof globalThis.Response = Response;
 
 export type ServiceWorkerHandler = (
   request: ServerRequest,
-  event: FetchEvent,
+  event: ServiceWorkerFetchEvent,
 ) => Response | Promise<Response>;
 
 const isBrowserWindow = typeof window !== "undefined" && typeof navigator !== "undefined";
@@ -25,7 +26,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
   readonly options: Server["options"];
   readonly fetch: ServiceWorkerHandler;
 
-  #fetchListener?: (event: FetchEvent) => void | Promise<void>;
+  #fetchListener?: (event: ServiceWorkerFetchEvent) => void | Promise<void>;
   #listeningPromise?: Promise<any>;
   // The registration `serve()` created (browser-window mode), so `close()`
   // unregisters only our own worker instead of every worker on the origin.
@@ -39,7 +40,7 @@ class ServiceWorkerServer implements Server<ServiceWorkerHandler> {
 
     const fetchHandler = wrapFetch(this as unknown as Server);
 
-    this.fetch = (request: Request, event: FetchEvent) => {
+    this.fetch = (request: Request, event: ServiceWorkerFetchEvent) => {
       Object.defineProperties(request, {
         runtime: {
           enumerable: true,

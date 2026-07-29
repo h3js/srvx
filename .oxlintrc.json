@@ -3,5 +3,18 @@
   "plugins": ["unicorn", "typescript", "oxc"],
   "rules": {
     "eslint/no-unused-vars": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "paths": ["bun", "aws-lambda", "@cloudflare/workers-types", "cloudflare:workers"]
+          }
+        ]
+      }
+    }
+  ]
 }

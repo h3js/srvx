@@ -28,7 +28,6 @@ export default defineBuildConfig({
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {
-        external: ["bun", "@cloudflare/workers-types", "aws-lambda"],
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",

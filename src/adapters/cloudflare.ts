@@ -1,12 +1,12 @@
 import type { CloudflareFetchHandler, Server, ServerOptions } from "../types.ts";
-import type * as CF from "@cloudflare/workers-types";
+import type { ServiceWorkerFetchEvent } from "../types/service-worker.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 
 export const FastURL: typeof globalThis.URL = URL;
 export const FastResponse: typeof globalThis.Response = Response;
 
-export function serve(options: ServerOptions): Server<CF.ExportedHandlerFetchHandler> {
+export function serve(options: ServerOptions): Server<CloudflareFetchHandler> {
   return new CloudflareServer(options);
 }
 
@@ -26,13 +26,13 @@ export function serve(options: ServerOptions): Server<CF.ExportedHandlerFetchHan
 class CloudflareServer implements Server<CloudflareFetchHandler> {
   readonly runtime = "cloudflare";
   readonly options: Server["options"];
-  readonly serveOptions: CF.ExportedHandler;
-  readonly fetch: CF.ExportedHandlerFetchHandler;
+  readonly serveOptions: { fetch: CloudflareFetchHandler };
+  readonly fetch: CloudflareFetchHandler;
 
   // Retained so `close()` can remove exactly the listener `serve()` added and
   // repeated `serve()` calls do not stack duplicate listeners (which would
   // trigger a double `respondWith()` error on Cloudflare).
-  #fetchListener?: (event: FetchEvent) => void;
+  #fetchListener?: (event: ServiceWorkerFetchEvent) => void;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -59,9 +59,7 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
           },
         },
       });
-      return fetchHandler(request as unknown as Request) as unknown as
-        | CF.Response
-        | Promise<CF.Response>;
+      return fetchHandler(request);
     };
 
     this.serveOptions = {
@@ -84,19 +82,18 @@ class CloudflareServer implements Server<CloudflareFetchHandler> {
     this.#fetchListener = (event) => {
       // Service-worker events carry no `env`; bindings are only reachable in
       // module-worker syntax (see the class doc comment).
-      // @ts-expect-error `respondWith` is FetchEvent-only.
       event.respondWith(this.fetch(event.request, (event as any).env || {}, event));
     };
-    addEventListener("fetch", this.#fetchListener as EventListener);
+    addEventListener("fetch", this.#fetchListener as unknown as EventListener);
   }
 
-  ready(): Promise<Server<CF.ExportedHandlerFetchHandler>> {
+  ready(): Promise<Server<CloudflareFetchHandler>> {
     return Promise.resolve().then(() => this);
   }
 
   close() {
     if (this.#fetchListener) {
-      removeEventListener("fetch", this.#fetchListener as EventListener);
+      removeEventListener("fetch", this.#fetchListener as unknown as EventListener);
       this.#fetchListener = undefined;
     }
     return Promise.resolve();

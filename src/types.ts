@@ -2,18 +2,21 @@ import type * as NodeHttp from "node:http";
 import type * as NodeHttps from "node:https";
 import type * as NodeHttp2 from "node:http2";
 import type * as NodeNet from "node:net";
-import type * as Bun from "bun";
-import type * as CF from "@cloudflare/workers-types";
-import type * as AWS from "aws-lambda";
 import type { TrustProxyOption } from "./_trust-proxy.ts";
+import type { BunHttpServer, BunServeOptions } from "./types/bun.ts";
+import type { DenoHttpServer, DenoServeHandlerInfo, DenoServeOptions } from "./types/deno.ts";
+import type { CloudflareEnv, CloudflareExecutionContext } from "./types/cloudflare.ts";
+import type {
+  AWSLambdaContext,
+  AWSLambdaProxyEvent,
+  AWSLambdaProxyEventV2,
+} from "./types/aws-lambda.ts";
+import type { ServiceWorkerFetchEvent } from "./types/service-worker.ts";
 
 export type { TrustProxyOption } from "./_trust-proxy.ts";
 
 // Utils
 type MaybePromise<T> = T | Promise<T>;
-type IsAny<T> = Equal<T, any> extends true ? true : false;
-type Equal<X, Y> =
-  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2 ? true : false;
 
 // ----------------------------------------------------------------------------
 // srvx API
@@ -201,14 +204,14 @@ export interface ServerOptions {
    *
    * @docs https://bun.sh/docs/api/http
    */
-  bun?: Omit<Bun.Serve.Options<any>, "fetch">;
+  bun?: BunServeOptions;
 
   /**
    * Deno server options
    *
    * @docs https://docs.deno.com/api/deno/~/Deno.serve
    */
-  deno?: Deno.ServeOptions;
+  deno?: DenoServeOptions;
 
   /**
    * Service worker options
@@ -262,12 +265,12 @@ export interface Server<Handler = ServerHandler> {
   /**
    * Bun context.
    */
-  readonly bun?: { server?: Bun.Server<any> };
+  readonly bun?: { server?: BunHttpServer };
 
   /**
    * Deno context.
    */
-  readonly deno?: { server?: Deno.HttpServer };
+  readonly deno?: { server?: DenoHttpServer };
 
   /**
    * Server fetch handler
@@ -322,32 +325,30 @@ export interface ServerRuntimeContext {
    * Underlying Deno server request info.
    */
   deno?: {
-    info: Deno.ServeHandlerInfo<Deno.NetAddr>;
+    info: DenoServeHandlerInfo;
   };
 
   /**
    * Underlying Bun server request context.
    */
   bun?: {
-    server: Bun.Server<any>;
+    server: BunHttpServer;
   };
 
   /**
    * Underlying Cloudflare request context.
    */
   cloudflare?: {
-    context: CF.ExecutionContext;
-    env: IsAny<typeof import("cloudflare:workers")> extends true
-      ? Record<string, unknown>
-      : typeof import("cloudflare:workers").env;
+    context: CloudflareExecutionContext;
+    env: CloudflareEnv;
   };
 
   awsLambda?: {
-    context: AWS.Context;
-    event: AWS.APIGatewayProxyEvent | AWS.APIGatewayProxyEventV2;
+    context: AWSLambdaContext;
+    event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2;
   };
 
-  serviceWorker?: { event: FetchEvent };
+  serviceWorker?: { event: ServiceWorkerFetchEvent };
 
   netlify?: { context: any };
 
@@ -404,12 +405,12 @@ export type ErrorHandler = (error: unknown) => Response | Promise<Response>;
 
 export type BunFetchHandler = (
   request: Request,
-  server?: Bun.Server<any>,
+  server?: BunHttpServer,
 ) => Response | Promise<Response>;
 
 export type DenoFetchHandler = (
   request: Request,
-  info?: Deno.ServeHandlerInfo<Deno.NetAddr>,
+  info?: DenoServeHandlerInfo,
 ) => Response | Promise<Response>;
 
 export type NodeServerRequest = NodeHttp.IncomingMessage | NodeHttp2.Http2ServerRequest;
@@ -442,4 +443,33 @@ export type NodeHTTP2Middleware = (
 
 export type NodeHTTPMiddleware = NodeHTTP1Middleware | NodeHTTP2Middleware;
 
-export type CloudflareFetchHandler = CF.ExportedHandlerFetchHandler;
+export type CloudflareFetchHandler = (
+  request: Request,
+  env: CloudflareEnv,
+  context: CloudflareExecutionContext,
+) => Response | Promise<Response>;
+
+// ----------------------------------------------------------------------------
+// Runtime types
+// ----------------------------------------------------------------------------
+
+/**
+ * Body accepted by the runtime `Response` constructor (`BodyInit`).
+ *
+ * Derived from the ambient `Response` so that it does not require `lib: ["dom"]`.
+ */
+export type ResponseBody = NonNullable<ConstructorParameters<typeof globalThis.Response>[0]>;
+
+// Minimal declarations of the objects each runtime hands to srvx, so that the
+// published types depend on no runtime type package (see `src/types/README.md`).
+export type { BunHttpServer, BunServeOptions } from "./types/bun.ts";
+export type { DenoHttpServer, DenoServeHandlerInfo, DenoServeOptions } from "./types/deno.ts";
+export type { CloudflareEnv, CloudflareExecutionContext } from "./types/cloudflare.ts";
+export type {
+  AWSLambdaContext,
+  AWSLambdaProxyEvent,
+  AWSLambdaProxyEventV2,
+  AWSLambdaProxyResult,
+  AWSLambdaProxyResultV2,
+} from "./types/aws-lambda.ts";
+export type { ServiceWorkerFetchEvent } from "./types/service-worker.ts";
