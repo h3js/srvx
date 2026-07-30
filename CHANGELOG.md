@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.12.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.4...v0.12.5)
+
+### 🌊 Types
+
+- Inline minimal runtime types ([#287](https://github.com/h3js/srvx/pull/287))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+
 ## v0.12.4
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.3...v0.12.4)
