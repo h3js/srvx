@@ -47,7 +47,12 @@ export function sendNodeResponseDetached(
   }
 }
 
-function handleSendError(nodeRes: NodeServerResponse, error: unknown, silent?: boolean): void {
+/** @internal */
+export function handleSendError(
+  nodeRes: NodeServerResponse,
+  error: unknown,
+  silent?: boolean,
+): void {
   // A synchronous throw here is almost always a serialization bug (e.g. an
   // invalid header name/value passed to `writeHead`). Without a diagnostic the
   // client just sees a bare 500 with no way to trace the cause. Surface the
@@ -98,6 +103,17 @@ function failResponse(nodeRes: NodeServerResponse): void {
     nodeRes.destroy();
   } else {
     nodeRes.statusCode = 500;
+    // `writeHead` assigns `statusMessage` *before* validating it, so a throw from
+    // an invalid reason phrase leaves the bad value behind on the response.
+    // `end()` re-enters `writeHead` via `_implicitHeader()`, so without this reset
+    // the recovery path throws the same error again -- out of the catch that was
+    // meant to contain it, and fatally (#290). Empty lets Node fill in the
+    // default phrase for the new status code.
+    // HTTP/2 has no reason phrase (touching `statusMessage` there only emits a
+    // process warning) and `writeHead` never sets one for it.
+    if (nodeRes.req?.httpVersion !== "2.0") {
+      nodeRes.statusMessage = "";
+    }
     nodeRes.end();
   }
 }
@@ -160,9 +176,30 @@ function writeHead(
       nodeRes.writeHead(status, rawHeaders);
     } else {
       // @ts-expect-error
-      nodeRes.writeHead(status, statusText, rawHeaders);
+      nodeRes.writeHead(status, safeStatusText(statusText), rawHeaders);
     }
   }
+}
+
+// Anything outside the chars Node accepts in a reason phrase (RFC 9110
+// `reason-phrase`, plus the deprecated `obs-text` range Node still allows).
+const INVALID_REASON_PHRASE_RE = /[^\t\u0020-\u007E\u0080-\u00FF]/g;
+
+/**
+ * Strips characters that are invalid in a status line reason phrase.
+ *
+ * `FastResponse` skips the `statusText` validation native `Response` does in its
+ * constructor (kept out for speed, see #262), so a CR/LF can reach the wire here.
+ * Node throws `ERR_INVALID_CHAR` for it -- fatally before #290 -- and runtimes
+ * that don't validate would emit a split response instead. Sanitize at the write
+ * boundary so neither is possible. Untouched for the common empty phrase.
+ */
+function safeStatusText(statusText: string): string {
+  // A non-string phrase is left alone: `writeHead` ignores it and fills in the
+  // default phrase for the status code.
+  return typeof statusText === "string" && statusText
+    ? statusText.replace(INVALID_REASON_PHRASE_RE, "")
+    : statusText;
 }
 
 function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
