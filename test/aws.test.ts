@@ -110,6 +110,33 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.headers.get("cookie")).toBeDefined();
     });
 
+    test("should not duplicate cookies when headers.cookie and cookies[] both exist", () => {
+      const v2Event: APIGatewayProxyEventV2 = {
+        version: "2.0",
+        routeKey: "GET /",
+        rawPath: "/",
+        rawQueryString: "",
+        headers: {
+          host: "api.example.com",
+          cookie: "session=abc; theme=dark",
+        },
+        cookies: ["session=abc", "theme=dark"],
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "GET", path: "/" },
+          domainName: "api.example.com",
+        } as any,
+      };
+
+      const request = awsRequest(v2Event, createMockContext());
+      const cookie = request.headers.get("cookie") ?? "";
+
+      expect(cookie).toContain("session=abc");
+      expect(cookie).toContain("theme=dark");
+      expect(cookie.match(/session=abc/g)?.length).toBe(1);
+      expect(cookie.match(/theme=dark/g)?.length).toBe(1);
+    });
+
     test("should handle base64 encoded body", () => {
       const encodedBody = Buffer.from("Hello, World!").toString("base64");
       const v1Event: APIGatewayProxyEvent = {

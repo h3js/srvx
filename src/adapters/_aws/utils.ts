@@ -121,13 +121,17 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
+  // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
+  // `headers.cookie` and the parsed `cookies[]` array. Prefer the array when
+  // present so Cookie is not appended twice.
+  const cookies = "cookies" in event && event.cookies?.length ? event.cookies : undefined;
   for (const [key, value] of Object.entries(event.headers)) {
-    if (value) {
+    if (value && !(cookies && key.toLowerCase() === "cookie")) {
       headers.set(key, value);
     }
   }
-  if ("cookies" in event && event.cookies) {
-    for (const cookie of event.cookies) {
+  if (cookies) {
+    for (const cookie of cookies) {
       headers.append("cookie", cookie);
     }
   }
