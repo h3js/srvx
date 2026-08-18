@@ -914,6 +914,59 @@ describe("FastResponse copies init Headers", () => {
   });
 });
 
+// Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
+// decorating a response must be able to mutate `res.headers` without paying for
+// materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
+// which is ~2x slower because it replaces the raw body with a ReadableStream.
+describe("FastResponse header mutation preserves the raw body", () => {
+  test("mutating headers keeps a string body raw", () => {
+    const res = new FastResponse("hello world", { headers: { "x-a": "1" } });
+    res.headers.append("set-cookie", "session=abc");
+
+    const prepared = res._toNodeResponse();
+
+    expect(prepared.body).toBe("hello world");
+    expect(prepared.headers).toContain("session=abc");
+    // Implicit content-type/length are still derived from the raw body.
+    expect(prepared.headers).toContain("text/plain; charset=UTF-8");
+    expect(prepared.headers).toContain("11");
+  });
+
+  test("mutating headers keeps a Uint8Array body raw", () => {
+    const body = new TextEncoder().encode("hello world");
+    const res = new FastResponse(body);
+    res.headers.set("x-a", "1");
+
+    expect(res._toNodeResponse().body).toBe(body);
+  });
+
+  test("reading .body is what forfeits the fast path", () => {
+    const res = new FastResponse("hello world");
+    void res.body;
+
+    expect(res._toNodeResponse().body).toBeInstanceOf(ReadableStream);
+  });
+
+  test("headers stay mutable after materialization", () => {
+    const res = new FastResponse("hello world");
+    void res.body; // materialize
+
+    expect(() => res.headers.append("set-cookie", "session=abc")).not.toThrow();
+    expect(res._toNodeResponse().headers).toContain("session=abc");
+  });
+
+  test("a plain Response is mutable too, so middleware need not branch", () => {
+    // Only fetch()/Response.error()/Response.redirect() results are immutable.
+    const res = new Response("hello world");
+
+    expect(() => {
+      res.headers.set("cache-control", "no-store");
+      res.headers.append("set-cookie", "session=abc");
+    }).not.toThrow();
+    expect(res.headers.getSetCookie()).toEqual(["session=abc"]);
+  });
+});
+
 // v1 stabilization: Node-adapter crash/corruption regressions.
 describe("node body crash regressions", () => {
   // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async
