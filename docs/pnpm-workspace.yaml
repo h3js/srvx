@@ -1,6 +1,6 @@
 packages: []
 allowBuilds:
-  '@parcel/watcher': false
+  "@parcel/watcher": false
 ignoredBuiltDependencies:
   - "@parcel/watcher"
   - "@tailwindcss/oxide"
