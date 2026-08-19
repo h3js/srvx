@@ -322,6 +322,10 @@ describe("adapters", () => {
         setHeaders: (res) => res.writeHead(200, "OK", { "Transfer-Encoding": "chunked" }),
       },
       {
+        name: "writeHead with a non-string statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "Transfer-Encoding": "chunked" }),
+      },
+      {
         name: "writeHead flat array form",
         setHeaders: (res) => res.writeHead(200, ["transfer-encoding", "chunked"] as any),
       },
@@ -351,6 +355,67 @@ describe("adapters", () => {
         expect(res.headers.get("transfer-encoding")).toBe(null);
       });
     }
+  });
+
+  // `writeHead()` has two overloads and Node picks between them with
+  // `obj ??= reason`: the headers argument is whichever of the last two is
+  // present, and the third wins when both are. A reason phrase that is not a
+  // string (`undefined`/`null`) therefore still leaves real headers in the third
+  // argument -- what proxying an HTTP/2 upstream, which carries no status
+  // message, produces. Dropping them would silently strip response headers the
+  // handler set, including security ones like CSP.
+  describe("writeHead forwards headers for every argument form", () => {
+    const cases: { name: string; setHeaders: (res: any) => void }[] = [
+      {
+        name: "2-arg object form",
+        setHeaders: (res) => res.writeHead(200, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a string statusMessage",
+        setHeaders: (res) => res.writeHead(200, "OK", { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with an undefined statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a null statusMessage",
+        setHeaders: (res) => res.writeHead(200, null, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg flat array form",
+        setHeaders: (res) => res.writeHead(200, undefined, ["x-frame-options", "DENY"]),
+      },
+      {
+        name: "3-arg nested array form",
+        setHeaders: (res) => res.writeHead(200, undefined, [["x-frame-options", "DENY"]]),
+      },
+    ];
+
+    for (const { name, setHeaders } of cases) {
+      test(name, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          setHeaders(res as any);
+          res.end("hello");
+        };
+        const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("hello");
+        expect(res.headers.get("x-frame-options")).toBe("DENY");
+      });
+    }
+
+    // Node prefers the third argument when both could be headers; mirror it so
+    // the bridge and a plain `http.Server` cannot disagree on which one applies.
+    test("the third argument wins over a non-string second one", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        (res as any).writeHead(200, { "x-from": "reason" }, { "x-from": "obj" });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.headers.get("x-from")).toBe("obj");
+      expect(await res.text()).toBe("hello");
+    });
   });
 
   // https://github.com/h3js/srvx/issues/248
