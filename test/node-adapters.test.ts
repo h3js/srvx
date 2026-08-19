@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
 import { describe, expect, test, vi } from "vitest";
 
@@ -1377,6 +1378,66 @@ describe("node fetch-spec correctness regressions", () => {
     expect(cancelled).toBe(true);
     // The stream was cancelled up front rather than pumped.
     expect(pulls).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // Same guarantee for the Node `Readable` fast path, which goes through
+  // pipeBody instead of streamBody. Node's write() is a no-op for HEAD, so
+  // without the guard the stream is pumped with zero backpressure.
+  test("HEAD discards a Node Readable body instead of pumping it", async () => {
+    let reads = 0;
+    let readable!: Readable;
+    const server = serve({
+      port: 0,
+      fetch() {
+        readable = new Readable({
+          read() {
+            reads++;
+            // Bounded so a regression fails the assertion below instead of
+            // OOMing the worker (the real-world body would be unbounded).
+            this.push(reads > 64 ? null : Buffer.alloc(1024, "x"));
+          },
+        });
+        return new FastResponse(readable as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    // Let the destroy settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readable.destroyed).toBe(true);
+    // The stream was destroyed up front rather than pumped.
+    expect(reads).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // The HEAD guard still commits to the handler's status/headers, and does not
+  // leak into non-HEAD requests on the same server.
+  test("HEAD keeps the handler's headers for a Node Readable body", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        return new FastResponse(Readable.from(["hello", "world"]) as unknown as BodyInit, {
+          status: 206,
+          headers: { "content-length": "10", "x-custom": "1" },
+        });
+      },
+    });
+    await server.ready();
+
+    const headRes = await fetch(server.url!, { method: "HEAD" });
+    expect(headRes.status).toBe(206);
+    expect(headRes.headers.get("content-length")).toBe("10");
+    expect(headRes.headers.get("x-custom")).toBe("1");
+    expect((await headRes.arrayBuffer()).byteLength).toBe(0);
+
+    // A GET on the same server still streams the body.
+    const getRes = await fetch(server.url!);
+    expect(getRes.status).toBe(206);
+    expect(await getRes.text()).toBe("helloworld");
     await server.close(true);
   });
 

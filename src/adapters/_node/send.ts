@@ -222,6 +222,22 @@ function pipeBody(
     return;
   }
 
+  // HEAD responses must carry no body. Node's write() is a no-op that always
+  // returns true for HEAD, so pipeline() never sees backpressure and drains an
+  // unbounded body (e.g. an SSE stream) as fast as it is produced, starving the
+  // event loop. Discard the source up front instead, mirroring streamBody.
+  // Headers are still deferred here, so write them before ending.
+  if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
+    if (typeof stream.destroy === "function") {
+      stream.destroy();
+    } else {
+      // Duck-typed pipe objects (e.g. React's PipeableStream) expose abort().
+      (stream as unknown as { abort?: () => void }).abort?.();
+    }
+    writeHead(nodeRes, status, statusText, headers);
+    return endNodeResponse(nodeRes);
+  }
+
   // Duck-typed pipe objects (e.g. React's PipeableStream) only have .pipe()
   // and don't support pipeline() — use the raw path.
   if (typeof stream.on !== "function" || typeof stream.destroy !== "function") {

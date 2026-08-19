@@ -300,4 +300,35 @@ describe("node response stream error handling", () => {
     expect(await res.text()).toBe("hello from pipeable");
     await server.close(true);
   });
+
+  test("HEAD aborts a duck-typed pipe object instead of piping it", async () => {
+    let aborted = false;
+    let piped = false;
+    const server = serve({
+      port: 0,
+      fetch() {
+        const pipeableStream = {
+          pipe(writable: NodeJS.WritableStream) {
+            piped = true;
+            writable.write("hello from pipeable");
+            writable.end();
+            return writable;
+          },
+          abort() {
+            aborted = true;
+          },
+        };
+        return new FastResponse(pipeableStream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(aborted).toBe(true);
+    expect(piped).toBe(false);
+    await server.close(true);
+  });
 });
