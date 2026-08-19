@@ -136,10 +136,19 @@ function parseArgs(args: string[]): CLIOptions {
     positionals.shift();
   }
 
+  // `--prod` wins; otherwise fall back to the documented `NODE_ENV` control
+  // (see the ENVIRONMENT section of usage.ts). The fallback was dropped by the
+  // CLI file-split refactor (#175), silently turning `NODE_ENV=production` into
+  // a dead option and leaking stack traces from the dev error page. Resolved
+  // once here so serve and fetch modes agree. `node:util.parseArgs` rejects
+  // `--prod=false` for a boolean option, so `values.prod` is `true | undefined`
+  // and `??` is the correct operator.
+  const prod = values.prod ?? process.env.NODE_ENV === "production";
+
   if (mode === "fetch") {
     const method = values.method || values.request;
     const url = values.url || positionals[0] || "/";
-    return { mode, ...values, url, method };
+    return { mode, ...values, prod, url, method };
   }
 
   // Serve mode: allow entry or dir as a positional argument
@@ -159,7 +168,7 @@ function parseArgs(args: string[]): CLIOptions {
     }
   }
 
-  return { mode, ...values };
+  return { mode, ...values, prod };
 }
 
 async function startServer(cliOpts: CLIOptions) {

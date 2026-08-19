@@ -7,6 +7,11 @@ export const fetch = async (req: Request): Promise<Response> => {
   if (url.pathname === "/echo") {
     return new Response(await req.text());
   }
+  if (url.pathname === "/boom") {
+    // Used to assert that the verbose error page (which embeds the stack)
+    // is only rendered in dev mode.
+    throw new Error("BOOM_SECRET");
+  }
   if (url.pathname === "/env") {
     return new Response(process.env.CLI_TEST_VAR || "");
   }

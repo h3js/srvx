@@ -174,6 +174,62 @@ describe("cli", () => {
       expect(exitCode).not.toBe(0);
       expect(stderr).toMatch(/static/i);
     });
+
+    it("NODE_ENV=production (no --prod) suppresses the stack-trace error page", async () => {
+      const port = await getRandomPort("localhost");
+      const child = runCli(["--entry", entryFile, "--port", String(port)], {
+        env: { NODE_ENV: "production" },
+      });
+      let result: any;
+      try {
+        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        const res = await fetch(`http://localhost:${port}/boom`);
+        expect(res.status).toBe(500);
+        const body = await res.text();
+        expect(body).toContain("Something went wrong");
+        expect(body).not.toContain("BOOM_SECRET");
+        expect(body).not.toMatch(/\n\s+at\s/); // no stack-trace frames
+      } finally {
+        child.kill("SIGTERM");
+        result = await child.catch((error: any) => error);
+      }
+      // NODE_ENV also drives the rest of prod mode (banner, .env.production, no watch)
+      expect(result.stdout).toContain("prod");
+    });
+
+    it("--prod suppresses the stack-trace error page", async () => {
+      const port = await getRandomPort("localhost");
+      const child = runCli(["--prod", "--entry", entryFile, "--port", String(port)]);
+      try {
+        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        const res = await fetch(`http://localhost:${port}/boom`);
+        expect(res.status).toBe(500);
+        const body = await res.text();
+        expect(body).toContain("Something went wrong");
+        expect(body).not.toContain("BOOM_SECRET");
+        expect(body).not.toMatch(/\n\s+at\s/); // no stack-trace frames
+      } finally {
+        child.kill("SIGTERM");
+        await child.catch(() => {});
+      }
+    });
+
+    it("dev mode still shows the stack trace", async () => {
+      const port = await getRandomPort("localhost");
+      const child = runCli(["--entry", entryFile, "--port", String(port)], {
+        env: { NODE_ENV: "development" },
+      });
+      try {
+        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        const res = await fetch(`http://localhost:${port}/boom`);
+        expect(res.status).toBe(500);
+        const body = await res.text();
+        expect(body).toContain("BOOM_SECRET");
+      } finally {
+        child.kill("SIGTERM");
+        await child.catch(() => {});
+      }
+    });
   });
 
   describe("errors", () => {

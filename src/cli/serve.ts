@@ -112,7 +112,11 @@ function renderError(
 ): Response {
   const safeTitle = escapeHtml(title);
   let html = `<!DOCTYPE html><html><head><title>${safeTitle}</title></head><body>`;
-  if (cliOpts.prod) {
+  // Never send a stack trace to a remote client when the
+  // process believes it is in production, even if `prod` resolution regresses again.
+  // `cliServe` sets NODE_ENV before any request is handled, so it is always set here.
+  const safeMode = cliOpts.prod || process.env.NODE_ENV === "production";
+  if (safeMode) {
     html += `<h1>${safeTitle}</h1><p>Something went wrong while processing your request.</p>`;
   } else {
     html += /* html */ `
