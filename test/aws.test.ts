@@ -108,35 +108,55 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.url).toMatch(/^https:\/\//);
       expect(request.headers.get("content-type")).toBe("application/json");
       expect(request.headers.get("authorization")).toBe("Bearer token123");
-      // Check cookies are set (we can't easily test getAll in test environment)
-      expect(request.headers.get("cookie")).toBeDefined();
+      // `cookies[]` with no `headers.cookie`: each entry is joined into one header.
+      expect(request.headers.get("cookie")).toBe("sessionId=abc123; theme=dark");
     });
 
-    test("should not duplicate cookies when headers.cookie and cookies[] both exist", () => {
-      const v2Event: APIGatewayProxyEventV2 = {
+    const cookieEvent = (
+      headers: Record<string, string>,
+      cookies?: string[],
+    ): APIGatewayProxyEventV2 =>
+      ({
         version: "2.0",
         routeKey: "GET /",
         rawPath: "/",
         rawQueryString: "",
-        headers: {
-          host: "api.example.com",
-          cookie: "session=abc; theme=dark",
-        },
-        cookies: ["session=abc", "theme=dark"],
+        headers: { host: "api.example.com", ...headers },
+        ...(cookies && { cookies }),
         isBase64Encoded: false,
         requestContext: {
           http: { method: "GET", path: "/" },
           domainName: "api.example.com",
-        } as any,
-      };
+        },
+      }) as any;
 
-      const request = awsRequest(v2Event, createMockContext());
-      const cookie = request.headers.get("cookie") ?? "";
+    test("should let cookies[] win over headers.cookie when both exist", () => {
+      // Deliberately conflicting values: matching ones could not tell "the
+      // header was dropped" apart from "the header was kept and deduped".
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=stale; theme=light" }, ["session=fresh", "theme=dark"]),
+        createMockContext(),
+      );
 
-      expect(cookie).toContain("session=abc");
-      expect(cookie).toContain("theme=dark");
-      expect(cookie.match(/session=abc/g)?.length).toBe(1);
-      expect(cookie.match(/theme=dark/g)?.length).toBe(1);
+      expect(request.headers.get("cookie")).toBe("session=fresh; theme=dark");
+    });
+
+    test("should keep headers.cookie when the event has no cookies[]", () => {
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=abc; theme=dark" }),
+        createMockContext(),
+      );
+
+      expect(request.headers.get("cookie")).toBe("session=abc; theme=dark");
+    });
+
+    test("should keep headers.cookie when cookies[] is empty", () => {
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=abc; theme=dark" }, []),
+        createMockContext(),
+      );
+
+      expect(request.headers.get("cookie")).toBe("session=abc; theme=dark");
     });
 
     test("should round-trip cookies through invokeLambdaHandler without duplicating", async () => {
