@@ -113,8 +113,7 @@ export class WebServerResponse extends ServerResponse {
     const result =
       typeof statusMessage === "string"
         ? super.writeHead(statusCode, statusMessage, stripTransferEncoding(headers))
-        : 
-          super.writeHead(statusCode, stripTransferEncoding(headers ?? statusMessage));
+        : super.writeHead(statusCode, stripTransferEncoding(headers ?? statusMessage));
     this.#onHeadersSent?.();
     return result;
   }
