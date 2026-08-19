@@ -1,6 +1,6 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { resolveClientIP, trustedHops, forwardedHopValue } from "../../_trust-proxy.ts";
+import { resolveClientIP, trustedHops, forwardedHopValue, HOST_RE } from "../../_trust-proxy.ts";
 import type { ResponseBody } from "../../types.ts";
 import type {
   AWSLambdaContext,
@@ -80,7 +80,17 @@ function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string 
 }
 
 function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: number): URL {
-  const path = (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath;
+  const rawPath =
+    (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath || "/";
+
+  // The gateway path is client-controlled and must never contribute the
+  // authority. Resolving it as a *relative reference* would let `//evil.com/x`
+  // (a protocol-relative reference) or `https://evil.com/x` (absolute form)
+  // replace the origin, so it is concatenated after the authority instead and
+  // is always forced into origin-form. `//` runs are deliberately preserved
+  // rather than collapsed, so the routed `pathname` keeps matching the raw path
+  // the gateway saw — same as `NodeRequestURL`.
+  const path = rawPath[0] === "/" ? rawPath : `/${rawPath}`;
 
   const query = awsEventQuery(event);
 
@@ -91,12 +101,17 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
     event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"],
     hops,
   );
-  const hostname =
-    forwardedHost ||
+
+  // A malformed host must neither inject an authority/path into the URL built
+  // below nor throw out of `awsRequest` (which runs before the error
+  // middleware, so a throw fails the whole invocation). Same `HOST_RE` gate and
+  // `_invalid_` sentinel as the Node adapter.
+  const host =
+    (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
     event.headers.host ||
     event.headers.Host ||
-    event.requestContext?.domainName ||
-    ".";
+    event.requestContext?.domainName;
+  const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
   const forwardedProto = forwardedHopValue(
@@ -105,7 +120,7 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   );
   const protocol = forwardedProto === "http" ? "http" : "https";
 
-  return new URL(`${path}${query ? `?${query}` : ""}`, `${protocol}://${hostname}`);
+  return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
 }
 
 function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {

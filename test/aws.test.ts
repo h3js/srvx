@@ -486,6 +486,183 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(request.url).toContain("/api/users/123");
     });
+
+    // -- URL origin hardening --
+    // The gateway path and the `Host` header are client-controlled and must
+    // never be able to move `request.url` off the real origin (or throw out of
+    // `awsRequest`, which runs before the error middleware).
+
+    const v1EventWith = (event: Partial<APIGatewayProxyEvent>): APIGatewayProxyEvent =>
+      ({
+        httpMethod: "GET",
+        path: "/api/users",
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        resource: "",
+        queryStringParameters: null,
+        ...event,
+        headers: { host: "api.example.com", ...event.headers },
+        requestContext: { domainName: "api.example.com", ...event.requestContext } as any,
+      }) as APIGatewayProxyEvent;
+
+    const v2EventWith = (event: Partial<APIGatewayProxyEventV2>): APIGatewayProxyEventV2 =>
+      ({
+        version: "2.0",
+        rawPath: "/api/users",
+        rawQueryString: "",
+        body: undefined,
+        isBase64Encoded: false,
+        routeKey: "$default",
+        ...event,
+        headers: { host: "api.example.com", ...event.headers },
+        requestContext: {
+          domainName: "api.example.com",
+          http: { method: "GET" },
+          ...event.requestContext,
+        } as any,
+      }) as APIGatewayProxyEventV2;
+
+    // [rawPath/path, resulting pathname]
+    const hostilePaths: [string, string][] = [
+      ["//evil.com/admin", "//evil.com/admin"],
+      ["///evil.com/x", "///evil.com/x"],
+      ["/\\evil.com/admin", "//evil.com/admin"],
+      ["//evil.com:8080/x", "//evil.com:8080/x"],
+      ["//user:pw@evil.com/x", "//user:pw@evil.com/x"],
+      ["https://evil.com/x", "/https://evil.com/x"],
+      ["javascript:alert(1)", "/javascript:alert(1)"],
+    ];
+
+    test.each(hostilePaths)(
+      "client path %j cannot override the URL authority (v2 rawPath)",
+      (rawPath, pathname) => {
+        const request = awsRequest(v2EventWith({ rawPath }), createMockContext());
+        const url = new URL(request.url);
+
+        expect(url.host).toBe("api.example.com");
+        expect(url.origin).toBe("https://api.example.com");
+        // The path is preserved verbatim (`//` runs are not collapsed) so the
+        // routed pathname keeps matching what the gateway/WAF authorized,
+        // matching the Node adapter.
+        expect(url.pathname).toBe(pathname);
+        expect(url.username).toBe("");
+        expect(url.password).toBe("");
+      },
+    );
+
+    test.each(hostilePaths)(
+      "client path %j cannot override the URL authority (v1 path)",
+      (path, pathname) => {
+        const request = awsRequest(v1EventWith({ path }), createMockContext());
+        const url = new URL(request.url);
+
+        expect(url.host).toBe("api.example.com");
+        expect(url.origin).toBe("https://api.example.com");
+        expect(url.pathname).toBe(pathname);
+      },
+    );
+
+    test("a path with userinfo no longer fails the invocation", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("ok"));
+
+      await expect(
+        handleLambdaEvent(
+          fetchHandler,
+          v2EventWith({ rawPath: "//user:pw@evil.com/x" }),
+          createMockContext(),
+        ),
+      ).resolves.toMatchObject({ statusCode: 200 });
+
+      const request = fetchHandler.mock.calls[0][0] as Request;
+      expect(new URL(request.url).host).toBe("api.example.com");
+    });
+
+    test.each(["bad host", "a.com/foo?", "api.example.com:3000/zzz", "evil.com:99999999"])(
+      "malformed Host %j becomes `_invalid_` without throwing",
+      (host) => {
+        const request = awsRequest(
+          v2EventWith({ rawPath: "/x", headers: { host } }),
+          createMockContext(),
+        );
+
+        expect(new URL(request.url).host).toBe("_invalid_");
+      },
+    );
+
+    test("a malformed Host does not fail the invocation", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("ok"));
+
+      await expect(
+        handleLambdaEvent(
+          fetchHandler,
+          v2EventWith({ rawPath: "/x", headers: { host: "bad host" } }),
+          createMockContext(),
+        ),
+      ).resolves.toMatchObject({ statusCode: 200 });
+    });
+
+    test("a well-formed Host is still honored", () => {
+      const request = awsRequest(
+        v2EventWith({ rawPath: "/x", headers: { host: "api.example.com:3000" } }),
+        createMockContext(),
+      );
+
+      expect(new URL(request.url).host).toBe("api.example.com:3000");
+    });
+
+    test("invalid X-Forwarded-Host is ignored even when the proxy is trusted", () => {
+      const request = awsRequest(
+        v2EventWith({
+          rawPath: "/x",
+          headers: { host: "real.example.com", "x-forwarded-host": "evil.com/p?" },
+        }),
+        createMockContext(),
+        true,
+      );
+
+      expect(new URL(request.url).host).toBe("real.example.com");
+    });
+
+    test("missing Host falls back to domainName, then to `_invalid_`", () => {
+      const withDomainName = awsRequest(
+        v2EventWith({ rawPath: "/x", headers: {} as any, requestContext: {} as any }),
+        createMockContext(),
+      );
+      expect(new URL(withDomainName.url).host).toBe("api.example.com");
+
+      const withoutAnyHost = awsRequest(
+        {
+          rawPath: "/x",
+          rawQueryString: "",
+          headers: {},
+          requestContext: { http: { method: "GET" } },
+        } as any,
+        createMockContext(),
+      );
+      expect(new URL(withoutAnyHost.url).host).toBe("_invalid_");
+    });
+
+    test("a missing path falls back to `/` instead of `/undefined`", () => {
+      const request = awsRequest(
+        { headers: { host: "api.example.com" }, requestContext: {} } as any,
+        createMockContext(),
+      );
+
+      expect(request.url).toBe("https://api.example.com/");
+    });
+
+    test("benign paths and queries are unchanged", () => {
+      const request = awsRequest(
+        v2EventWith({ rawPath: "/api/users", rawQueryString: "page=1&limit=10" }),
+        createMockContext(),
+      );
+
+      expect(request.url).toBe("https://api.example.com/api/users?page=1&limit=10");
+    });
   });
 
   describe("awsResponseHeaders", () => {
@@ -1051,6 +1228,27 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Hello World");
+    });
+
+    test("a `//`-prefixed path round-trips without hijacking the origin", async () => {
+      // `requestToAwsEvent` puts `url.pathname` into `rawPath`/`path`, so this
+      // reaches the same sink as a real gateway event, with no AWS involvement.
+      // Before the fix the handler observed `https://evil.com/x`.
+      const observed: string[] = [];
+      const handler: AWSLambdaHandler = (event, context) => {
+        observed.push(awsRequest(event, context).url);
+        return { statusCode: 200, body: "OK" };
+      };
+
+      const response = await invokeLambdaHandler(
+        handler,
+        new Request("http://localhost:3000//evil.com/x"),
+      );
+
+      expect(response.status).toBe(200);
+      const url = new URL(observed[0]);
+      expect(url.host).toBe("localhost");
+      expect(url.pathname).toBe("//evil.com/x");
     });
   });
 
