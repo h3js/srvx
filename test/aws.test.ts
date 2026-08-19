@@ -5,12 +5,14 @@ import {
   awsResponseHeaders,
   awsStreamResponse,
   createMockContext,
+  requestToAwsEvent,
   type AWSLambdaResponseStream,
 } from "../src/adapters/_aws/utils.ts";
 import {
   handleLambdaEvent,
   handleLambdaEventWithStream,
   invokeLambdaHandler,
+  toLambdaHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
 import type {
@@ -135,6 +137,31 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(cookie).toContain("theme=dark");
       expect(cookie.match(/session=abc/g)?.length).toBe(1);
       expect(cookie.match(/theme=dark/g)?.length).toBe(1);
+    });
+
+    test("should round-trip cookies through invokeLambdaHandler without duplicating", async () => {
+      const handler = toLambdaHandler({
+        fetch: (request) => new Response(request.headers.get("cookie")),
+      });
+
+      const response = await invokeLambdaHandler(
+        handler,
+        new Request("https://example.com/", {
+          headers: { cookie: "session=abc; theme=dark" },
+        }),
+      );
+
+      expect(await response.text()).toBe("session=abc; theme=dark");
+    });
+
+    test("should split the cookie header into one entry per cookie", async () => {
+      const event = await requestToAwsEvent(
+        new Request("https://example.com/", {
+          headers: { cookie: "session=abc; theme=dark" },
+        }),
+      );
+
+      expect(event.cookies).toEqual(["session=abc", "theme=dark"]);
     });
 
     test("should handle base64 encoded body", () => {

@@ -136,16 +136,18 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
-  // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
-  // `headers.cookie` and the parsed `cookies[]` array. Prefer the array when
-  // present so Cookie is not appended twice.
-  const cookies = "cookies" in event && event.cookies?.length ? event.cookies : undefined;
   for (const [key, value] of Object.entries(event.headers)) {
-    if (value && !(cookies && key.toLowerCase() === "cookie")) {
+    if (value) {
       headers.set(key, value);
     }
   }
+  // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
+  // `headers.cookie` and the parsed `cookies[]` array. The array is the source
+  // of truth when non-empty, so drop the header instead of appending on top of
+  // it (which would hand the handler every cookie twice).
+  const cookies = "cookies" in event && event.cookies?.length ? event.cookies : undefined;
   if (cookies) {
+    headers.delete("cookie");
     for (const cookie of cookies) {
       headers.append("cookie", cookie);
     }
@@ -313,7 +315,8 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
   const cookies: string[] = [];
   for (const [key, value] of request.headers) {
     if (key.toLowerCase() === "cookie") {
-      cookies.push(value);
+      // Payload 2.0 exposes one entry per cookie, not the raw header value.
+      cookies.push(...splitCookieHeader(value));
     }
     headers[key] = value;
   }
@@ -402,6 +405,13 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
       domainPrefix: url.hostname.split(".")[0],
     },
   } as unknown as AwsLambdaEvent;
+}
+
+function splitCookieHeader(value: string): string[] {
+  return value
+    .split(";")
+    .map((c) => c.trim())
+    .filter(Boolean);
 }
 
 function parseMultiValueQuery(params: URLSearchParams): Record<string, string[]> {
