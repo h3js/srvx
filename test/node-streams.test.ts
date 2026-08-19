@@ -1,7 +1,9 @@
+import { createServer, request } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, test } from "vitest";
 import { serve, FastResponse } from "../src/adapters/node.ts";
-import { streamBody } from "../src/adapters/_node/send.ts";
+import { sendNodeResponse, streamBody } from "../src/adapters/_node/send.ts";
 import type { NodeServerResponse } from "../src/types.ts";
 
 describe("node response stream error handling", () => {
@@ -41,6 +43,69 @@ describe("node response stream error handling", () => {
 
     expect(wasDestroyed).toBe(true);
     await server.close(true);
+  });
+
+  // Regression: `pipeBody` waits for the source stream's first 'readable'/'error'
+  // before writing headers. If the client goes away during that window, nothing
+  // used to observe it: the source stream (and whatever fd/socket backs it) was
+  // never destroyed.
+  test("client abort before the first chunk destroys the node readable", async () => {
+    let onStream!: (s: Readable) => void;
+    const streamReady = new Promise<Readable>((r) => (onStream = r));
+
+    const server = serve({
+      port: 0,
+      fetch() {
+        // Never pushes: no 'readable', no 'error'.
+        const stream = new Readable({ read() {} });
+        onStream(stream);
+        return new FastResponse(stream as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    // Raw request instead of fetch(): the abort must land before any byte.
+    const req = request(server.url!);
+    req.on("error", () => {});
+    req.end();
+
+    const stream = await streamReady;
+    await new Promise((r) => setTimeout(r, 100));
+    req.destroy();
+    await new Promise((r) => setTimeout(r, 300));
+
+    expect(stream.destroyed).toBe(true);
+    expect(stream.listenerCount("readable")).toBe(0);
+    await server.close(true);
+  });
+
+  // The promise `pipeBody` returns is awaited by `toNodeHandler`/`sendNodeResponse`
+  // callers, so a stalled pre-header abort would hang the middleware chain forever.
+  test("pipeBody promise settles when the client aborts before the first chunk", async () => {
+    const stream = new Readable({ read() {} });
+    let onSettled!: () => void;
+    const settled = new Promise<void>((r) => (onSettled = r));
+
+    const server = createServer((_req, res) => {
+      sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit)).then(onSettled);
+    });
+    await new Promise<void>((r) => server.listen(0, r));
+
+    const req = request({ port: (server.address() as AddressInfo).port });
+    req.on("error", () => {});
+    req.end();
+
+    await new Promise((r) => setTimeout(r, 100));
+    req.destroy();
+
+    const result = await Promise.race([
+      settled.then(() => "settled"),
+      new Promise<string>((r) => setTimeout(() => r("hung"), 500)),
+    ]);
+
+    expect(result).toBe("settled");
+    expect(stream.destroyed).toBe(true);
+    await new Promise<void>((r) => server.close(() => r()));
   });
 
   test("node readable stream error terminates response", async () => {

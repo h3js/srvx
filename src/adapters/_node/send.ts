@@ -258,14 +258,20 @@ function pipeBody(
   }
 
   return new Promise<void>((resolve) => {
-    function onEarlyError() {
+    // All three outcomes are terminal: whichever fires first detaches the others.
+    function cleanup() {
+      stream.off("error", onEarlyError);
       stream.off("readable", onReadable);
+      nodeRes.off("close", onResClose);
+    }
+    function onEarlyError() {
+      cleanup();
       stream.destroy();
       writeHead(nodeRes, 500, "Internal Server Error", []);
       (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     function onReadable() {
-      stream.off("error", onEarlyError);
+      cleanup();
       if (nodeRes.destroyed) {
         stream.destroy();
         return resolve();
@@ -275,8 +281,17 @@ function pipeBody(
         .catch(() => {})
         .then(() => resolve());
     }
+    // The client can vanish before the stream produces its first byte. Nothing
+    // else observes that here (`pipeline()` has not started yet), so the source
+    // — and whatever fd/socket backs it — would stay open forever.
+    function onResClose() {
+      cleanup();
+      stream.destroy();
+      resolve();
+    }
     stream.once("error", onEarlyError);
     stream.once("readable", onReadable);
+    nodeRes.once("close", onResClose);
   });
 }
 
