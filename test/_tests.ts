@@ -382,7 +382,31 @@ export function addTests(opts: {
     expect(data.pathname).toBe("/bar/baz");
   });
 
-  // TODO: Write test to make sure it is forbidden for http2/tls (https://github.com/h3js/srvx/issues/236)
+  // HTTP/2 forbids an absolute-form `:path` outright (nghttp2 answers
+  // PROTOCOL_ERROR before the handler runs), so absolute-form is an HTTP/1-only
+  // concern. On HTTP/1 it is a MUST-accept (RFC 9112 §3.2.2); the security
+  // normalization of its scheme/authority/userinfo is covered by
+  // test/url.test.ts, test/node-host-header.test.ts and test/node.test.ts.
+  // (closes https://github.com/h3js/srvx/issues/236)
+  test.runIf(opts.http2)("absolute URI in :path is rejected by HTTP/2", async () => {
+    const _url = new URL(url("/"));
+    const client = http2.connect(_url.origin, { ca: opts.ca });
+    try {
+      for (const path of ["https://evil.example.com/x", "http://evil.example.com/x"]) {
+        const req = client.request({ ":path": path, ":authority": "localhost" });
+        const error = await new Promise<Error | undefined>((resolve) => {
+          req.on("response", () => resolve(undefined));
+          req.on("error", resolve);
+          req.on("end", () => resolve(undefined));
+        });
+        expect(error, path).toBeInstanceOf(Error);
+        expect((error as any).code, path).toBe("ERR_HTTP2_STREAM_ERROR");
+      }
+    } finally {
+      client.close();
+    }
+  });
+
   test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));
 

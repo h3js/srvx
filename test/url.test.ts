@@ -333,32 +333,101 @@ describe("FastURL", () => {
   });
 
   describe("absolute URI in request line", () => {
+    // RFC 9112 §3.2.2 requires accepting absolute-form and §3.3 makes its
+    // authority supersede `Host` — but srvx is an origin server, not a proxy, so
+    // the target is rebuilt rather than trusted verbatim:
+    //  - the scheme always comes from the transport (a client must never be able
+    //    to claim `https:` on a plaintext socket),
+    //  - the authority goes through `HOST_RE` exactly like a `Host` header
+    //    (`_invalid_` on failure),
+    //  - userinfo is dropped (`new Request()` throws on credentials → 500).
+    // Asserting only `pathname` is what let this slip through, so every case
+    // pins href/protocol/host/username.
     const cases = [
-      ["http://example.com/path", "/path"],
-      ["http://example.com/path?q=1", "/path"],
-      ["file://hehe?/internal/run", "/"],
-      ["file://hehe/abc", "/abc"],
-      ["http://evil.com?/secret", "/"],
-      ["https://host/a/b/c?x=1", "/a/b/c"],
+      // [input, pathname, href]
+      ["http://example.com/path", "/path", "http://example.com/path"],
+      ["http://example.com/path?q=1", "/path", "http://example.com/path?q=1"],
+      ["file://hehe?/internal/run", "/", "http://hehe/?/internal/run"],
+      ["file://hehe/abc", "/abc", "http://hehe/abc"],
+      ["http://evil.com?/secret", "/", "http://evil.com/?/secret"],
+      ["https://host/a/b/c?x=1", "/a/b/c", "http://host/a/b/c?x=1"],
+      // scheme is transport-derived, never client-derived
+      ["https://evil.com/x", "/x", "http://evil.com/x"],
+      ["HTTPS://EVIL.example.com/x", "/x", "http://evil.example.com/x"],
+      // userinfo is dropped
+      ["http://evil.com@real.example/admin", "/admin", "http://real.example/admin"],
+      ["http://user:pass@real.example/admin", "/admin", "http://real.example/admin"],
+      // HOST_RE-invalid authority -> `_invalid_` (same convention as `Host`)
+      ["http://evil.com./x", "/x", "http://_invalid_/x"],
+      ["http://evil.com.:8080/x", "/x", "http://_invalid_/x"],
+      // authority-less / unparseable targets keep the validated `Host`
+      ["file:///etc/passwd", "/etc/passwd", "http://localhost/etc/passwd"],
+      ["http://evil.com:99999/x", "/", "http://localhost/"],
+      ["http://[bad]/x", "/", "http://localhost/"],
+      // an explicit non-default port survives (it passes HOST_RE)
+      ["http://evil.com:8080/x", "/x", "http://evil.com:8080/x"],
+      // dot segments are normalized by the WHATWG parse
+      ["http://example.com/a/../b", "/b", "http://example.com/b"],
     ] as const;
 
-    for (const [input, expected] of cases) {
-      test(`"${input}" => pathname "${expected}"`, () => {
+    for (const [input, expected, href] of cases) {
+      const expectedURL = new URL(href);
+
+      test(`"${input}" => "${href}"`, () => {
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
-        expect(url.pathname).toBe(expected);
+        expect(url.pathname, ".pathname").toBe(expected);
+        expect(url.protocol, ".protocol").toBe("http:");
+        expect(url.host, ".host").toBe(expectedURL.host);
+        expect(url.origin, ".origin").toBe(expectedURL.origin);
+        expect(url.username, ".username").toBe("");
+        expect(url.password, ".password").toBe("");
+        expect(url.href, ".href").toBe(href);
       });
 
-      test(`"${input}" => pathname "${expected}" (after deopt)`, () => {
+      test(`"${input}" => "${href}" (after deopt)`, () => {
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
         // Access hostname to trigger _url deopt
         void url.hostname;
-        expect(url.pathname).toBe(expected);
+        expect(url.pathname, ".pathname").toBe(expected);
+        expect(url.protocol, ".protocol").toBe("http:");
+        expect(url.host, ".host").toBe(expectedURL.host);
+        expect(url.origin, ".origin").toBe(expectedURL.origin);
+        expect(url.username, ".username").toBe("");
+        expect(url.password, ".password").toBe("");
+        expect(url.href, ".href").toBe(href);
       });
     }
+
+    test("an encrypted socket keeps https: for an http: absolute-form target", () => {
+      const req = {
+        url: "http://evil.com/x",
+        headers: { host: "localhost" },
+        socket: { encrypted: true },
+      } as any;
+      expect(new NodeRequestURL({ req }).href).toBe("https://evil.com/x");
+      const deopt = new NodeRequestURL({ req });
+      void deopt.hostname;
+      expect(deopt.href).toBe("https://evil.com/x");
+    });
+
+    test("untrusted x-forwarded-* cannot change an absolute-form target", () => {
+      const req = {
+        url: "http://evil.com/x",
+        headers: {
+          host: "localhost",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "forwarded.example",
+        },
+      } as any;
+      // hops = 0 (trustProxy: false)
+      expect(new NodeRequestURL({ req }).href).toBe("http://evil.com/x");
+      // a trusted hop may set the scheme, but never via the request line
+      expect(new NodeRequestURL({ req, hops: 1 }).href).toBe("https://evil.com/x");
+    });
   });
 
   describe("non-URL request targets (asterisk-form & friends)", () => {
@@ -443,6 +512,36 @@ describe("FastURL", () => {
         });
       },
     );
+
+    // llhttp delivers any hierarchical `scheme://...` absolute-form target.
+    // srvx is an origin server for http(s) only (RFC 9110 §7.4).
+    test.each([
+      "GET file:///etc/passwd HTTP/1.1",
+      "GET file://hehe/x HTTP/1.1",
+      "GET ftp://evil.com/ HTTP/1.1",
+      "GET zzz://evil/x HTTP/1.1",
+      "GET http:// HTTP/1.1",
+      "GET http://evil.com:99999/x HTTP/1.1",
+    ])("%s over the wire returns 400", async (requestLine) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 400 /);
+      });
+    });
+
+    test("http(s) absolute-form is accepted, with the transport scheme", async () => {
+      await withServer(async (port) => {
+        const ok = await sendRaw(port, "GET http://evil.com/x HTTP/1.1");
+        expect(ok.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(ok.body).toContain("http://evil.com/x");
+
+        // `https:` on a plaintext socket must not survive.
+        const spoofed = await sendRaw(port, "GET https://evil.com/x HTTP/1.1");
+        expect(spoofed.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(spoofed.body).toContain("http://evil.com/x");
+        expect(spoofed.body).not.toContain("https://");
+      });
+    });
   });
 
   describe("fragment (#) in request target", () => {
