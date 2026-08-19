@@ -6,10 +6,25 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execa, type Options as ExecaOptions } from "execa";
 import { getRandomPort, waitForPort } from "get-port-please";
+import { fetch as undiciFetch, Agent } from "undici";
+import { getTLSCert } from "./_utils.ts";
 
 const runnerPath = fileURLToPath(new URL("./_cli-run.ts", import.meta.url));
 const fixtureDir = fileURLToPath(new URL("./fixtures/cli", import.meta.url));
 const entryFile = resolve(fixtureDir, "server.ts");
+const tlsEntryFile = resolve(fixtureDir, "tls-server.ts");
+
+const tlsCert = await getTLSCert();
+
+// undici dispatcher trusting the fixture CA, optionally presenting a client cert.
+function clientAgent(opts: { withClientCert?: boolean } = {}) {
+  return new Agent({
+    connect: {
+      ca: tlsCert.ca,
+      ...(opts.withClientCert ? { cert: tlsCert.clientCert, key: tlsCert.clientKey } : {}),
+    },
+  });
+}
 
 function runCli(
   args: string[],
@@ -21,6 +36,23 @@ function runCli(
     reject: false, // don't throw on non-zero exit; assert on exitCode instead
     env: { NO_COLOR: "1", ...opts.env },
   } as ExecaOptions);
+}
+
+// Start the CLI on a free port, run `fn`, then always tear the child down.
+async function withServedCli(
+  args: string[],
+  opts: { env?: Record<string, string> },
+  fn: (port: number) => Promise<void>,
+): Promise<void> {
+  const port = await getRandomPort("localhost");
+  const child = runCli([...args, "--port", String(port)], opts);
+  try {
+    await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+    await fn(port);
+  } finally {
+    child.kill("SIGTERM");
+    await child.catch(() => {});
+  }
 }
 
 describe("cli", () => {
@@ -229,6 +261,108 @@ describe("cli", () => {
         child.kill("SIGTERM");
         await child.catch(() => {});
       }
+    });
+  });
+
+  // The loader intercepts an entry's own `serve()` call before the adapter ever
+  // resolves TLS, so the CLI has to forward the intercepted options itself.
+  // Dropping them served TLS/mTLS entries over plaintext HTTP with no warning.
+  describe("serve mode: TLS from an intercepted serve() call", () => {
+    const tlsEnv = { SRVX_TEST_CERT: tlsCert.cert, SRVX_TEST_KEY: tlsCert.key };
+
+    it("a nested `serve({ tls })` entry is served over HTTPS, not plaintext", async () => {
+      await withServedCli(["--prod", "--entry", tlsEntryFile], { env: tlsEnv }, async (port) => {
+        const dispatcher = clientAgent();
+        try {
+          const res = await undiciFetch(`https://localhost:${port}/`, { dispatcher });
+          expect(res.status).toBe(200);
+          // `mwCount: 1` pins that the entry's middleware is not double-applied:
+          // it is already folded into the intercepted server's composed `fetch`.
+          expect(await res.json()).toMatchObject({ ok: true, mwCount: 1 });
+        } finally {
+          await dispatcher.close();
+        }
+        // ...and the same port must not answer plain HTTP any more.
+        await expect(undiciFetch(`http://localhost:${port}/`)).rejects.toThrow();
+      });
+    });
+
+    it("`--tls --cert --key` still overrides a nested `serve({ tls })`", async () => {
+      // The nested cert is unusable; the run only succeeds if the CLI flags win.
+      const certFile = fileURLToPath(new URL("./.tmp/tls/server.crt", import.meta.url));
+      const keyFile = fileURLToPath(new URL("./.tmp/tls/server.key", import.meta.url));
+      await withServedCli(
+        ["--prod", "--entry", tlsEntryFile, "--tls", "--cert", certFile, "--key", keyFile],
+        { env: { SRVX_TEST_CERT: "/nonexistent.crt", SRVX_TEST_KEY: "/nonexistent.key" } },
+        async (port) => {
+          const dispatcher = clientAgent();
+          try {
+            const res = await undiciFetch(`https://localhost:${port}/`, { dispatcher });
+            expect(res.status).toBe(200);
+          } finally {
+            await dispatcher.close();
+          }
+        },
+      );
+    });
+
+    it("mTLS: the client certificate reaches the handler through the CLI", async () => {
+      await withServedCli(
+        ["--prod", "--entry", tlsEntryFile],
+        {
+          env: {
+            ...tlsEnv,
+            SRVX_TEST_CA: tlsCert.ca,
+            SRVX_TEST_REJECT_UNAUTHORIZED: "false",
+          },
+        },
+        async (port) => {
+          const withCert = clientAgent({ withClientCert: true });
+          try {
+            const res = await undiciFetch(`https://localhost:${port}/`, { dispatcher: withCert });
+            expect(await res.json()).toMatchObject({
+              authorized: true,
+              subjectCN: "Test Client",
+            });
+          } finally {
+            await withCert.close();
+          }
+          const withoutCert = clientAgent();
+          try {
+            const res = await undiciFetch(`https://localhost:${port}/`, {
+              dispatcher: withoutCert,
+            });
+            expect(await res.json()).toMatchObject({ authorized: false });
+          } finally {
+            await withoutCert.close();
+          }
+        },
+      );
+    });
+
+    it("mTLS: rejectUnauthorized (default) is enforced at the handshake", async () => {
+      await withServedCli(
+        ["--prod", "--entry", tlsEntryFile],
+        { env: { ...tlsEnv, SRVX_TEST_CA: tlsCert.ca } },
+        async (port) => {
+          const withoutCert = clientAgent();
+          try {
+            await expect(
+              undiciFetch(`https://localhost:${port}/`, { dispatcher: withoutCert }),
+            ).rejects.toThrow();
+          } finally {
+            await withoutCert.close();
+          }
+          const withCert = clientAgent({ withClientCert: true });
+          try {
+            const res = await undiciFetch(`https://localhost:${port}/`, { dispatcher: withCert });
+            expect(res.status).toBe(200);
+            expect(await res.json()).toMatchObject({ authorized: true });
+          } finally {
+            await withCert.close();
+          }
+        },
+      );
     });
   });
 
