@@ -14,6 +14,11 @@
  * original request. Used for runtimes that have no native body-size option (e.g.
  * Deno) and exported so downstream layers can apply per-handler limits.
  *
+ * srvx's `ServerRequest._request` escape hatch is served over the same limited
+ * stream, so unwrapping the request (`req._request`, or `new Request(req)` under
+ * `patchGlobalRequest()`, which rewrites the input to `_request`) cannot reach
+ * the raw body and bypass the limit.
+ *
  * Proxy-wrapping (rather than rebuilding via `new Request(request, …)`) is
  * deliberate: it preserves the exact object handed in — including srvx's
  * `ServerRequest` augmentation (`runtime`, `waitUntil`, `ip`, `context`, …) —
@@ -78,6 +83,9 @@ export function limitRequestBody<T extends Request>(
   // so an unconsumed limited request stays allocation-light, and cached so
   // repeated `body` / read-method access observes one consistent body.
   let limited: Response | undefined;
+  // Native Request served for `_request` (see the trap below), cached alongside
+  // `limited` so the size-limited body is only ever handed out once.
+  let nativeRequest: globalThis.Request | undefined;
   const limitedBody = (): Response =>
     (limited ??= new Response(
       overLimit
@@ -98,6 +106,24 @@ export function limitRequestBody<T extends Request>(
       }
       if (typeof prop === "string" && bodyReadMethods.has(prop)) {
         return () => (limitedBody() as any)[prop]();
+      }
+      if (prop === "_request" && "_request" in target) {
+        // srvx's `ServerRequest._request` materializes a native Request over the
+        // *raw* body stream, so passing it through would hand out the unlimited
+        // body to every consumer that unwraps a `ServerRequest` — `req._request`
+        // itself, `new Request(req)` under `patchGlobalRequest()` (it rewrites
+        // the input to `_request`), and anything forwarding `_request.body`.
+        // Serve an equivalent request built over the size-limited body instead,
+        // cached so repeated access observes one request. Mirrors the adapter's
+        // own init; header mutations after this point are not shared with it.
+        return (nativeRequest ??= new Request(target.url, {
+          method: target.method,
+          headers: target.headers,
+          signal: target.signal,
+          body: limitedBody().body,
+          // @ts-expect-error Undici specific
+          duplex: "half",
+        }));
       }
       if (prop === "clone") {
         // Re-apply the limit to the clone so it can't be used to read an
