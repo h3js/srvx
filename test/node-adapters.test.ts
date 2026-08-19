@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
 import { describe, expect, test, vi } from "vitest";
 
@@ -321,6 +322,10 @@ describe("adapters", () => {
         setHeaders: (res) => res.writeHead(200, "OK", { "Transfer-Encoding": "chunked" }),
       },
       {
+        name: "writeHead with a non-string statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "Transfer-Encoding": "chunked" }),
+      },
+      {
         name: "writeHead flat array form",
         setHeaders: (res) => res.writeHead(200, ["transfer-encoding", "chunked"] as any),
       },
@@ -350,6 +355,67 @@ describe("adapters", () => {
         expect(res.headers.get("transfer-encoding")).toBe(null);
       });
     }
+  });
+
+  // `writeHead()` has two overloads and Node picks between them with
+  // `obj ??= reason`: the headers argument is whichever of the last two is
+  // present, and the third wins when both are. A reason phrase that is not a
+  // string (`undefined`/`null`) therefore still leaves real headers in the third
+  // argument -- what proxying an HTTP/2 upstream, which carries no status
+  // message, produces. Dropping them would silently strip response headers the
+  // handler set, including security ones like CSP.
+  describe("writeHead forwards headers for every argument form", () => {
+    const cases: { name: string; setHeaders: (res: any) => void }[] = [
+      {
+        name: "2-arg object form",
+        setHeaders: (res) => res.writeHead(200, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a string statusMessage",
+        setHeaders: (res) => res.writeHead(200, "OK", { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with an undefined statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a null statusMessage",
+        setHeaders: (res) => res.writeHead(200, null, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg flat array form",
+        setHeaders: (res) => res.writeHead(200, undefined, ["x-frame-options", "DENY"]),
+      },
+      {
+        name: "3-arg nested array form",
+        setHeaders: (res) => res.writeHead(200, undefined, [["x-frame-options", "DENY"]]),
+      },
+    ];
+
+    for (const { name, setHeaders } of cases) {
+      test(name, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          setHeaders(res as any);
+          res.end("hello");
+        };
+        const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("hello");
+        expect(res.headers.get("x-frame-options")).toBe("DENY");
+      });
+    }
+
+    // Node prefers the third argument when both could be headers; mirror it so
+    // the bridge and a plain `http.Server` cannot disagree on which one applies.
+    test("the third argument wins over a non-string second one", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        (res as any).writeHead(200, { "x-from": "reason" }, { "x-from": "obj" });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.headers.get("x-from")).toBe("obj");
+      expect(await res.text()).toBe("hello");
+    });
   });
 
   // https://github.com/h3js/srvx/issues/248
@@ -914,6 +980,59 @@ describe("FastResponse copies init Headers", () => {
   });
 });
 
+// Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
+// decorating a response must be able to mutate `res.headers` without paying for
+// materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
+// which is ~2x slower because it replaces the raw body with a ReadableStream.
+describe("FastResponse header mutation preserves the raw body", () => {
+  test("mutating headers keeps a string body raw", () => {
+    const res = new FastResponse("hello world", { headers: { "x-a": "1" } });
+    res.headers.append("set-cookie", "session=abc");
+
+    const prepared = res._toNodeResponse();
+
+    expect(prepared.body).toBe("hello world");
+    expect(prepared.headers).toContain("session=abc");
+    // Implicit content-type/length are still derived from the raw body.
+    expect(prepared.headers).toContain("text/plain; charset=UTF-8");
+    expect(prepared.headers).toContain("11");
+  });
+
+  test("mutating headers keeps a Uint8Array body raw", () => {
+    const body = new TextEncoder().encode("hello world");
+    const res = new FastResponse(body);
+    res.headers.set("x-a", "1");
+
+    expect(res._toNodeResponse().body).toBe(body);
+  });
+
+  test("reading .body is what forfeits the fast path", () => {
+    const res = new FastResponse("hello world");
+    void res.body;
+
+    expect(res._toNodeResponse().body).toBeInstanceOf(ReadableStream);
+  });
+
+  test("headers stay mutable after materialization", () => {
+    const res = new FastResponse("hello world");
+    void res.body; // materialize
+
+    expect(() => res.headers.append("set-cookie", "session=abc")).not.toThrow();
+    expect(res._toNodeResponse().headers).toContain("session=abc");
+  });
+
+  test("a plain Response is mutable too, so middleware need not branch", () => {
+    // Only fetch()/Response.error()/Response.redirect() results are immutable.
+    const res = new Response("hello world");
+
+    expect(() => {
+      res.headers.set("cache-control", "no-store");
+      res.headers.append("set-cookie", "session=abc");
+    }).not.toThrow();
+    expect(res.headers.getSetCookie()).toEqual(["session=abc"]);
+  });
+});
+
 // v1 stabilization: Node-adapter crash/corruption regressions.
 describe("node body crash regressions", () => {
   // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async
@@ -1324,6 +1443,66 @@ describe("node fetch-spec correctness regressions", () => {
     expect(cancelled).toBe(true);
     // The stream was cancelled up front rather than pumped.
     expect(pulls).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // Same guarantee for the Node `Readable` fast path, which goes through
+  // pipeBody instead of streamBody. Node's write() is a no-op for HEAD, so
+  // without the guard the stream is pumped with zero backpressure.
+  test("HEAD discards a Node Readable body instead of pumping it", async () => {
+    let reads = 0;
+    let readable!: Readable;
+    const server = serve({
+      port: 0,
+      fetch() {
+        readable = new Readable({
+          read() {
+            reads++;
+            // Bounded so a regression fails the assertion below instead of
+            // OOMing the worker (the real-world body would be unbounded).
+            this.push(reads > 64 ? null : Buffer.alloc(1024, "x"));
+          },
+        });
+        return new FastResponse(readable as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    // Let the destroy settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readable.destroyed).toBe(true);
+    // The stream was destroyed up front rather than pumped.
+    expect(reads).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // The HEAD guard still commits to the handler's status/headers, and does not
+  // leak into non-HEAD requests on the same server.
+  test("HEAD keeps the handler's headers for a Node Readable body", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        return new FastResponse(Readable.from(["hello", "world"]) as unknown as BodyInit, {
+          status: 206,
+          headers: { "content-length": "10", "x-custom": "1" },
+        });
+      },
+    });
+    await server.ready();
+
+    const headRes = await fetch(server.url!, { method: "HEAD" });
+    expect(headRes.status).toBe(206);
+    expect(headRes.headers.get("content-length")).toBe("10");
+    expect(headRes.headers.get("x-custom")).toBe("1");
+    expect((await headRes.arrayBuffer()).byteLength).toBe(0);
+
+    // A GET on the same server still streams the body.
+    const getRes = await fetch(server.url!);
+    expect(getRes.status).toBe(206);
+    expect(await getRes.text()).toBe("helloworld");
     await server.close(true);
   });
 

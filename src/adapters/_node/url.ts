@@ -58,8 +58,56 @@ export class NodeRequestURL extends FastURL {
       // Deno. Other non-conforming targets are rejected by the adapter.
       super({ protocol, host, pathname: "/*", search: "" });
     } else {
-      // absolute-form (e.g. proxy request)
-      super(path);
+      // absolute-form (RFC 9112 §3.2.2), e.g. `GET https://host/p HTTP/1.1`.
+      // Origin servers MUST accept it and its authority supersedes `Host` — but
+      // srvx is not a proxy, so it must not become a way around the guarantees
+      // above. The transport-derived `protocol` stays authoritative (a client
+      // must never be able to claim `https:` on a plaintext socket, or `http:`
+      // on TLS), the request-line authority is `HOST_RE`-validated exactly like
+      // a `Host` header, and userinfo is dropped (`new Request()` throws on a
+      // URL that includes credentials — see `_request` in ./request.ts, which
+      // would otherwise turn any such target into an unauthenticated 500).
+      // `serve()` additionally answers 400 for targets that aren't http(s)
+      // absolute-form; this branch is what keeps `toNodeHandler`, which has no
+      // target gate, safe as well.
+      // (`URL.parse` is unusable here: `engines.node` is >=20.16.0 and
+      // `URL.parse` only landed in 20.18.)
+      const target = URL.canParse(path) ? new URL(path) : undefined;
+      if (target) {
+        // WHATWG parsing already lowercased the authority and stripped a
+        // default port; `target.host` excludes any userinfo.
+        const targetHost = target.host;
+        // An authority-less target (e.g. `file:///x`, only reachable via
+        // `toNodeHandler`) falls back to the validated `Host`-derived host.
+        const targetPath = target.pathname;
+        super({
+          protocol,
+          host: targetHost ? (HOST_RE.test(targetHost) ? targetHost : "_invalid_") : host,
+          pathname: targetPath ? (targetPath[0] === "/" ? targetPath : `/${targetPath}`) : "/",
+          search: target.search,
+        });
+      } else {
+        // Unparseable target (`serve()` already answers 400 for these; only
+        // reachable via `toNodeHandler`, which has no target gate).
+        super({ protocol, host, pathname: "/", search: "" });
+      }
     }
   }
+}
+
+/**
+ * Whether `target` is an absolute-form request-target (RFC 9112 §3.2.2) that srvx
+ * can serve as an origin server: parseable as a Fetch URL, http(s), and carrying
+ * an authority.
+ *
+ * llhttp delivers any hierarchical `scheme://…` target (`file://`, `ftp://`,
+ * `zzz://`), so schemes srvx does not serve are answered with 400 per RFC 9110
+ * §7.4 instead of being silently normalized into an http(s) URL.
+ */
+export function isValidAbsoluteForm(target: string): boolean {
+  if (!URL.canParse(target)) {
+    return false;
+  }
+  const url = new URL(target);
+  return (url.protocol === "http:" || url.protocol === "https:") && url.host !== "";
 }

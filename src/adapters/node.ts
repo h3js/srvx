@@ -1,5 +1,6 @@
 import { sendErrorResponse, sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
+import { isValidAbsoluteForm } from "./_node/url.ts";
 import {
   fmtURL,
   resolveTLSOptions,
@@ -69,8 +70,13 @@ class NodeServer implements Server {
       // anything that isn't origin-form (/...), absolute-form, or the RFC 9110
       // §7.1 asterisk-form (`*`). Bun/Deno reject these at the parser layer;
       // Node leaves it to us. (Hot path is a single char compare.)
+      // Absolute-form must additionally name an http(s) authority: srvx is an
+      // origin server, not a proxy, so `file://`/`ftp://`/`zzz://` targets —
+      // which llhttp does deliver — are 400, per RFC 9110 §7.4. The ones that
+      // pass are normalized in `NodeRequestURL` (transport scheme wins, the
+      // authority is `HOST_RE`-validated, userinfo is dropped).
       const reqUrl = nodeReq.url;
-      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !URL.canParse(reqUrl)) {
+      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !isValidAbsoluteForm(reqUrl)) {
         nodeRes.statusCode = 400;
         nodeRes.end();
         return;

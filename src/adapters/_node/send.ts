@@ -222,6 +222,22 @@ function pipeBody(
     return;
   }
 
+  // HEAD responses must carry no body. Node's write() is a no-op that always
+  // returns true for HEAD, so pipeline() never sees backpressure and drains an
+  // unbounded body (e.g. an SSE stream) as fast as it is produced, starving the
+  // event loop. Discard the source up front instead, mirroring streamBody.
+  // Headers are still deferred here, so write them before ending.
+  if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
+    if (typeof stream.destroy === "function") {
+      stream.destroy();
+    } else {
+      // Duck-typed pipe objects (e.g. React's PipeableStream) expose abort().
+      (stream as unknown as { abort?: () => void }).abort?.();
+    }
+    writeHead(nodeRes, status, statusText, headers);
+    return endNodeResponse(nodeRes);
+  }
+
   // Duck-typed pipe objects (e.g. React's PipeableStream) only have .pipe()
   // and don't support pipeline() — use the raw path.
   if (typeof stream.on !== "function" || typeof stream.destroy !== "function") {
@@ -242,14 +258,20 @@ function pipeBody(
   }
 
   return new Promise<void>((resolve) => {
-    function onEarlyError() {
+    // All three outcomes are terminal: whichever fires first detaches the others.
+    function cleanup() {
+      stream.off("error", onEarlyError);
       stream.off("readable", onReadable);
+      nodeRes.off("close", onResClose);
+    }
+    function onEarlyError() {
+      cleanup();
       stream.destroy();
       writeHead(nodeRes, 500, "Internal Server Error", []);
       (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     function onReadable() {
-      stream.off("error", onEarlyError);
+      cleanup();
       if (nodeRes.destroyed) {
         stream.destroy();
         return resolve();
@@ -259,8 +281,17 @@ function pipeBody(
         .catch(() => {})
         .then(() => resolve());
     }
+    // The client can vanish before the stream produces its first byte. Nothing
+    // else observes that here (`pipeline()` has not started yet), so the source
+    // — and whatever fd/socket backs it — would stay open forever.
+    function onResClose() {
+      cleanup();
+      stream.destroy();
+      resolve();
+    }
     stream.once("error", onEarlyError);
     stream.once("readable", onReadable);
+    nodeRes.once("close", onResClose);
   });
 }
 

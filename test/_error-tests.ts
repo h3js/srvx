@@ -27,7 +27,9 @@ export function addExecUnhandledThrowTests(cmd: string): void {
     childProc = execa(bin, args, { env: { PORT: port.toString() } });
     // Ignore the non-zero exit / SIGTERM that teardown provokes.
     childProc.catch(() => {});
-    childProc.on("exit", () => {
+    // execa v10 no longer extends `ChildProcess`: `.on()` is behind the
+    // `nodeChildProcess` escape hatch.
+    childProc.nodeChildProcess.on("exit", () => {
       exited = true;
     });
     await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });

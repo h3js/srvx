@@ -325,6 +325,82 @@ describe("limitRequestBody", () => {
     expect(limited.bodyUsed).toBe(true);
   });
 
+  // srvx's `ServerRequest` exposes the underlying native Request as `_request`
+  // (and `patchGlobalRequest()` rewrites `new Request(req)` to it), so the
+  // proxy has to serve that escape hatch over the size-limited body too.
+  describe("_request escape hatch", () => {
+    function serverRequestLike(body: BodyInit, headers?: HeadersInit): Request {
+      const request = new Request("http://localhost/", {
+        method: "POST",
+        headers,
+        body,
+        // @ts-expect-error duplex required for a streaming body
+        duplex: "half",
+      });
+      // Stand in for the adapter's getter: a native Request over the raw body.
+      Object.defineProperty(request, "_request", {
+        configurable: true,
+        get: () => raw,
+      });
+      const raw = new Request("http://localhost/", {
+        method: "POST",
+        body: request.body,
+        // @ts-expect-error duplex required for a streaming body
+        duplex: "half",
+      });
+      return request;
+    }
+
+    test("serves `_request` over the size-limited body", async () => {
+      const limited = limitRequestBody(serverRequestLike("0123456789"), 8);
+      expect("_request" in limited).toBe(true);
+      await expect((limited as any)._request.text()).rejects.toMatchObject({
+        code: "ERR_BODY_TOO_LARGE",
+      });
+    });
+
+    test("passes a `_request` body within the limit through", async () => {
+      const limited = limitRequestBody(serverRequestLike("hi"), 8);
+      expect(await (limited as any)._request.text()).toBe("hi");
+    });
+
+    test("rejects `_request` on the over-limit content-length fast path", async () => {
+      const limited = limitRequestBody(
+        serverRequestLike("0123456789", { "content-length": "100" }),
+        8,
+      );
+      await expect((limited as any)._request.text()).rejects.toMatchObject({
+        code: "ERR_BODY_TOO_LARGE",
+      });
+    });
+
+    test("caches `_request` so repeated access observes one request", () => {
+      const limited = limitRequestBody(serverRequestLike("hi"), 8);
+      expect((limited as any)._request).toBe((limited as any)._request);
+    });
+
+    test("marks the body used once `_request` is consumed", async () => {
+      const limited = limitRequestBody(serverRequestLike("hi"), 8);
+      expect(limited.bodyUsed).toBe(false);
+      await (limited as any)._request.text();
+      expect(limited.bodyUsed).toBe(true);
+    });
+
+    test("does not fabricate `_request` for a plain Request", () => {
+      const limited = limitRequestBody(
+        new Request("http://localhost/", {
+          method: "POST",
+          body: "hi",
+          // @ts-expect-error duplex required for a streaming body
+          duplex: "half",
+        }),
+        8,
+      );
+      expect("_request" in limited).toBe(false);
+      expect((limited as any)._request).toBeUndefined();
+    });
+  });
+
   describe("createError injection", () => {
     class CustomError extends Error {
       status = 413;

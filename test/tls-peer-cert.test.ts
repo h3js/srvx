@@ -85,6 +85,25 @@ describe.skipIf(typeof Bun !== "undefined")("mtlsPlugin() plugin (Node adapter)"
   });
 });
 
+// Defence in depth: the plugin's HTTPS check runs at construction time, so a host
+// that drops the TLS options afterwards (as the srvx CLI's loader interception
+// did) would otherwise reach the handler with `request.tls` silently `undefined`.
+test.skipIf(typeof Bun !== "undefined")(
+  "mtlsPlugin() rejects a request arriving on a non-TLS socket",
+  async () => {
+    const server = nodeServe(
+      fixture({
+        manual: true,
+        port: 0,
+        tls: { cert: tls.cert, key: tls.key },
+        plugins: [mtlsPlugin({ ca: tls.ca })],
+      }),
+    );
+    const res = await server.fetch(new Request("http://localhost/tls"));
+    expect(res.status).toBe(496);
+  },
+);
+
 test("request.tls is absent without the mtlsPlugin() plugin", async () => {
   const server = nodeServe(fixture({ port: 0 }));
   await server.ready();

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadServerEntry } from "../src/loader.ts";
+import { getTLSCert } from "./_utils.ts";
 
 const fixturesDir = resolve(import.meta.dirname, "fixtures");
 
@@ -94,6 +95,28 @@ describe("loadServerEntry", () => {
 
       expect(result.notFound).toBe(true);
       expect(result.fetch).toBeUndefined();
+    });
+  });
+
+  describe("intercepted serve()", () => {
+    it("exposes the intercepted server's options (including tls)", async () => {
+      // Hosts re-serving `loaded.fetch` (the srvx CLI among them) can only keep an
+      // entry's TLS if the intercepted server's options survive the interception.
+      const tls = await getTLSCert();
+      process.env.SRVX_TEST_CERT = tls.cert;
+      process.env.SRVX_TEST_KEY = tls.key;
+      try {
+        const result = await loadServerEntry({
+          entry: resolve(fixturesDir, "cli/tls-server.ts"),
+        });
+        expect(result.notFound).toBeUndefined();
+        expect(result.fetch).toBeDefined();
+        expect(result.srvxServer).toBeDefined();
+        expect(result.srvxServer!.options.tls).toEqual({ cert: tls.cert, key: tls.key });
+      } finally {
+        delete process.env.SRVX_TEST_CERT;
+        delete process.env.SRVX_TEST_KEY;
+      }
     });
   });
 
