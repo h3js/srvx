@@ -29,6 +29,24 @@ function bodyUnusable(): TypeError {
   return new TypeError("Body is unusable: Body has already been read");
 }
 
+/**
+ * Rejection for a body that can no longer be read because the client hung up
+ * without the socket surfacing an error of its own. Shaped like the reason an
+ * `AbortController` produces so handlers can branch on `err.name === "AbortError"`.
+ */
+function abortError(): DOMException {
+  return new DOMException("The request was aborted.", "AbortError");
+}
+
+/** A `ReadableStream` that errors immediately with `error`, without producing any bytes. */
+function erroredStream(error: unknown): ReadableStream {
+  return new ReadableStream({
+    start(controller) {
+      controller.error(error);
+    },
+  });
+}
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
@@ -160,21 +178,40 @@ export const NodeRequest: {
         const { req, res } = this.runtime!.node!;
         const abortController = this.#abortController;
         const abort = (err?: Error) => abortController.abort?.(err);
+        // The controller is created lazily, so `close` may already have fired
+        // before this listener existed (a handler that only touches `signal`
+        // after awaiting, or not at all until a body read fails). Replaying the
+        // handler against the current state is what keeps `signal.aborted` from
+        // reporting `false` for a client that is long gone.
         if (res) {
-          res.once("close", () => {
+          const onClose = () => {
             const reqError = req.errored;
             if (reqError) {
               abort(reqError); // request error
             } else if (!res.writableEnded) {
               abort(); // server closed before finishing response
             }
-          });
+          };
+          res.once("close", onClose);
+          // `req.destroyed` alone does *not* mean the client hung up:
+          // `IncomingMessage` is `autoDestroy`, so a fully read body leaves it
+          // destroyed on a perfectly healthy request, while the response is
+          // still open (`writableEnded === false`) — replaying on that would
+          // abort every handler that reads the body before touching `signal`.
+          // Only an errored or *incomplete* request stream is a disconnect.
+          if (res.destroyed || req.errored || (req.destroyed && !req.complete)) {
+            onClose();
+          }
         } else {
-          req.once("close", () => {
+          const onClose = () => {
             if (!req.complete) {
               abort(); // client disconnected
             }
-          });
+          };
+          req.once("close", onClose);
+          if (req.destroyed) {
+            onClose();
+          }
         }
       }
       return this.#abortController;
@@ -199,11 +236,21 @@ export const NodeRequest: {
         // No stream for a null-body (GET/HEAD) request, and never re-wrap an
         // already-consumed IncomingMessage (the fast path leaves it ended, so a
         // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
-        let stream =
-          this.#hasBody() && !this.#bodyUsed
-            ? // TODO: HTTP2ServerRequest
-              (Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream)
-            : null;
+        let stream: ReadableStream | null = null;
+        if (this.#hasBody() && !this.#bodyUsed) {
+          // TODO: HTTP2ServerRequest
+          stream = Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream;
+          // `toWeb()` hands back an already-cancelled (and therefore disturbed)
+          // stream when the source is destroyed — a client that hung up before
+          // the handler read the body. Passing that to `new Request()` throws
+          // undici's "Response body object should not be disturbed or locked"
+          // TypeError out of `_request`, which tells the handler nothing about
+          // what happened. Serve a stream carrying the abort reason instead, so
+          // every read (including through the native Request) rejects with it.
+          if (Readable.isDisturbed(stream as unknown as NodeJS.ReadableStream)) {
+            stream = erroredStream(this.#bodyError());
+          }
+        }
         // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
         // through (`request.body`, and therefore the native `Request` methods
         // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
@@ -245,10 +292,35 @@ export const NodeRequest: {
       return this.#bodyUsed;
     }
 
+    // Why a body read cannot proceed once the underlying Node stream is gone.
+    // The abort reason comes first (the socket error, or the controller's
+    // `AbortError`) so a handler can tell "client hung up" — the case worth a
+    // 499 rather than a 5xx — from a malformed request. A stream that ended
+    // without srvx reading it was consumed elsewhere: an unusable body, not an
+    // abort.
+    #bodyError(): unknown {
+      const signal = this._abortController.signal;
+      if (signal.aborted) {
+        return signal.reason;
+      }
+      // A destroyed-but-`complete` stream delivered its whole body and was then
+      // auto-destroyed: it was consumed out of band (e.g. directly off
+      // `runtime.node.req`), which is an unusable body rather than an abort.
+      return (
+        this.#req.errored ||
+        (this.#req.destroyed && !this.#req.complete ? abortError() : bodyUnusable())
+      );
+    }
+
     // Buffer the raw request body once; consumers add their own single
     // continuation (`.toString()` / `JSON.parse`) so no extra promise or
     // microtask hop is introduced vs. inlining the read.
     #readBuffered() {
+      // A destroyed source emits no further `data` / `end` / `error`, so
+      // `readBody()` would wait forever on a body that can no longer arrive.
+      if (this.#req.destroyed || this.#req.errored) {
+        return Promise.reject(this.#bodyError());
+      }
       return readBody(this.#req, this.#maxRequestBodySize);
     }
 
@@ -439,6 +511,7 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
       req.off("data", onData);
       req.off("end", onEnd);
       req.off("error", onError);
+      req.off("close", onClose);
     };
     const onData = (chunk: any) => {
       if (maxRequestBodySize !== undefined) {
@@ -463,7 +536,15 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
       // Single-chunk bodies (the common case) skip Buffer.concat's alloc+copy
       resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
     };
-    req.on("data", onData).once("end", onEnd).once("error", onError);
+    // A destroy that surfaces no `error` (`req.destroy()`, or a reset that only
+    // shows up as a close) would otherwise leave this promise — and the handler
+    // awaiting it — pending forever. `end` always precedes `close` and cleans
+    // this listener up first, so it only fires on an incomplete body.
+    const onClose = () => {
+      cleanup();
+      reject(req.errored || abortError());
+    };
+    req.on("data", onData).once("end", onEnd).once("error", onError).once("close", onClose);
   });
 }
 

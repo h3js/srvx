@@ -717,6 +717,59 @@ describe("request signal", () => {
     expect(abortFired).toBe(false);
   });
 
+  // `IncomingMessage` is `autoDestroy`, so a fully read body leaves `req`
+  // destroyed while the response is still open. Touching `signal` only *after*
+  // the read is the order that catches a disconnect check keying off
+  // `req.destroyed` alone -- it would abort every healthy handler that reads its
+  // body first, breaking the common `fetch(upstream, { signal: request.signal })`
+  // proxy shape.
+  test("should not abort when the signal is first read after the body", async () => {
+    let aborted: boolean | undefined;
+    let receivedBody: string | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        receivedBody = await request.text();
+        aborted = request.signal.aborted;
+        return new Response(`Received: ${receivedBody}`);
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "test body" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("Received: test body");
+
+    await server.close();
+
+    expect(receivedBody).toBe("test body");
+    expect(aborted).toBe(false);
+  });
+
+  test("should not abort when the signal is first read after a streamed body", async () => {
+    let aborted: boolean | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        await new Response(request.body).text();
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "test body" });
+    expect(await res.text()).toBe("ok");
+
+    await server.close();
+
+    expect(aborted).toBe(false);
+  });
+
   test("should fire abort signal when client disconnects", async () => {
     let abortFired: () => void;
     const abortFiredPromise = new Promise<void>((resolve) => {
