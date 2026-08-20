@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
+import http2 from "node:http2";
 import { describe, expect, test, vi } from "vitest";
+import { getTLSCert } from "./_utils.ts";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import {
@@ -20,6 +22,10 @@ import fastify from "fastify";
 // a real socket. These cases pass on Node and Bun; skip them on Deno until
 // upstream stabilises. Tracked against the `tests_deno_node_adapters` CI job.
 const isDeno = !!(globalThis as any).Deno;
+
+// HTTP/2 is not implemented in the Deno/Bun node-compat layers.
+// https://github.com/h3js/srvx/issues/237
+const skipHttp2 = isDeno || !!(globalThis as any).Bun;
 
 const fetchCallers = [
   {
@@ -768,6 +774,89 @@ describe("request signal", () => {
     await server.close();
 
     expect(aborted).toBe(false);
+  });
+
+  // The HTTP/2 half of the two guards above. `Http2ServerRequest` reports
+  // `complete === true` for an *aborted* body and never destroys itself, so the
+  // HTTP/1 disconnect conditions are inert there and the predicate has to lean on
+  // `req.aborted` instead -- which must stay false for a request that finished
+  // normally, or `fetch(upstream, { signal: request.signal })` breaks for every
+  // handler that reads its body before touching `signal`.
+  describe.skipIf(skipHttp2)("http2", () => {
+    async function serveAndPost(fetchHandler: (request: any) => Promise<Response>) {
+      const tls = await getTLSCert();
+      const server = serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        silent: true,
+        tls,
+        node: { http2: true, allowHTTP1: false } as any,
+        fetch: fetchHandler,
+      });
+      await server.ready();
+      const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+      client.on("error", () => {});
+      try {
+        const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 9 });
+        stream.end("test body");
+        const chunks: Buffer[] = [];
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        await new Promise((resolve, reject) => {
+          stream.once("end", resolve);
+          stream.once("error", reject);
+        });
+        return Buffer.concat(chunks).toString();
+      } finally {
+        client.destroy();
+        await server.close(true);
+      }
+    }
+
+    test("should not abort when the signal is first read after the body", async () => {
+      let aborted: boolean | undefined;
+      let receivedBody: string | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        receivedBody = await request.text();
+        aborted = request.signal.aborted;
+        return new Response(`Received: ${receivedBody}`);
+      });
+
+      expect(body).toBe("Received: test body");
+      expect(receivedBody).toBe("test body");
+      expect(aborted).toBe(false);
+    });
+
+    test("should not abort when the signal is first read after a streamed body", async () => {
+      let aborted: boolean | undefined;
+      let receivedBody: string | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        receivedBody = await new Response(request.body).text();
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      });
+
+      expect(body).toBe("ok");
+      expect(receivedBody).toBe("test body");
+      expect(aborted).toBe(false);
+    });
+
+    // Responding without reading closes the stream while the promised body is
+    // still outstanding, which leaves `complete`/`readableEnded` true on an
+    // untouched request -- neither can stand in for the disconnect check.
+    test("should not abort when the body is never read", async () => {
+      let aborted: boolean | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      });
+
+      expect(body).toBe("ok");
+      expect(aborted).toBe(false);
+    });
   });
 
   test("should fire abort signal when client disconnects", async () => {

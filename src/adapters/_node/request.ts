@@ -47,6 +47,30 @@ function erroredStream(error: unknown): ReadableStream {
   });
 }
 
+/**
+ * Whether the client hung up before the request body finished arriving.
+ *
+ * The two Node request types report this very differently, and neither one flag
+ * covers both:
+ *
+ * - HTTP/1 `IncomingMessage` is `autoDestroy`, so `destroyed` on its own is *not*
+ *   a disconnect: a fully read body leaves a perfectly healthy request destroyed.
+ *   Only an errored stream, or one destroyed while `complete` is still false, is.
+ * - HTTP/2 `Http2ServerRequest` is constructed with `autoDestroy: false` and never
+ *   destroys itself, so `destroyed` stays false; `complete` is *true* for an
+ *   aborted (truncated) body because its getter ORs in the abort flag; and its
+ *   `onStreamError` is deliberately a no-op, so `errored` stays null. Every
+ *   HTTP/1 condition above is therefore permanently false there.
+ *
+ * `aborted` is what closes the gap. Node's `closeStream()` raises it only when the
+ * stream closed while the server's writable side was still open — the same "client
+ * left before we finished responding" test the `res` close handler applies below,
+ * so it cannot fire on a request that completed normally.
+ */
+function isClientGone(req: NodeServerRequest): boolean {
+  return req.aborted || !!req.errored || (req.destroyed && !req.complete);
+}
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
@@ -198,18 +222,20 @@ export const NodeRequest: {
           // destroyed on a perfectly healthy request, while the response is
           // still open (`writableEnded === false`) — replaying on that would
           // abort every handler that reads the body before touching `signal`.
-          // Only an errored or *incomplete* request stream is a disconnect.
-          if (res.destroyed || req.errored || (req.destroyed && !req.complete)) {
+          // `isClientGone()` is the predicate that holds for both protocols.
+          // (`res.destroyed` is HTTP/1-only; `Http2ServerResponse` has no such
+          // property, which is why the request-side check has to carry HTTP/2.)
+          if (res.destroyed || isClientGone(req)) {
             onClose();
           }
         } else {
           const onClose = () => {
-            if (!req.complete) {
+            if (!req.complete || req.aborted) {
               abort(); // client disconnected
             }
           };
           req.once("close", onClose);
-          if (req.destroyed) {
+          if (isClientGone(req)) {
             onClose();
           }
         }
@@ -238,11 +264,13 @@ export const NodeRequest: {
         // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
         let stream: ReadableStream | null = null;
         if (this.#hasBody() && !this.#bodyUsed) {
-          // TODO: HTTP2ServerRequest
           stream = Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream;
           // `toWeb()` hands back an already-cancelled (and therefore disturbed)
-          // stream when the source is destroyed — a client that hung up before
-          // the handler read the body. Passing that to `new Request()` throws
+          // stream when the source can no longer be read — a client that hung up
+          // before the handler read the body. (HTTP/1 reaches that via
+          // `isDestroyed()`; `Http2ServerRequest`, which never destroys itself,
+          // via `!isReadable()` once the compat layer has pushed EOF on close.)
+          // Passing that to `new Request()` throws
           // undici's "Response body object should not be disturbed or locked"
           // TypeError out of `_request`, which tells the handler nothing about
           // what happened. Serve a stream carrying the abort reason instead, so
@@ -303,22 +331,25 @@ export const NodeRequest: {
       if (signal.aborted) {
         return signal.reason;
       }
-      // A destroyed-but-`complete` stream delivered its whole body and was then
-      // auto-destroyed: it was consumed out of band (e.g. directly off
-      // `runtime.node.req`), which is an unusable body rather than an abort.
-      return (
-        this.#req.errored ||
-        (this.#req.destroyed && !this.#req.complete ? abortError() : bodyUnusable())
-      );
+      // A stream that ended without srvx reading it delivered its whole body and
+      // was consumed out of band (e.g. directly off `runtime.node.req`), which is
+      // an unusable body rather than an abort.
+      return this.#req.errored || (isClientGone(this.#req) ? abortError() : bodyUnusable());
     }
 
     // Buffer the raw request body once; consumers add their own single
     // continuation (`.toString()` / `JSON.parse`) so no extra promise or
     // microtask hop is introduced vs. inlining the read.
     #readBuffered() {
-      // A destroyed source emits no further `data` / `end` / `error`, so
-      // `readBody()` would wait forever on a body that can no longer arrive.
-      if (this.#req.destroyed || this.#req.errored) {
+      // A source that is already finished emits no further `data` / `end` /
+      // `error`, so `readBody()` would wait forever on a body that can no longer
+      // arrive. Beyond a disconnect that means a stream someone else consumed:
+      // HTTP/1 leaves it `destroyed` (autoDestroy), while `Http2ServerRequest`
+      // never destroys itself — on close the compat layer pushes EOF and dumps
+      // whatever it buffered, leaving a live-looking stream with nothing left to
+      // give, so `readableEnded` is what catches it. `#bodyError()` picks the
+      // right rejection for each.
+      if (isClientGone(this.#req) || this.#req.destroyed || this.#req.readableEnded) {
         return Promise.reject(this.#bodyError());
       }
       return readBody(this.#req, this.#maxRequestBodySize);
@@ -533,6 +564,16 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
     };
     const onEnd = () => {
       cleanup();
+      // HTTP/2 signals a client that hung up mid-body by pushing EOF onto the
+      // request (`onStreamCloseRequest`), and it does so *before* the `close`
+      // below — so `end` here can mean "that is the whole body" or "the rest of
+      // the body will never arrive", and resolving blindly hands the handler a
+      // silently truncated body it cannot tell from a complete one. The abort
+      // flag is already set by then, so it separates the two.
+      if (isClientGone(req)) {
+        reject(req.errored || abortError());
+        return;
+      }
       // Single-chunk bodies (the common case) skip Buffer.concat's alloc+copy
       resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
     };
