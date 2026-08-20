@@ -71,6 +71,22 @@ function isClientGone(req: NodeServerRequest): boolean {
   return req.aborted || !!req.errored || (req.destroyed && !req.complete);
 }
 
+/**
+ * Whether the request stream can no longer deliver the rest of its body, so
+ * anything still waiting on it would wait forever: a client that hung up, or a
+ * source that is finished (destroyed on HTTP/1, EOF pushed on HTTP/2 — see
+ * `#readBuffered()`) because someone already consumed it out of band.
+ *
+ * Keyed off the request's own state rather than what `Readable.toWeb()` makes of
+ * it: Node <= 25 handed back a pre-cancelled (and therefore disturbed) stream for
+ * an unreadable source, which is the only thing the `body` getter used to key
+ * off; Node 26 hands back a clean, empty one instead, so a client that hung up
+ * mid-body read as a complete zero-byte request.
+ */
+function isBodySourceFinished(req: NodeServerRequest): boolean {
+  return isClientGone(req) || req.destroyed || req.readableEnded;
+}
+
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
@@ -264,19 +280,22 @@ export const NodeRequest: {
         // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
         let stream: ReadableStream | null = null;
         if (this.#hasBody() && !this.#bodyUsed) {
-          stream = Readable.toWeb(this.#req as NodeJS.ReadableStream) as unknown as ReadableStream;
-          // `toWeb()` hands back an already-cancelled (and therefore disturbed)
-          // stream when the source can no longer be read — a client that hung up
-          // before the handler read the body. (HTTP/1 reaches that via
-          // `isDestroyed()`; `Http2ServerRequest`, which never destroys itself,
-          // via `!isReadable()` once the compat layer has pushed EOF on close.)
-          // Passing that to `new Request()` throws
-          // undici's "Response body object should not be disturbed or locked"
-          // TypeError out of `_request`, which tells the handler nothing about
-          // what happened. Serve a stream carrying the abort reason instead, so
-          // every read (including through the native Request) rejects with it.
-          if (Readable.isDisturbed(stream as unknown as NodeJS.ReadableStream)) {
+          // A source with nothing left to give must not be wrapped: what a read
+          // of the resulting stream does is entirely up to the Node version.
+          // Node <= 25 handed back an already-cancelled (and therefore disturbed)
+          // stream, so `new Request()` threw undici's "Response body object should
+          // not be disturbed or locked" TypeError out of `_request`, which tells
+          // the handler nothing about what happened; Node 26 hands back a clean,
+          // empty one, so a client that hung up mid-body read as a complete
+          // zero-byte request — a silently truncated body, which is worse.
+          // Serve a stream carrying the abort reason instead, so every read
+          // (including through the native Request) rejects with it.
+          if (isBodySourceFinished(this.#req)) {
             stream = erroredStream(this.#bodyError());
+          } else {
+            stream = Readable.toWeb(
+              this.#req as NodeJS.ReadableStream,
+            ) as unknown as ReadableStream;
           }
         }
         // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
@@ -349,7 +368,7 @@ export const NodeRequest: {
       // whatever it buffered, leaving a live-looking stream with nothing left to
       // give, so `readableEnded` is what catches it. `#bodyError()` picks the
       // right rejection for each.
-      if (isClientGone(this.#req) || this.#req.destroyed || this.#req.readableEnded) {
+      if (isBodySourceFinished(this.#req)) {
         return Promise.reject(this.#bodyError());
       }
       return readBody(this.#req, this.#maxRequestBodySize);
