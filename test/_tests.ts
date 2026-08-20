@@ -12,6 +12,12 @@ export function addTests(opts: {
 }): void {
   const { url, fetch: _fetch = globalThis.fetch } = opts;
 
+  // srvx's Node adapter driven by Bun's `node:http` compat layer (test/node.test.ts
+  // run under Bun). Distinct from `"bun"`, which is srvx's native Bun adapter.
+  // Bun's `node:http` server never surfaces a client disconnect as a request
+  // abort, so every abort-dependent expectation below is a runtime gap there.
+  const isBunNodeCompat = opts.runtime === "bun-node-compat";
+
   let fetchCount = 0;
   const fetch = (...args: Parameters<typeof _fetch>) => {
     fetchCount++;
@@ -122,7 +128,7 @@ export function addTests(opts: {
     expect(await response.text()).toBe("error: test error");
   });
 
-  test("abort request", async () => {
+  test.skipIf(isBunNodeCompat)("abort request", async () => {
     const controller = new AbortController();
     const response = await fetch(url("/abort"), {
       signal: controller.signal,
@@ -153,13 +159,14 @@ export function addTests(opts: {
     const aborts = await res.json();
     // console.log(aborts.map((a: any) => `${a.request}`).join("\n"));
 
-    // Deno Node.js compat behaves differently!!!
-    if (opts.runtime !== "deno-node-compat") {
+    // Deno Node.js compat behaves differently!!!, and Bun's never logs an abort
+    // at all (see `isBunNodeCompat`).
+    if (opts.runtime !== "deno-node-compat" && !isBunNodeCompat) {
       expect(aborts.length).toBe(expectedAbortCount);
     }
   });
 
-  test("cancel reading body", async () => {
+  test.skipIf(isBunNodeCompat)("cancel reading body", async () => {
     const res = await fetch(url("/body-cancel"), {
       method: "POST",
       // @ts-expect-error
@@ -193,8 +200,11 @@ export function addTests(opts: {
       if (done) break;
     }
     const body = Buffer.concat(chunks).toString("utf8").trim();
-    if ("Bun" in globalThis) {
-      // It seems a Bun bug (from fetch client-side not server-side!)
+    if ("Bun" in globalThis && !isBunNodeCompat) {
+      // It seems a Bun bug (from fetch client-side not server-side!) -- hence the
+      // check on the runtime executing the fetch rather than on the adapter under
+      // test. It does not reproduce against a `node:http` server, which is what the
+      // Node adapter serves over under Bun node-compat.
       expect(body).toBe("chunk1\nchunk2\n\r\nchunk1\nchunk2");
     } else {
       expect(body).toBe("chunk1\nchunk2");
@@ -313,12 +323,13 @@ export function addTests(opts: {
     });
   });
 
-  // Skipped on the Bun adapter only: Bun's `util.inspect(new Headers())` prints
-  // `Headers {}` without enumerating entries, while Node and Deno list them.
-  // Nothing for srvx to fix -- it does not implement a custom inspect. The Node
-  // adapter passes under Bun (node-compat) because its headers are srvx's own
-  // class rather than a native `Headers`. Re-enable if Bun fixes util.inspect.
-  test.skipIf(opts.runtime === "bun")("inspect objects", async () => {
+  // Skipped on Bun: `util.inspect(new Headers())` prints `Headers {}` without
+  // enumerating entries, while Node and Deno list them. Nothing for srvx to fix --
+  // it does not implement a custom inspect. This applies to the Node adapter under
+  // Bun node-compat too; the exemption previously claimed otherwise, which went
+  // unnoticed while the Bun scripts were silently running on Node.
+  // Re-enable if Bun fixes util.inspect.
+  test.skipIf(opts.runtime === "bun" || isBunNodeCompat)("inspect objects", async () => {
     const response = await fetch(url("/node-inspect"), {
       headers: { "x-foo": "1" },
     });
