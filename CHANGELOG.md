@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.12.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.6...v0.12.7)
+
+### 🩹 Fixes
+
+- **node/http2:** Detect client disconnects on Node 26 ([dfb0306](https://github.com/h3js/srvx/commit/dfb0306))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.12.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.5...v0.12.6)
