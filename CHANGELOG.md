@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.12.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.5...v0.12.6)
+
+### 🩹 Fixes
+
+- **node:** Make send-failure recovery unable to throw ([474ac29](https://github.com/h3js/srvx/commit/474ac29))
+- **node:** Discard the body for HEAD requests to a Node stream response ([e2fc775](https://github.com/h3js/srvx/commit/e2fc775))
+- **node:** Destroy body stream when client aborts before first chunk ([8d9c958](https://github.com/h3js/srvx/commit/8d9c958))
+- **node:** Normalize absolute-form request targets instead of trusting them ([a11765b](https://github.com/h3js/srvx/commit/a11765b))
+- **aws-lambda:** Prevent client path and Host header from overriding request.url origin ([b1e440c](https://github.com/h3js/srvx/commit/b1e440c))
+- **cli:** Honor `NODE_ENV=production` again ([2e7a135](https://github.com/h3js/srvx/commit/2e7a135))
+- **cli:** Forward tls/protocol/node from an intercepted serve() entry ([2f5ff20](https://github.com/h3js/srvx/commit/2f5ff20))
+- **body-limit:** Serve `_request` over the size-limited body ([6882f6d](https://github.com/h3js/srvx/commit/6882f6d))
+- **node/web:** Honor writeHead headers when statusMessage is not a string ([46336b3](https://github.com/h3js/srvx/commit/46336b3))
+- **aws-lambda:** Do not duplicate cookies from headers and cookies[] ([#291](https://github.com/h3js/srvx/pull/291))
+- **node:** Reject body reads with the abort reason after a client disconnect ([3a5187e](https://github.com/h3js/srvx/commit/3a5187e))
+- **node/http2:** Detect client disconnects before a body read ([5f1ed2c](https://github.com/h3js/srvx/commit/5f1ed2c))
+- **node/web:** Do not rely on Node's lazy IncomingMessage.headers accessor ([0fbfb06](https://github.com/h3js/srvx/commit/0fbfb06))
+
+### 📖 Documentation
+
+- **node:** Document that mutating response headers preserves the raw body ([8f8f95b](https://github.com/h3js/srvx/commit/8f8f95b))
+
+### 🌊 Types
+
+- **bun:** Derive `HeadersInit` from the ambient `Headers` ([#288](https://github.com/h3js/srvx/pull/288))
+
+### 🏡 Chore
+
+- Update undocs ([dff6ee9](https://github.com/h3js/srvx/commit/dff6ee9))
+- Apply automated updates ([37ce4ce](https://github.com/h3js/srvx/commit/37ce4ce))
+- Update undocs ([27ffd76](https://github.com/h3js/srvx/commit/27ffd76))
+- Update deps ([bf33115](https://github.com/h3js/srvx/commit/bf33115))
+- Update bench script ([d265cb6](https://github.com/h3js/srvx/commit/d265cb6))
+
+### ✅ Tests
+
+- **bun:** Actually run the node-compat suites under Bun ([27a071c](https://github.com/h3js/srvx/commit/27a071c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- SeaStar Deng ([@DSeaStar](https://github.com/DSeaStar))
+- Alexander Chepurnoy ([@cany748](https://github.com/cany748))
+
 ## v0.12.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.4...v0.12.5)
