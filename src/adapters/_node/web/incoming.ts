@@ -27,19 +27,25 @@ export class WebIncomingMessage extends IncomingMessage {
     // `rawHeaders` is the flat `[name, value, name, value, …]` list Node exposes.
     // Web `Headers` lower-cases names and has no wire order, so this is a
     // best-effort reconstruction; `set-cookie` is expanded to one entry each.
+    //
+    // The map is built locally and assigned once rather than mutated in place:
+    // Node materializes `headers` lazily from `rawHeaders` behind a prototype
+    // accessor, while Bun's `IncomingMessage` leaves it `undefined` until
+    // something assigns it, so there is no object to mutate there at all.
+    const headers: Record<string, string | string[]> = {};
     const rawHeaders = this.rawHeaders;
     for (const [key, value] of req.headers.entries()) {
       const lowerKey = key.toLowerCase();
       if (lowerKey === "set-cookie") {
         continue;
       }
-      this.headers[lowerKey] = value;
+      headers[lowerKey] = value;
       rawHeaders.push(key, value);
     }
     const setCookie = req.headers.getSetCookie?.() ?? [];
     if (setCookie.length > 0) {
       // Node keeps `set-cookie` as an array on `headers` and one raw entry each.
-      (this.headers as Record<string, string | string[]>)["set-cookie"] = setCookie;
+      headers["set-cookie"] = setCookie;
       for (const cookie of setCookie) {
         rawHeaders.push("set-cookie", cookie);
       }
@@ -47,11 +53,12 @@ export class WebIncomingMessage extends IncomingMessage {
     if (
       req.method !== "GET" &&
       req.method !== "HEAD" &&
-      !this.headers["content-length"] &&
-      !this.headers["transfer-encoding"]
+      !headers["content-length"] &&
+      !headers["transfer-encoding"]
     ) {
-      this.headers["transfer-encoding"] = "chunked";
+      headers["transfer-encoding"] = "chunked";
     }
+    this.headers = headers;
 
     const onData = (chunk: any) => {
       // Honor backpressure: if the readable buffer is full, pause the source
