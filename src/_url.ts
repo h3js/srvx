@@ -43,6 +43,7 @@ const _searchNeedsNormRE = /[#"'<>\x00-\x20\x7f-\uffff]/;
  *  - `url.search`
  *  - `url.searchParams`
  *  - `url.protocol`
+ *  - `url.hash`
  *
  * **NOTES:**
  *
@@ -281,6 +282,13 @@ export const FastURL: { new (url: string | URLInit): URL & { _url: URL } } =
           this.#protocol = url.slice(0, protocolIndex + 1);
         }
         return this.#protocol;
+      }
+
+      get hash() {
+        if (this.#url) {
+          return this.#url.hash;
+        }
+        return "";
       }
 
       toString(): string {
