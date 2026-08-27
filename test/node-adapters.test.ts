@@ -747,6 +747,35 @@ describe("request signal", () => {
     expect(abortFired).toBe(false);
   });
 
+  test("should read body when stream was pre-drained by middleware with rawBody", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        return new Response(await request.text());
+      },
+    });
+
+    // Inject connect/express middleware that drains the stream and stores rawBody
+    server.node!.server!.on("request", async (req: any) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) {
+        chunks.push(c);
+      }
+      req.rawBody = Buffer.concat(chunks);
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, {
+      method: "POST",
+      body: JSON.stringify({ hello: "world" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ hello: "world" });
+
+    await server.close();
+  });
+
   // `IncomingMessage` is `autoDestroy`, so a fully read body leaves `req`
   // destroyed while the response is still open. Touching `signal` only *after*
   // the read is the order that catches a disconnect check keying off
