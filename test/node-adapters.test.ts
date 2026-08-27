@@ -748,32 +748,64 @@ describe("request signal", () => {
   });
 
   test("should read body when stream was pre-drained by middleware with rawBody", async () => {
-    const server = serve({
-      port: 0,
-      async fetch(request) {
-        return new Response(await request.text());
-      },
+    let rawBodyDone: () => void;
+    const rawBodyPromise = new Promise<void>((resolve) => {
+      rawBodyDone = resolve;
     });
 
-    // Inject connect/express middleware that drains the stream and stores rawBody
-    server.node!.server!.on("request", async (req: any) => {
+    const handler = toNodeHandler(async (request) => {
+      await rawBodyPromise;
+      return new Response(await request.text());
+    });
+
+    const server = createServer(async (req: any, res) => {
       const chunks: Buffer[] = [];
       for await (const c of req) {
         chunks.push(c);
       }
       req.rawBody = Buffer.concat(chunks);
+      rawBodyDone();
+      handler(req, res as any);
     });
 
-    await server.ready();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
 
-    const res = await fetch(server.url!, {
+    const res = await fetch(`http://localhost:${port}`, {
       method: "POST",
       body: JSON.stringify({ hello: "world" }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ hello: "world" });
 
-    await server.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("should parse json body when stream was pre-drained by middleware with rawBody", async () => {
+    const handler = toNodeHandler(async (request) => {
+      return Response.json(await request.json());
+    });
+
+    const server = createServer(async (req: any, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) {
+        chunks.push(c);
+      }
+      req.rawBody = Buffer.concat(chunks);
+      handler(req, res as any);
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const res = await fetch(`http://localhost:${port}`, {
+      method: "POST",
+      body: JSON.stringify({ test: 123 }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ test: 123 });
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
   // `IncomingMessage` is `autoDestroy`, so a fully read body leaves `req`
