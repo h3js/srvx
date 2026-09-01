@@ -360,6 +360,9 @@ export const NodeRequest: {
     // continuation (`.toString()` / `JSON.parse`) so no extra promise or
     // microtask hop is introduced vs. inlining the read.
     #readBuffered() {
+      if ("rawBody" in this.#req && Buffer.isBuffer(this.#req.rawBody)) {
+        return readBody(this.#req, this.#maxRequestBodySize);
+      }
       // A source that is already finished emits no further `data` / `end` /
       // `error`, so `readBody()` would wait forever on a body that can no longer
       // arrive. Beyond a disconnect that means a stream someone else consumed:
