@@ -573,15 +573,18 @@ describe("FastURL", () => {
         expect(url.pathname, ".pathname").toBe(pathname);
         expect(url.search, ".search").toBe(search);
         expect(url.searchParams.getAll("id"), ".searchParams id").toEqual([...ids]);
+        expect(url.hash, ".hash").toBe(std.hash);
       });
 
       test(`FastURL "${input}" stays consistent after deopt`, () => {
+        const std = new URL(`http://localhost${input}`);
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
         void url.hostname; // force deopt to native URL
         expect(url.pathname, ".pathname").toBe(pathname);
         expect(url.search, ".search").toBe(search);
+        expect(url.hash, ".hash").toBe(std.hash);
       });
     }
 
@@ -589,6 +592,38 @@ describe("FastURL", () => {
       const url = new FastURL("/p#frag");
       expect(url.pathname).toBe("/p");
       expect(url.search).toBe("");
+    });
+  });
+
+  describe(".hash", () => {
+    test("is empty without a full parse for object-form input", () => {
+      const url = new NodeRequestURL({
+        req: { url: "/p?a=1", headers: { host: "localhost" } } as any,
+      });
+      expect(url.hash).toBe("");
+      expect(url.pathname).toBe("/p"); // still on the fast path
+      expect(url.search).toBe("?a=1");
+    });
+
+    test("is empty without a full parse for origin-form string input", () => {
+      const url = new FastURL("/p?a=1");
+      expect(url.hash).toBe("");
+      expect(url.pathname).toBe("/p");
+      expect(url.search).toBe("?a=1");
+    });
+
+    test("is preserved for absolute-form string input", () => {
+      expect(new FastURL("https://example.com/a#b").hash).toBe("#b");
+      expect(new FastURL("https://example.com/a?q=1#b=c").hash).toBe("#b=c");
+      expect(new FastURL("https://example.com/a").hash).toBe("");
+    });
+
+    test("setter is reflected in .hash and .href", () => {
+      const url = new FastURL("/p?a=1");
+      url.hash = "#frag";
+      expect(url.hash).toBe("#frag");
+      expect(url.href).toBe("http://localhost/p?a=1#frag");
+      expect(url.pathname).toBe("/p");
     });
   });
 
