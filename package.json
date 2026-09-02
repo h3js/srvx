@@ -1,6 +1,6 @@
 {
   "name": "srvx",
-  "version": "0.12.8",
+  "version": "1.0.0",
   "description": "Universal Server.",
   "homepage": "https://srvx.h3.dev",
   "license": "MIT",
@@ -52,7 +52,7 @@
     "lint:fix": "automd && oxlint . --fix && oxfmt .",
     "prepack": "pnpm build",
     "play:mkcert": "openssl req -x509 -newkey rsa:2048 -nodes -keyout server.key -out server.crt -days 365 -subj /CN=srvx.local",
-    "release": "pnpm test && pnpm build && changelogen --release && npm publish && git push --follow-tags",
+    "release": "pnpm test && pnpm build && changelogen --release && pnpm publish && git push --follow-tags",
     "srvx": "./bin/srvx.mjs",
     "test": "pnpm lint && pnpm typecheck && vitest run --coverage",
     "test:node-compat:deno": "deno run vitest test/node.test",
