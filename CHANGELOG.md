@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.12.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.7...v0.12.8)
+
+### 🔥 Performance
+
+- **url:** Avoid full parse when reading hash on the fast path ([#296](https://github.com/h3js/srvx/pull/296))
+
+### 🩹 Fixes
+
+- **node:** Allow body reads when stream is pre-drained with rawBody ([#295](https://github.com/h3js/srvx/pull/295))
+
+### ❤️ Contributors
+
+- Dương Ngọc Anh <duongngocanh2k03@gmail.com>
+- Daniel Roe ([@danielroe](https://github.com/danielroe))
+
 ## v0.12.7
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.6...v0.12.7)
