@@ -1,3 +1,4 @@
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   awsRequest,
@@ -737,6 +738,60 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(request.url).toBe("https://api.example.com/api/users?page=1&limit=10");
     });
+
+    // v1/ALB events only expose the parsed `queryStringParameters`, so the raw
+    // query has to be rebuilt. `?foo` must not turn into `?foo=`: anything
+    // reading the raw URL (route rules, cache keys, canonical URLs, a signature
+    // over the query) sees a different string.
+    describe("v1 query reconstruction", () => {
+      const v1QueryEvent = (
+        queryStringParameters: Record<string, unknown> | null,
+        multiValueQueryStringParameters?: Record<string, unknown>,
+      ) =>
+        ({
+          httpMethod: "GET",
+          path: "/x",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters,
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters,
+        }) as unknown as APIGatewayProxyEvent;
+
+      const urlOf = (event: APIGatewayProxyEvent) =>
+        awsRequest(event, createMockContext()).url.replace("https://api.example.com", "");
+
+      test("keeps a valueless param bare", () => {
+        expect(urlOf(v1QueryEvent({ foo: "" }))).toBe("/x?foo");
+      });
+
+      test("keeps valueless and valued params side by side", () => {
+        expect(urlOf(v1QueryEvent({ foo: "", page: "1" }))).toBe("/x?foo&page=1");
+      });
+
+      test("keeps a null value bare instead of dropping the key", () => {
+        expect(urlOf(v1QueryEvent({ foo: null }))).toBe("/x?foo");
+      });
+
+      test("preserves valued params and their escaping", () => {
+        expect(urlOf(v1QueryEvent({ q: "a b", "&": "=" }))).toBe("/x?q=a+b&%26=%3D");
+      });
+
+      test("expands multi-value params, bare entries included", () => {
+        expect(urlOf(v1QueryEvent({ tag: "b" }, { tag: ["a", "", "b"] }))).toBe(
+          "/x?tag=a&tag&tag=b",
+        );
+      });
+
+      test("emits no query at all when there are no params", () => {
+        expect(urlOf(v1QueryEvent(null))).toBe("/x");
+      });
+    });
   });
 
   describe("awsResponseHeaders", () => {
@@ -797,6 +852,42 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(awsResponse.multiValueHeaders).toEqual({
         "set-cookie": ["sessionId=abc123; HttpOnly; Secure", "theme=dark; Path=/"],
       });
+    });
+
+    // `Headers` iteration yields one entry per `set-cookie`, so a flat record
+    // keeps only the last one - and AWS applies `headers` on top of
+    // `cookies`/`multiValueHeaders`, sending that last cookie twice.
+    test("should not leak set-cookie into the flat headers record", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [
+          ["content-type", "application/json"],
+          ["set-cookie", "a=1; Path=/"],
+          ["set-cookie", "b=2; HttpOnly"],
+        ],
+      });
+
+      const v1 = awsResponseHeaders(response);
+      expect(v1.headers["set-cookie"]).toBeUndefined();
+      expect(v1.headers["content-type"]).toBe("application/json");
+      expect(v1.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
+      expect(v1.multiValueHeaders).toEqual({ "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"] });
+
+      const v2 = awsResponseHeaders(response, { version: "2.0" } as APIGatewayProxyEventV2);
+      expect(v2.headers["set-cookie"]).toBeUndefined();
+      expect(v2.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
+      expect(v2.multiValueHeaders).toBeUndefined();
+    });
+
+    test("should keep a single set-cookie out of the flat record too", () => {
+      const response = new Response("{}", { status: 200, headers: [["set-cookie", "a=1"]] });
+
+      const awsResponse = awsResponseHeaders(response, {
+        version: "2.0",
+      } as APIGatewayProxyEventV2);
+
+      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+      expect(awsResponse.cookies).toEqual(["a=1"]);
     });
 
     test("should handle array headers by joining with commas", () => {
@@ -1346,6 +1437,7 @@ describe("[AWS Lambda] Request Utils", () => {
             drainCallback = callback;
           }
         }),
+        removeListener: vi.fn(),
       };
 
       const mockStream = {} as AWSLambdaResponseStream;
@@ -1496,6 +1588,106 @@ describe("[AWS Lambda] Request Utils", () => {
       const metadata = getMetadata() as any;
       expect(metadata.cookies).toEqual(["session=abc"]);
     });
+
+    // `drain` is only emitted by a live stream. If the response stream is torn
+    // down while buffered above its high-water mark, waiting on `drain` alone
+    // never settles and the invocation hangs until the Lambda timeout.
+    describe("backpressure teardown", () => {
+      function useWriter(writer: Writable) {
+        (globalThis as any).awslambda = {
+          HttpResponseStream: { from: () => writer },
+        };
+        return {} as AWSLambdaResponseStream;
+      }
+
+      function stalledWriter() {
+        // Never invokes the write callback, so the stream stays backpressured.
+        const writer = new Writable({ highWaterMark: 1, write() {} });
+        writer.on("error", () => {});
+        return writer;
+      }
+
+      function chunkedResponse(count = 2) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              for (let i = 0; i < count; i++) {
+                controller.enqueue(new Uint8Array(64).fill(i));
+              }
+              controller.close();
+            },
+          }),
+        );
+      }
+
+      test("rejects instead of hanging when the stream errors mid-backpressure", async () => {
+        const writer = stalledWriter();
+        const streaming = awsStreamResponse(chunkedResponse(), useWriter(writer));
+
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy(new Error("ECONNRESET"));
+
+        await expect(streaming).rejects.toThrow("ECONNRESET");
+        expect(writer.listenerCount("drain")).toBe(0);
+        expect(writer.listenerCount("close")).toBe(0);
+      });
+
+      test("rejects when the stream closes without an error mid-backpressure", async () => {
+        const writer = stalledWriter();
+        const streaming = awsStreamResponse(chunkedResponse(), useWriter(writer));
+
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy();
+
+        await expect(streaming).rejects.toThrow("Response stream closed before it could drain");
+        expect(writer.listenerCount("drain")).toBe(0);
+      });
+
+      test("rejects when the stream is already gone before the wait starts", async () => {
+        const writer = new Writable({
+          highWaterMark: 1,
+          write() {
+            this.destroy(new Error("gone"));
+          },
+        });
+        writer.on("error", () => {});
+
+        await expect(awsStreamResponse(chunkedResponse(), useWriter(writer))).rejects.toThrow(
+          "Response stream closed before it could drain",
+        );
+      });
+
+      test("resumes on drain and leaves no listeners behind", async () => {
+        const chunks: Buffer[] = [];
+        const writer = new Writable({
+          highWaterMark: 1,
+          write(chunk, _encoding, callback) {
+            chunks.push(Buffer.from(chunk));
+            // Flush asynchronously so every write is followed by a real `drain`.
+            setTimeout(callback, 0);
+          },
+        });
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              controller.enqueue(encoder.encode("chunk-1"));
+              controller.enqueue(encoder.encode("chunk-2"));
+              controller.enqueue(encoder.encode("chunk-3"));
+              controller.close();
+            },
+          }),
+        );
+
+        await awsStreamResponse(response, useWriter(writer));
+
+        expect(Buffer.concat(chunks).toString()).toBe("chunk-1chunk-2chunk-3");
+        for (const event of ["drain", "error", "close"]) {
+          expect(writer.listenerCount(event)).toBe(0);
+        }
+      });
+    });
   });
 
   describe("handleLambdaEventWithStream", () => {
@@ -1510,6 +1702,7 @@ describe("[AWS Lambda] Request Utils", () => {
         }),
         end: vi.fn(),
         once: vi.fn(),
+        removeListener: vi.fn(),
       };
 
       const mockStream = {} as AWSLambdaResponseStream;
