@@ -1907,6 +1907,229 @@ describe("[AWS Lambda] Request Utils", () => {
         }
       });
     });
+
+    // The prelude metadata headers become the response headers the Function URL
+    // puts on the wire. `transfer-encoding: chunked` on a response that never
+    // writes a byte promises a chunked body that never arrives: behind
+    // CloudFront the client waits until the Lambda timeout, and for a 204 it is
+    // illegal outright (RFC 9112 §6.1). Reported downstream as
+    // https://github.com/nitrojs/nitro/issues/4417
+    describe("bodyless responses", () => {
+      function useWriter() {
+        const written: Buffer[] = [];
+        let metadata: any;
+        let finished = 0;
+
+        const writer = new Writable({
+          write(chunk, _encoding, callback) {
+            written.push(Buffer.from(chunk));
+            callback();
+          },
+        });
+        writer.on("finish", () => finished++);
+
+        const writeSpy = vi.spyOn(writer, "write");
+        const endSpy = vi.spyOn(writer, "end");
+
+        (globalThis as any).awslambda = {
+          HttpResponseStream: {
+            from: vi.fn((_stream: unknown, meta: unknown) => {
+              metadata = meta;
+              return writer;
+            }),
+          },
+        };
+
+        return {
+          stream: {} as AWSLambdaResponseStream,
+          writeSpy,
+          endSpy,
+          getMetadata: () => metadata,
+          getHeaders: () => metadata.headers as Record<string, string | undefined>,
+          getBody: () => Buffer.concat(written).toString(),
+          getFinished: () => finished,
+        };
+      }
+
+      // Hanging is the failure being guarded against, so cap the wait here
+      // instead of leaving it to the runner's suite-wide timeout.
+      async function completes(streaming: Promise<void>) {
+        let timer: ReturnType<typeof setTimeout>;
+        const hang = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("stream did not complete")), 1000);
+        });
+        try {
+          await Promise.race([streaming, hang]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      }
+
+      function eventFor(method: string): APIGatewayProxyEvent {
+        return {
+          httpMethod: method,
+          path: "/resource",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+      }
+
+      test("a 204 declares neither a chunked body nor a content-length", async () => {
+        const stream = useWriter();
+
+        await completes(awsStreamResponse(new Response(null, { status: 204 }), stream.stream));
+
+        expect(stream.getMetadata().statusCode).toBe(204);
+        // RFC 9112 §6.1 (transfer-encoding) and RFC 9110 §8.6 (content-length)
+        // both forbid framing headers on a 204.
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getHeaders()["content-length"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a 304 keeps its validators and the length of the representation", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 304,
+          // A 304 carries the header fields the 200 would have sent, so its
+          // `content-length` describes the cached representation and must not
+          // be rewritten to 0.
+          headers: { etag: '"v1"', "content-length": "1234" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getMetadata().statusCode).toBe(304);
+        expect(stream.getHeaders()).toMatchObject({ etag: '"v1"', "content-length": "1234" });
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a redirect still flushes its prelude, without declaring a body", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 307,
+          headers: { location: "/elsewhere" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        // The zero-length write is load-bearing: it is what makes the runtime
+        // flush the prelude, so dropping it would cost this redirect both its
+        // status and its `Location`.
+        expect(stream.writeSpy).toHaveBeenCalledTimes(1);
+        expect(stream.writeSpy).toHaveBeenCalledWith("");
+        expect(stream.getMetadata().statusCode).toBe(307);
+        expect(stream.getHeaders().location).toBe("/elsewhere");
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a redirect that already declares `content-length: 0` keeps it", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 308,
+          headers: { location: "https://example.com/moved", "content-length": "0" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["content-length"]).toBe("0");
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a HEAD reply keeps the length of the representation it stands in for", async () => {
+        const stream = useWriter();
+
+        const fetchHandler = vi.fn().mockResolvedValue(
+          new Response(null, {
+            headers: { "content-type": "text/plain", "content-length": "1024" },
+          }),
+        );
+
+        await completes(
+          handleLambdaEventWithStream(
+            fetchHandler,
+            eventFor("HEAD"),
+            stream.stream,
+            createMockContext(),
+          ),
+        );
+
+        expect(fetchHandler.mock.calls[0][0].method).toBe("HEAD");
+        expect(stream.getMetadata().statusCode).toBe(200);
+        expect(stream.getHeaders()).toMatchObject({
+          "content-type": "text/plain",
+          "content-length": "1024",
+        });
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      // The other half of the contract: suppressing the framing header for
+      // bodyless responses must not touch responses that do carry bytes.
+      test("a response with a body still declares a chunked body", async () => {
+        const stream = useWriter();
+
+        const response = new Response("Hello, Stream!", {
+          headers: { "content-type": "text/plain" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("Hello, Stream!");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a multi-chunk body arrives whole and the stream ends exactly once", async () => {
+        const stream = useWriter();
+
+        const response = new Response(
+          new ReadableStream({
+            async start(controller) {
+              const encoder = new TextEncoder();
+              for (const chunk of ["chunk-1", "chunk-2", "chunk-3"]) {
+                controller.enqueue(encoder.encode(chunk));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
+              controller.close();
+            },
+          }),
+        );
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("chunk-1chunk-2chunk-3");
+        expect(stream.writeSpy).toHaveBeenCalledTimes(3);
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+    });
   });
 
   describe("handleLambdaEventWithStream", () => {

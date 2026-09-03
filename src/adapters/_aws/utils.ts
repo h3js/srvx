@@ -256,7 +256,7 @@ export async function awsStreamResponse(
     ...awsResponseHeaders(response, event),
   };
 
-  if (!metadata.headers!["transfer-encoding"]) {
+  if (!isBodylessResponse(response) && !metadata.headers!["transfer-encoding"]) {
     metadata.headers!["transfer-encoding"] = "chunked";
   }
 
@@ -276,6 +276,11 @@ export async function awsStreamResponse(
   } finally {
     writer.end();
   }
+}
+
+function isBodylessResponse(response: Response): boolean {
+  const status = response.status;
+  return !response.body || status < 200 || status === 204 || status === 205 || status === 304;
 }
 
 async function streamToNodeStream(
