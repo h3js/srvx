@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.1...v1.0.2)
+
+### 🩹 Fixes
+
+- **node/web:** Handle requests without an abort signal ([bf61f18](https://github.com/h3js/srvx/commit/bf61f18))
+- **aws-lambda:** Query params, set-cookie, v1 response shape, drain hang ([#300](https://github.com/h3js/srvx/pull/300))
+- **aws-lambda:** Address review follow-ups on the streaming and query paths ([4de428d](https://github.com/h3js/srvx/commit/4de428d))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+
 ## v1.0.1
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.0...v1.0.1)
