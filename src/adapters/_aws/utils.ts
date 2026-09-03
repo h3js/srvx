@@ -175,6 +175,13 @@ export function awsResponseHeaders(
 ): AWSResponseHeaders {
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
+    // `Headers` iteration yields one entry per `set-cookie`, so a flat record
+    // can only keep the last one. The full list is carried below by `cookies`
+    // (v2) or `multiValueHeaders` (v1), both of which AWS applies *in addition
+    // to* `headers` — keeping a copy here would send that last cookie twice.
+    if (key === "set-cookie") {
+      continue;
+    }
     if (value) {
       headers[key] = Array.isArray(value) ? value.join(",") : String(value);
     }
@@ -190,9 +197,30 @@ export function awsResponseHeaders(
     (event as AWSLambdaProxyEventV2)?.version === "2.0" ||
     !!(event as AWSLambdaProxyEventV2)?.requestContext?.http;
 
-  return isV2
-    ? { headers, cookies }
-    : { headers, cookies, multiValueHeaders: { "set-cookie": cookies } };
+  // `cookies` is a payload 2.0 field (HTTP API / Function URL). API Gateway
+  // REST (v1) and ALB accept only `statusCode`, `headers`, `multiValueHeaders`,
+  // `body` and `isBase64Encoded`; any extra top-level key fails the invocation
+  // with a 502 "Malformed Lambda proxy response", so v1 gets `multiValueHeaders`
+  // alone. See https://github.com/unjs/nitro/issues/504.
+  if (isV2) {
+    return { headers, cookies };
+  }
+
+  // ALB only reads `multiValueHeaders` when the target group has multi-value
+  // headers enabled ("You must use `multiValueHeaders` if you have enabled
+  // multi-value headers and `headers` otherwise"). That same setting renames
+  // the *request* fields, so an ALB event without `multiValueHeaders` means the
+  // flat record is the only channel back and dropping `set-cookie` from it
+  // would lose the cookie entirely. Only one fits; ALB itself keeps the last
+  // value when a header repeats, so match that instead of sending none.
+  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
+  const albEvent = event as AWSLambdaProxyEvent | undefined;
+  if (albEvent?.requestContext?.elb && !albEvent.multiValueHeaders) {
+    headers["set-cookie"] = cookies[cookies.length - 1];
+    return { headers };
+  }
+
+  return { headers, multiValueHeaders: { "set-cookie": cookies } };
 }
 
 // AWS Lambda proxy integrations requires base64 encoded buffers
@@ -255,13 +283,45 @@ async function streamToNodeStream(
     while (!result.done) {
       const canContinue = writer.write(result.value);
       if (!canContinue) {
-        await new Promise<void>((resolve) => writer.once("drain", resolve));
+        await waitForDrain(writer);
       }
       result = await reader.read();
     }
   } finally {
     reader.releaseLock();
   }
+}
+
+// `drain` is only emitted by a live stream: if the response stream is torn down
+// while buffered above its high-water mark (client disconnect, socket reset), it
+// never fires. Awaiting it alone would leave the invocation pending until the
+// Lambda timeout — billing wall-clock and holding a concurrency slot — so
+// `error`/`close` settle the wait too.
+function waitForDrain(writer: NodeJS.WritableStream): Promise<void> {
+  const closedError = () => new Error("Response stream closed before it could drain");
+  const stream = writer as NodeJS.WritableStream & { destroyed?: boolean; writableEnded?: boolean };
+  if (stream.destroyed || stream.writableEnded) {
+    // Already gone: `close` has fired and will not fire again.
+    return Promise.reject(closedError());
+  }
+  return new Promise<void>((resolve, reject) => {
+    const settle = (error?: Error) => {
+      writer.removeListener("drain", onDrain);
+      writer.removeListener("error", onError);
+      writer.removeListener("close", onClose);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const onDrain = () => settle();
+    const onError = (error: Error) => settle(error);
+    const onClose = () => settle(closedError());
+    writer.once("drain", onDrain);
+    writer.once("error", onError);
+    writer.once("close", onClose);
+  });
 }
 
 function isTextType(contentType = "") {
@@ -289,19 +349,24 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
   });
 }
 
+// The gateway has already lossily parsed the query into `queryStringParameters`
+// (v1/ALB only; v2 carries `rawQueryString`), so the raw string cannot be
+// reconstructed exactly. `URLSearchParams` alone makes it worse though: it has
+// no way to express a valueless param, so `?foo` round-trips as `?foo=`. That
+// is invisible to anything re-parsing the query but not to route rules, cache
+// keys, canonical URLs or a signature computed over `request.url`, so a bare key
+// is emitted for empty values instead.
 function stringifyQuery(obj: Record<string, unknown>) {
-  const params = new URLSearchParams();
+  const parts: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
-    if (value == null) continue;
-    if (Array.isArray(value)) {
-      for (const v of value) {
-        params.append(key, String(v));
-      }
-    } else {
-      params.append(key, String(value));
+    for (const item of Array.isArray(value) ? value : [value]) {
+      // Encode through `URLSearchParams` to keep escaping identical, then drop
+      // the trailing `=` it always appends for an empty value.
+      const pair = new URLSearchParams([[key, item == null ? "" : String(item)]]).toString();
+      parts.push(item == null || item === "" ? pair.slice(0, -1) : pair);
     }
   }
-  return params.toString();
+  return parts.join("&");
 }
 
 // Reverse: Web Request => AWS Event (v1/v2 compatible)
