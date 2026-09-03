@@ -340,8 +340,17 @@ function waitForDrain(writer: NodeJS.WritableStream): Promise<void> {
   });
 }
 
+// The parameters are split off before matching: testing the raw header value
+// let the charset alternative match inside a parameter, so
+// `application/octet-stream; charset=utf-8` (or a `multipart/form-data`
+// boundary that merely contains `utf8`) was decoded with `toString("utf8")` and
+// every invalid byte became U+FFFD — unrecoverable corruption. Structured
+// syntax suffixes are matched too, since `/xml` and `/json` never match the
+// `+xml`/`+json` forms, which left `image/svg+xml`, `application/xhtml+xml` and
+// `application/ld+json` base64-inflated by ~33% for no reason.
 function isTextType(contentType = "") {
-  return /^text\/|\/(javascript|json|xml)|utf-?8/i.test(contentType);
+  const mimeType = contentType.split(";")[0].trim();
+  return /^text\/|\/(javascript|json|xml)|\+(json|xml)$/i.test(mimeType);
 }
 
 function toBuffer(data: ReadableStream): Promise<Buffer> {

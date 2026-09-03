@@ -1141,6 +1141,74 @@ describe("[AWS Lambda] Request Utils", () => {
       }
     });
 
+    test("should not treat a charset/boundary parameter as the MIME type", async () => {
+      // `; charset=utf-8` and a boundary containing `utf8` used to match the
+      // content type as text, so the payload was UTF-8 decoded and every
+      // invalid byte was replaced with U+FFFD — unrecoverable.
+      const binaryData = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x01]);
+
+      for (const contentType of [
+        "application/octet-stream; charset=utf-8",
+        "multipart/form-data; boundary=--utf8x",
+      ]) {
+        const response = new Response(binaryData, {
+          status: 200,
+          headers: { "Content-Type": contentType },
+        });
+
+        const awsBody = await awsResponseBody(response);
+
+        expect(awsBody.isBase64Encoded).toBe(true);
+        expect(Buffer.from(awsBody.body, "base64")).toEqual(binaryData);
+      }
+    });
+
+    test("should treat +json/+xml structured syntax suffixes as text", async () => {
+      const content = '<svg xmlns="http://www.w3.org/2000/svg" />';
+
+      for (const contentType of [
+        "image/svg+xml",
+        "application/xhtml+xml",
+        "application/ld+json",
+        "application/manifest+json; charset=utf-8",
+      ]) {
+        const response = new Response(content, {
+          status: 200,
+          headers: { "Content-Type": contentType },
+        });
+
+        const awsBody = await awsResponseBody(response);
+
+        expect(awsBody.body).toBe(content);
+        expect(awsBody.isBase64Encoded).toBeUndefined();
+      }
+    });
+
+    test("should keep binary types with a `+` suffix binary", async () => {
+      const binaryData = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+      const response = new Response(binaryData, {
+        status: 200,
+        headers: { "Content-Type": "application/wasm" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.isBase64Encoded).toBe(true);
+      expect(Buffer.from(awsBody.body, "base64")).toEqual(binaryData);
+    });
+
+    test("should still detect text types carrying parameters", async () => {
+      const response = new Response("Hello, World!", {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.body).toBe("Hello, World!");
+      expect(awsBody.isBase64Encoded).toBeUndefined();
+    });
+
     test("should handle missing content-type header", async () => {
       const response = new Response("content", { status: 200 });
 
