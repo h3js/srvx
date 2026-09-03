@@ -1030,14 +1030,72 @@ describe("node server startup", () => {
 
   test("auto-serve port conflict surfaces via ready()", async () => {
     await withBlockedPort(async (port) => {
-      const server = serve({
-        port,
-        hostname: "127.0.0.1",
-        fetch: () => new Response(""),
-      });
-      await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
-      await server.close();
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(""),
+        });
+        await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
+        // Claimed by `ready()`, so the last-resort report stays quiet.
+        expect(consoleError).not.toHaveBeenCalled();
+        await server.close();
+      } finally {
+        consoleError.mockRestore();
+      }
     });
+  });
+
+  // F18: nothing forces a caller to await `ready()`, and a failed listen leaves
+  // no open handle -- so a bare `serve({ port })` used to exit 0 in silence with
+  // a dead server, invisible to a supervisor watching the exit code.
+  test("auto-serve port conflict is reported when nothing awaits ready()", async () => {
+    const previousExitCode = process.exitCode;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withBlockedPort(async (port) => {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(""),
+        });
+        await vi.waitFor(() =>
+          expect(consoleError).toHaveBeenCalledWith(
+            "[srvx] Failed to start server:",
+            expect.objectContaining({ code: "EADDRINUSE" }),
+          ),
+        );
+        expect(process.exitCode).toBe(1);
+        await server.close();
+      });
+    } finally {
+      consoleError.mockRestore();
+      // Never leak the failure marker into vitest's own exit code.
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  test("auto-serve port conflict log is muted by `silent`", async () => {
+    const previousExitCode = process.exitCode;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withBlockedPort(async (port) => {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          silent: true,
+          fetch: () => new Response(""),
+        });
+        // `silent` mutes the log but not the exit code: the server is still dead.
+        await vi.waitFor(() => expect(process.exitCode).toBe(1));
+        expect(consoleError).not.toHaveBeenCalled();
+        await server.close();
+      });
+    } finally {
+      consoleError.mockRestore();
+      process.exitCode = previousExitCode;
+    }
   });
 });
 

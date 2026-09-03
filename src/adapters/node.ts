@@ -54,6 +54,7 @@ class NodeServer implements Server {
 
   #listeningPromise?: Promise<void>;
   #listenError?: Error;
+  #listenErrorObserved?: boolean;
 
   #wait?: ReturnType<typeof createWaitUntil>;
 
@@ -159,7 +160,36 @@ class NodeServer implements Server {
     this.node.server = server;
 
     if (!options.manual) {
-      this.serve().catch(() => {});
+      // Auto-listen: the constructor is the caller, so there is nobody for this
+      // rejection to reach. `ready()` is the documented way to observe it
+      // (`serve()` never throws; `ready()` rejects) but nothing forces a caller
+      // to await it -- and a failed listen leaves no open handle, so a bare
+      // `serve({ port })` would otherwise exit 0 without a word, or keep running
+      // with a dead server. Report it unless `ready()` has claimed it.
+      this.serve().catch((error) => this.#reportUnobservedListenError(error));
+    }
+  }
+
+  /**
+   * Last-resort reporting for a listen failure nobody is waiting on.
+   *
+   * A `ready()` chained synchronously after `serve()` -- the common shape --
+   * always wins the race, since the `error` event cannot fire before the
+   * constructor returns. A `ready()` awaited later still rejects; it just also
+   * gets this log, which is the safe way round.
+   */
+  #reportUnobservedListenError(error: unknown): void {
+    if (this.#listenErrorObserved) {
+      return;
+    }
+    // `silent` gates the adapter's error logs (see `_node/send.ts`).
+    if (!this.options.silent) {
+      console.error("[srvx] Failed to start server:", error);
+    }
+    // The server is dead; don't let the process report success on the way out.
+    const process = globalThis.process;
+    if (process && !process.exitCode) {
+      process.exitCode = 1;
     }
   }
 
@@ -208,6 +238,9 @@ class NodeServer implements Server {
   }
 
   ready(): Promise<Server> {
+    // Calling `ready()` is the caller taking responsibility for the outcome,
+    // which switches off `#reportUnobservedListenError`.
+    this.#listenErrorObserved = true;
     if (this.#listenError) {
       return Promise.reject(this.#listenError);
     }
