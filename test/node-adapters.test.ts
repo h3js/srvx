@@ -243,6 +243,28 @@ describe("adapters", () => {
     expect(settled).not.toBe("hung");
   });
 
+  test.skipIf(noBridge)("request without a signal is handled", async () => {
+    const req = new Request("http://localhost/", { method: "POST", body: "ping" });
+    // Shadow the prototype `signal` getter with an own `undefined` property,
+    // keeping the rest of the Request (headers, body) intact.
+    Object.defineProperty(req, "signal", { value: undefined, configurable: true });
+    expect(req.signal).toBeUndefined();
+
+    // Echoes the request body so the socket's readable side is exercised too.
+    const echoHandler: NodeHttp1Handler = (nodeReq, nodeRes) => {
+      const chunks: Buffer[] = [];
+      nodeReq.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      nodeReq.on("end", () => {
+        nodeRes.writeHead(200, { "content-type": "text/plain" });
+        nodeRes.end(Buffer.concat(chunks));
+      });
+    };
+
+    const res = await fetchNodeHandler(echoHandler, req);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ping");
+  });
+
   // https://github.com/h3js/srvx/issues/208
   test("client abort mid-stream does not crash or hang", async () => {
     const controller = new AbortController();
