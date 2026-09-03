@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.0.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.0...v1.0.1)
+
+### 🩹 Fixes
+
+- **node:** Report auto-listen failure instead of exiting 0 silently ([81a3b64](https://github.com/h3js/srvx/commit/81a3b64))
+
+### 📖 Documentation
+
+- Add url ([9bd4aeb](https://github.com/h3js/srvx/commit/9bd4aeb))
+- Fix typos in guide ([#298](https://github.com/h3js/srvx/pull/298))
+
+### 🏡 Chore
+
+- Update undocs ([3a64b7b](https://github.com/h3js/srvx/commit/3a64b7b))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Andrei L ([@unrevised6419](https://github.com/unrevised6419))
+
 ## v0.12.8
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.12.7...v0.12.8)
