@@ -845,13 +845,56 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.cookies).toEqual([
-        "sessionId=abc123; HttpOnly; Secure",
-        "theme=dark; Path=/",
-      ]);
+      // v1: `multiValueHeaders` only, see the "malformed proxy response" tests below.
+      expect(awsResponse.cookies).toBeUndefined();
       expect(awsResponse.multiValueHeaders).toEqual({
         "set-cookie": ["sessionId=abc123; HttpOnly; Secure", "theme=dark; Path=/"],
       });
+    });
+
+    // API Gateway REST (v1) and ALB accept only `statusCode`, `headers`,
+    // `multiValueHeaders`, `body` and `isBase64Encoded`. Any extra top-level
+    // key fails the invocation with a 502 "Malformed Lambda proxy response",
+    // and `cookies` is a payload 2.0 field. See unjs/nitro#504.
+    test("should not put the v2-only `cookies` field on a v1 result", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [["set-cookie", "a=1"]],
+      });
+
+      const v1Event = {
+        httpMethod: "GET",
+        path: "/x",
+        headers: {},
+        requestContext: {},
+      } as unknown as APIGatewayProxyEvent;
+
+      for (const awsResponse of [
+        awsResponseHeaders(response),
+        awsResponseHeaders(response, v1Event),
+      ]) {
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1"] });
+      }
+    });
+
+    test("should not put the v1-only `multiValueHeaders` field on a v2 result", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [["set-cookie", "a=1"]],
+      });
+
+      const fromVersion = awsResponseHeaders(response, {
+        version: "2.0",
+      } as APIGatewayProxyEventV2);
+      const fromRequestContext = awsResponseHeaders(response, {
+        requestContext: { http: { method: "GET" } },
+      } as APIGatewayProxyEventV2);
+
+      for (const awsResponse of [fromVersion, fromRequestContext]) {
+        expect(Object.keys(awsResponse).sort()).toEqual(["cookies", "headers"]);
+        expect(awsResponse.cookies).toEqual(["a=1"]);
+      }
     });
 
     // `Headers` iteration yields one entry per `set-cookie`, so a flat record
@@ -870,7 +913,6 @@ describe("[AWS Lambda] Request Utils", () => {
       const v1 = awsResponseHeaders(response);
       expect(v1.headers["set-cookie"]).toBeUndefined();
       expect(v1.headers["content-type"]).toBe("application/json");
-      expect(v1.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
       expect(v1.multiValueHeaders).toEqual({ "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"] });
 
       const v2 = awsResponseHeaders(response, { version: "2.0" } as APIGatewayProxyEventV2);
@@ -1977,6 +2019,47 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(
           metadata.headers["transfer-encoding"] || metadata.headers["content-length"],
         ).toBeTruthy();
+      });
+
+      test("carries cookies in the prelude as multiValueHeaders, never as `cookies`", async () => {
+        const { mockStream, getMetadata } = createMockResponseStream();
+
+        const fetchHandler = vi.fn().mockResolvedValue(
+          new Response("ok", {
+            headers: [
+              ["content-type", "text/plain"],
+              ["set-cookie", "a=1"],
+              ["set-cookie", "b=2"],
+            ],
+          }),
+        );
+
+        const v1Event: APIGatewayProxyEvent = {
+          httpMethod: "GET",
+          path: "/stream",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+
+        await handleLambdaEventWithStream(fetchHandler, v1Event, mockStream, createMockContext());
+
+        const metadata = getMetadata() as any;
+
+        expect(Object.keys(metadata).sort()).toEqual([
+          "headers",
+          "multiValueHeaders",
+          "statusCode",
+        ]);
+        expect(metadata.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+        expect(metadata.headers["set-cookie"]).toBeUndefined();
       });
     });
   });

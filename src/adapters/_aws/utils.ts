@@ -176,9 +176,9 @@ export function awsResponseHeaders(
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
     // `Headers` iteration yields one entry per `set-cookie`, so a flat record
-    // can only keep the last one. The full list is carried by `cookies` /
-    // `multiValueHeaders` below, both of which AWS applies *in addition to*
-    // `headers` — keeping a copy here would send that last cookie twice.
+    // can only keep the last one. The full list is carried below by `cookies`
+    // (v2) or `multiValueHeaders` (v1), both of which AWS applies *in addition
+    // to* `headers` — keeping a copy here would send that last cookie twice.
     if (key === "set-cookie") {
       continue;
     }
@@ -197,9 +197,12 @@ export function awsResponseHeaders(
     (event as AWSLambdaProxyEventV2)?.version === "2.0" ||
     !!(event as AWSLambdaProxyEventV2)?.requestContext?.http;
 
-  return isV2
-    ? { headers, cookies }
-    : { headers, cookies, multiValueHeaders: { "set-cookie": cookies } };
+  // `cookies` is a payload 2.0 field (HTTP API / Function URL). API Gateway
+  // REST (v1) and ALB accept only `statusCode`, `headers`, `multiValueHeaders`,
+  // `body` and `isBase64Encoded`; any extra top-level key fails the invocation
+  // with a 502 "Malformed Lambda proxy response", so v1 gets `multiValueHeaders`
+  // alone. See https://github.com/unjs/nitro/issues/504.
+  return isV2 ? { headers, cookies } : { headers, multiValueHeaders: { "set-cookie": cookies } };
 }
 
 // AWS Lambda proxy integrations requires base64 encoded buffers
