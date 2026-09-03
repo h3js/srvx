@@ -15,6 +15,7 @@ import type {
 export interface AWSLambdaStreamResponseMetadata {
   statusCode: number;
   headers?: Record<string, string>;
+  multiValueHeaders?: Record<string, string[]>;
   cookies?: string[];
 }
 
@@ -176,9 +177,11 @@ export function awsResponseHeaders(
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
     // `Headers` iteration yields one entry per `set-cookie`, so a flat record
-    // can only keep the last one. The full list is carried below by `cookies`
-    // (v2) or `multiValueHeaders` (v1), both of which AWS applies *in addition
-    // to* `headers` — keeping a copy here would send that last cookie twice.
+    // can only keep the last one, while the full list is carried below by
+    // `cookies` (v2) or `multiValueHeaders` (v1). v2 applies `cookies` *and*
+    // `headers`, so keeping a copy here would send that last cookie twice; v1
+    // merges the two records with `multiValueHeaders` winning per key, so there
+    // the copy is merely redundant. Neither wants it.
     if (key === "set-cookie") {
       continue;
     }
@@ -197,11 +200,12 @@ export function awsResponseHeaders(
     (event as AWSLambdaProxyEventV2)?.version === "2.0" ||
     !!(event as AWSLambdaProxyEventV2)?.requestContext?.http;
 
-  // `cookies` is a payload 2.0 field (HTTP API / Function URL). API Gateway
-  // REST (v1) and ALB accept only `statusCode`, `headers`, `multiValueHeaders`,
-  // `body` and `isBase64Encoded`; any extra top-level key fails the invocation
-  // with a 502 "Malformed Lambda proxy response", so v1 gets `multiValueHeaders`
-  // alone. See https://github.com/unjs/nitro/issues/504.
+  // `cookies` is a payload 2.0 field (HTTP API / Function URL). The API Gateway
+  // REST (v1) proxy result is `statusCode`, `headers`, `multiValueHeaders`,
+  // `body` and `isBase64Encoded` — "If the function output is of a different
+  // format, API Gateway returns a 502 Bad Gateway error response" — so a stray
+  // `cookies` key 502s the whole invocation (unjs/nitro#504). ALB takes the same
+  // fields plus `statusDescription` and likewise has no `cookies`.
   if (isV2) {
     return { headers, cookies };
   }
@@ -211,8 +215,9 @@ export function awsResponseHeaders(
   // multi-value headers and `headers` otherwise"). That same setting renames
   // the *request* fields, so an ALB event without `multiValueHeaders` means the
   // flat record is the only channel back and dropping `set-cookie` from it
-  // would lose the cookie entirely. Only one fits; ALB itself keeps the last
-  // value when a header repeats, so match that instead of sending none.
+  // would lose the cookie entirely. Only one fits, and the docs state the
+  // last-wins rule for requests only, so the last cookie is sent on the same
+  // principle — and because it is what this adapter sent before.
   // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
   const albEvent = event as AWSLambdaProxyEvent | undefined;
   if (albEvent?.requestContext?.elb && !albEvent.multiValueHeaders) {
@@ -287,6 +292,12 @@ async function streamToNodeStream(
       }
       result = await reader.read();
     }
+  } catch (error) {
+    // The writer is gone, so tell the source (a proxied `fetch`, a database
+    // cursor, a file handle) to stop rather than leaving it producing into a
+    // stream nobody will read. Releasing the lock alone does not signal it.
+    reader.cancel(error).catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }
@@ -299,10 +310,15 @@ async function streamToNodeStream(
 // `error`/`close` settle the wait too.
 function waitForDrain(writer: NodeJS.WritableStream): Promise<void> {
   const closedError = () => new Error("Response stream closed before it could drain");
-  const stream = writer as NodeJS.WritableStream & { destroyed?: boolean; writableEnded?: boolean };
+  const stream = writer as NodeJS.WritableStream & {
+    destroyed?: boolean;
+    writableEnded?: boolean;
+    errored?: Error | null;
+  };
   if (stream.destroyed || stream.writableEnded) {
-    // Already gone: `close` has fired and will not fire again.
-    return Promise.reject(closedError());
+    // Already gone: `close` has fired and will not fire again. Prefer the
+    // stream's own error, which says *why* it went away.
+    return Promise.reject(stream.errored ?? closedError());
   }
   return new Promise<void>((resolve, reject) => {
     const settle = (error?: Error) => {
@@ -363,7 +379,10 @@ function stringifyQuery(obj: Record<string, unknown>) {
       // Encode through `URLSearchParams` to keep escaping identical, then drop
       // the trailing `=` it always appends for an empty value.
       const pair = new URLSearchParams([[key, item == null ? "" : String(item)]]).toString();
-      parts.push(item == null || item === "" ? pair.slice(0, -1) : pair);
+      // `pair` is always `key=`; drop the `=` for a valueless param — unless the
+      // key is empty too (`"="`), where dropping it would erase the param.
+      const bare = (item == null || item === "") && key !== "";
+      parts.push(bare ? pair.slice(0, -1) : pair);
     }
   }
   return parts.join("&");
