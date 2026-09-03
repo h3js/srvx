@@ -2088,6 +2088,83 @@ describe("[AWS Lambda] Request Utils", () => {
         await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
       });
 
+      // `new Response("")` carries a body that yields no bytes at all, so it
+      // reaches the wire exactly like a bodyless response and has to be framed
+      // like one. Only a read can tell the two apart.
+      test("an empty body is framed like no body at all", async () => {
+        const stream = useWriter();
+
+        const response = new Response("", { headers: { "content-type": "text/plain" } });
+        expect(response.body).not.toBeNull();
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.writeSpy).toHaveBeenCalledTimes(1);
+        expect(stream.writeSpy).toHaveBeenCalledWith("");
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a stream that closes without emitting is framed like no body at all", async () => {
+        const stream = useWriter();
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.close();
+            },
+          }),
+        );
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      // The body is only read one chunk deep before the prelude is assembled,
+      // so a handler that enqueues an empty chunk to push its headers out early
+      // still starts the response there instead of waiting for real bytes.
+      test("an empty first chunk still starts a chunked response", async () => {
+        const stream = useWriter();
+
+        let sendRest: () => void;
+        const rest = new Promise<void>((resolve) => {
+          sendRest = resolve;
+        });
+
+        const response = new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new Uint8Array(0));
+              await rest;
+              controller.enqueue(new TextEncoder().encode("late"));
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+
+        const streaming = awsStreamResponse(response, stream.stream);
+
+        // The prelude is out and the headers are committed before the first
+        // real byte exists.
+        await vi.waitFor(() => expect(stream.getMetadata()).toBeDefined());
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("");
+
+        sendRest!();
+        await completes(streaming);
+
+        expect(stream.getBody()).toBe("late");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
       // The other half of the contract: suppressing the framing header for
       // bodyless responses must not touch responses that do carry bytes.
       test("a response with a body still declares a chunked body", async () => {

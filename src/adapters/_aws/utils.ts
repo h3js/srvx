@@ -256,40 +256,66 @@ export async function awsStreamResponse(
     ...awsResponseHeaders(response, event),
   };
 
-  if (!isBodylessResponse(response) && !metadata.headers!["transfer-encoding"]) {
-    metadata.headers!["transfer-encoding"] = "chunked";
-  }
+  // `response.body` does not say whether any bytes follow — `new Response("")`
+  // has a body that yields none — and the prelude headers are frozen by the
+  // first write, so the first chunk is pulled before they are assembled. This
+  // costs no latency: the runtime only flushes the prelude on that write.
+  const reader = response.body?.getReader();
 
-  // awslambda is a global provided by Lambda runtime
-  const writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);
-  const body =
-    response.body ??
-    new ReadableStream<string>({
-      start(controller) {
-        controller.enqueue("");
-        controller.close();
-      },
-    });
+  let writer: NodeJS.WritableStream | undefined;
+  const startWriter = (hasBody: boolean): NodeJS.WritableStream => {
+    if (hasBody && !isBodylessStatus(response.status) && !metadata.headers!["transfer-encoding"]) {
+      metadata.headers!["transfer-encoding"] = "chunked";
+    }
+    // awslambda is a global provided by Lambda runtime
+    writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);
+    return writer!;
+  };
 
   try {
-    await streamToNodeStream(body, writer);
+    const first = await readFirstChunk(reader);
+    if (first.done) {
+      // Nothing to chunk. The prelude is only flushed by a write, so write once
+      // anyway: a zero-length write emits nothing on the wire.
+      startWriter(false).write("");
+      return;
+    }
+    await streamToNodeStream(reader!, startWriter(true), first);
   } finally {
-    writer.end();
+    // A body that errored before the first chunk never started a writer, and an
+    // unclosed response stream hangs the invocation until the Lambda timeout.
+    (writer ?? startWriter(false)).end();
   }
 }
 
-function isBodylessResponse(response: Response): boolean {
-  const status = response.status;
-  return !response.body || status < 200 || status === 204 || status === 205 || status === 304;
+// Statuses defined to carry no body, whatever the handler attached.
+function isBodylessStatus(status: number): boolean {
+  return status < 200 || status === 204 || status === 205 || status === 304;
+}
+
+// Exactly one chunk deep: an empty first chunk is a handler flushing its
+// headers early, so it still counts as a body and must start the response.
+async function readFirstChunk(
+  reader?: ReadableStreamDefaultReader<any>,
+): Promise<ReadableStreamReadResult<any>> {
+  if (!reader) {
+    return { done: true, value: undefined };
+  }
+  try {
+    return await reader.read();
+  } catch (error) {
+    reader.releaseLock();
+    throw error;
+  }
 }
 
 async function streamToNodeStream(
-  body: ReadableStream,
+  reader: ReadableStreamDefaultReader<any>,
   writer: NodeJS.WritableStream,
+  first: ReadableStreamReadResult<any>,
 ): Promise<void> {
-  const reader = body.getReader();
   try {
-    let result = await reader.read();
+    let result = first;
     while (!result.done) {
       const canContinue = writer.write(result.value);
       if (!canContinue) {
