@@ -878,6 +878,69 @@ describe("[AWS Lambda] Request Utils", () => {
       }
     });
 
+    // ALB reads `multiValueHeaders` only when the target group has multi-value
+    // headers enabled, and `headers` otherwise. The same setting renames the
+    // request fields, so `multiValueHeaders` on the event is what tells the two
+    // configurations apart.
+    describe("ALB (`requestContext.elb`)", () => {
+      const albEvent = (multiValue: boolean) =>
+        ({
+          httpMethod: "GET",
+          path: "/",
+          headers: { host: "lb.elb.amazonaws.com" },
+          body: null,
+          isBase64Encoded: false,
+          ...(multiValue
+            ? { multiValueHeaders: { host: ["lb.elb.amazonaws.com"] } }
+            : { queryStringParameters: {} }),
+          requestContext: {
+            elb: { targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:0:targetgroup/tg/1" },
+          },
+        }) as unknown as APIGatewayProxyEvent;
+
+      const responseWith = (...cookies: string[]) =>
+        new Response("{}", {
+          status: 200,
+          headers: [
+            ["content-type", "application/json"],
+            ...cookies.map((cookie) => ["set-cookie", cookie] as [string, string]),
+          ],
+        });
+
+      test("keeps a single set-cookie in the flat record when multi-value is off", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1; Path=/"), albEvent(false));
+
+        // `multiValueHeaders` would be ignored by this target group, so the flat
+        // record is the only way the cookie reaches the client.
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
+        expect(awsResponse.headers["set-cookie"]).toBe("a=1; Path=/");
+        expect(awsResponse.headers["content-type"]).toBe("application/json");
+      });
+
+      test("keeps the last cookie when multi-value is off, matching ALB's own last-wins rule", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(false));
+
+        expect(awsResponse.headers["set-cookie"]).toBe("b=2");
+        expect(awsResponse.cookies).toBeUndefined();
+        expect(awsResponse.multiValueHeaders).toBeUndefined();
+      });
+
+      test("uses multiValueHeaders when the event carries them", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(true));
+
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
+        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+      });
+
+      test("leaves cookie-less ALB responses untouched", () => {
+        const awsResponse = awsResponseHeaders(new Response("{}"), albEvent(false));
+
+        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
+      });
+    });
+
     test("should not put the v1-only `multiValueHeaders` field on a v2 result", () => {
       const response = new Response("{}", {
         status: 200,

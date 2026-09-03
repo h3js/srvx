@@ -202,7 +202,25 @@ export function awsResponseHeaders(
   // `body` and `isBase64Encoded`; any extra top-level key fails the invocation
   // with a 502 "Malformed Lambda proxy response", so v1 gets `multiValueHeaders`
   // alone. See https://github.com/unjs/nitro/issues/504.
-  return isV2 ? { headers, cookies } : { headers, multiValueHeaders: { "set-cookie": cookies } };
+  if (isV2) {
+    return { headers, cookies };
+  }
+
+  // ALB only reads `multiValueHeaders` when the target group has multi-value
+  // headers enabled ("You must use `multiValueHeaders` if you have enabled
+  // multi-value headers and `headers` otherwise"). That same setting renames
+  // the *request* fields, so an ALB event without `multiValueHeaders` means the
+  // flat record is the only channel back and dropping `set-cookie` from it
+  // would lose the cookie entirely. Only one fits; ALB itself keeps the last
+  // value when a header repeats, so match that instead of sending none.
+  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
+  const albEvent = event as AWSLambdaProxyEvent | undefined;
+  if (albEvent?.requestContext?.elb && !albEvent.multiValueHeaders) {
+    headers["set-cookie"] = cookies[cookies.length - 1];
+    return { headers };
+  }
+
+  return { headers, multiValueHeaders: { "set-cookie": cookies } };
 }
 
 // AWS Lambda proxy integrations requires base64 encoded buffers

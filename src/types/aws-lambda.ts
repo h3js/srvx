@@ -40,6 +40,8 @@ export interface AWSLambdaProxyEvent {
     apiId?: string;
     authorizer?: any;
     domainName?: string;
+    /** Present only on Application Load Balancer events. */
+    elb?: { targetGroupArn?: string };
     httpMethod?: string;
     identity?: { sourceIp?: string };
     path?: string;
