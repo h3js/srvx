@@ -788,6 +788,12 @@ describe("[AWS Lambda] Request Utils", () => {
         );
       });
 
+      test("keeps an empty-named param rather than erasing it", () => {
+        // `?a=1&=` parses to `{ a: "1", "": "" }`; stripping the `=` off a bare
+        // `=` would drop the parameter instead of preserving it.
+        expect(urlOf(v1QueryEvent({ a: "1", "": "" }))).toBe("/x?a=1&=");
+      });
+
       test("emits no query at all when there are no params", () => {
         expect(urlOf(v1QueryEvent(null))).toBe("/x");
       });
@@ -1749,17 +1755,57 @@ describe("[AWS Lambda] Request Utils", () => {
       });
 
       test("rejects when the stream is already gone before the wait starts", async () => {
+        // Destroyed with no error, so `close` has already fired and there is
+        // nothing left to wait for and no underlying error to report.
         const writer = new Writable({
           highWaterMark: 1,
           write() {
-            this.destroy(new Error("gone"));
+            this.destroy();
           },
         });
-        writer.on("error", () => {});
 
         await expect(awsStreamResponse(chunkedResponse(), useWriter(writer))).rejects.toThrow(
           "Response stream closed before it could drain",
         );
+      });
+
+      test("reports the stream's own error when it is already gone", async () => {
+        const writer = new Writable({
+          highWaterMark: 1,
+          write() {
+            this.destroy(new Error("ECONNRESET"));
+          },
+        });
+        writer.on("error", () => {});
+
+        // The generic "closed before it could drain" message would hide why.
+        await expect(awsStreamResponse(chunkedResponse(), useWriter(writer))).rejects.toThrow(
+          "ECONNRESET",
+        );
+      });
+
+      test("cancels the response body so the source stops producing", async () => {
+        const writer = stalledWriter();
+        let cancelledWith: unknown;
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(64));
+              controller.enqueue(new Uint8Array(64));
+            },
+            cancel(reason) {
+              cancelledWith = reason;
+            },
+          }),
+        );
+
+        const streaming = awsStreamResponse(response, useWriter(writer));
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy(new Error("ECONNRESET"));
+
+        await expect(streaming).rejects.toThrow("ECONNRESET");
+        expect((cancelledWith as Error)?.message).toBe("ECONNRESET");
       });
 
       test("resumes on drain and leaves no listeners behind", async () => {
