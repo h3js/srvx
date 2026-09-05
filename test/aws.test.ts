@@ -1,3 +1,4 @@
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   awsRequest,
@@ -5,12 +6,14 @@ import {
   awsResponseHeaders,
   awsStreamResponse,
   createMockContext,
+  requestToAwsEvent,
   type AWSLambdaResponseStream,
 } from "../src/adapters/_aws/utils.ts";
 import {
   handleLambdaEvent,
   handleLambdaEventWithStream,
   invokeLambdaHandler,
+  toLambdaHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
 import type {
@@ -106,8 +109,80 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.url).toMatch(/^https:\/\//);
       expect(request.headers.get("content-type")).toBe("application/json");
       expect(request.headers.get("authorization")).toBe("Bearer token123");
-      // Check cookies are set (we can't easily test getAll in test environment)
-      expect(request.headers.get("cookie")).toBeDefined();
+      // `cookies[]` with no `headers.cookie`: each entry is joined into one header.
+      expect(request.headers.get("cookie")).toBe("sessionId=abc123; theme=dark");
+    });
+
+    const cookieEvent = (
+      headers: Record<string, string>,
+      cookies?: string[],
+    ): APIGatewayProxyEventV2 =>
+      ({
+        version: "2.0",
+        routeKey: "GET /",
+        rawPath: "/",
+        rawQueryString: "",
+        headers: { host: "api.example.com", ...headers },
+        ...(cookies && { cookies }),
+        isBase64Encoded: false,
+        requestContext: {
+          http: { method: "GET", path: "/" },
+          domainName: "api.example.com",
+        },
+      }) as any;
+
+    test("should let cookies[] win over headers.cookie when both exist", () => {
+      // Deliberately conflicting values: matching ones could not tell "the
+      // header was dropped" apart from "the header was kept and deduped".
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=stale; theme=light" }, ["session=fresh", "theme=dark"]),
+        createMockContext(),
+      );
+
+      expect(request.headers.get("cookie")).toBe("session=fresh; theme=dark");
+    });
+
+    test("should keep headers.cookie when the event has no cookies[]", () => {
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=abc; theme=dark" }),
+        createMockContext(),
+      );
+
+      expect(request.headers.get("cookie")).toBe("session=abc; theme=dark");
+    });
+
+    test("should keep headers.cookie when cookies[] is empty", () => {
+      const request = awsRequest(
+        cookieEvent({ cookie: "session=abc; theme=dark" }, []),
+        createMockContext(),
+      );
+
+      expect(request.headers.get("cookie")).toBe("session=abc; theme=dark");
+    });
+
+    test("should round-trip cookies through invokeLambdaHandler without duplicating", async () => {
+      const handler = toLambdaHandler({
+        fetch: (request) => new Response(request.headers.get("cookie")),
+      });
+
+      const response = await invokeLambdaHandler(
+        handler,
+        new Request("https://example.com/", {
+          headers: { cookie: "session=abc; theme=dark" },
+        }),
+      );
+
+      expect(await response.text()).toBe("session=abc; theme=dark");
+    });
+
+    test("should split the cookie header into one entry per cookie", async () => {
+      const event = await requestToAwsEvent(
+        new Request("https://example.com/", {
+          headers: { cookie: "session=abc; theme=dark" },
+        }),
+      );
+
+      expect(event.cookies).toEqual(["session=abc", "theme=dark"]);
     });
 
     test("should handle base64 encoded body", () => {
@@ -408,6 +483,64 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.ip).toBe("10.0.0.1");
     });
 
+    test("hop-aware: rightmost untrusted X-Forwarded-For entry is the client", () => {
+      // The gateway `sourceIp` (10.0.0.1) is the nearest hop and is the only
+      // trusted address. An attacker prepends `9.9.9.9`; the gateway appends the
+      // real address `1.2.3.4`. Walking right-to-left, `1.2.3.4` wins — the old
+      // leftmost behavior would have returned the spoofed `9.9.9.9`.
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "api.example.com",
+          "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      const request = awsRequest(v1Event, createMockContext(), ["10.0.0.1"]);
+
+      expect(request.ip).toBe("1.2.3.4");
+    });
+
+    test("hop-aware proto/host: only the trusted peer's appended entry is honored", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/api/users",
+        headers: {
+          host: "real.example.com",
+          "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+          "x-forwarded-proto": "https, http",
+          "x-forwarded-host": "spoofed.example, forwarded.example",
+        },
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.1" } } as any,
+        resource: "",
+        queryStringParameters: null,
+      };
+
+      // Only the gateway (sourceIp) is trusted -> one hop -> the peer-appended
+      // (rightmost) proto/host entries win over the attacker-prepended ones.
+      const request = awsRequest(v1Event, createMockContext(), ["10.0.0.1"]);
+      const url = new URL(request.url);
+
+      expect(url.protocol).toBe("http:");
+      expect(url.host).toBe("forwarded.example");
+    });
+
     test("should handle path parameters in URL construction", () => {
       const v1Event: APIGatewayProxyEvent = {
         httpMethod: "GET",
@@ -427,6 +560,243 @@ describe("[AWS Lambda] Request Utils", () => {
       const request = awsRequest(v1Event, createMockContext());
 
       expect(request.url).toContain("/api/users/123");
+    });
+
+    // -- URL origin hardening --
+    // The gateway path and the `Host` header are client-controlled and must
+    // never be able to move `request.url` off the real origin (or throw out of
+    // `awsRequest`, which runs before the error middleware).
+
+    const v1EventWith = (event: Partial<APIGatewayProxyEvent>): APIGatewayProxyEvent =>
+      ({
+        httpMethod: "GET",
+        path: "/api/users",
+        body: null,
+        isBase64Encoded: false,
+        multiValueHeaders: {},
+        multiValueQueryStringParameters: {},
+        pathParameters: null,
+        stageVariables: null,
+        resource: "",
+        queryStringParameters: null,
+        ...event,
+        headers: { host: "api.example.com", ...event.headers },
+        requestContext: { domainName: "api.example.com", ...event.requestContext } as any,
+      }) as APIGatewayProxyEvent;
+
+    const v2EventWith = (event: Partial<APIGatewayProxyEventV2>): APIGatewayProxyEventV2 =>
+      ({
+        version: "2.0",
+        rawPath: "/api/users",
+        rawQueryString: "",
+        body: undefined,
+        isBase64Encoded: false,
+        routeKey: "$default",
+        ...event,
+        headers: { host: "api.example.com", ...event.headers },
+        requestContext: {
+          domainName: "api.example.com",
+          http: { method: "GET" },
+          ...event.requestContext,
+        } as any,
+      }) as APIGatewayProxyEventV2;
+
+    // [rawPath/path, resulting pathname]
+    const hostilePaths: [string, string][] = [
+      ["//evil.com/admin", "//evil.com/admin"],
+      ["///evil.com/x", "///evil.com/x"],
+      ["/\\evil.com/admin", "//evil.com/admin"],
+      ["//evil.com:8080/x", "//evil.com:8080/x"],
+      ["//user:pw@evil.com/x", "//user:pw@evil.com/x"],
+      ["https://evil.com/x", "/https://evil.com/x"],
+      ["javascript:alert(1)", "/javascript:alert(1)"],
+    ];
+
+    test.each(hostilePaths)(
+      "client path %j cannot override the URL authority (v2 rawPath)",
+      (rawPath, pathname) => {
+        const request = awsRequest(v2EventWith({ rawPath }), createMockContext());
+        const url = new URL(request.url);
+
+        expect(url.host).toBe("api.example.com");
+        expect(url.origin).toBe("https://api.example.com");
+        // The path is preserved verbatim (`//` runs are not collapsed) so the
+        // routed pathname keeps matching what the gateway/WAF authorized,
+        // matching the Node adapter.
+        expect(url.pathname).toBe(pathname);
+        expect(url.username).toBe("");
+        expect(url.password).toBe("");
+      },
+    );
+
+    test.each(hostilePaths)(
+      "client path %j cannot override the URL authority (v1 path)",
+      (path, pathname) => {
+        const request = awsRequest(v1EventWith({ path }), createMockContext());
+        const url = new URL(request.url);
+
+        expect(url.host).toBe("api.example.com");
+        expect(url.origin).toBe("https://api.example.com");
+        expect(url.pathname).toBe(pathname);
+      },
+    );
+
+    test("a path with userinfo no longer fails the invocation", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("ok"));
+
+      await expect(
+        handleLambdaEvent(
+          fetchHandler,
+          v2EventWith({ rawPath: "//user:pw@evil.com/x" }),
+          createMockContext(),
+        ),
+      ).resolves.toMatchObject({ statusCode: 200 });
+
+      const request = fetchHandler.mock.calls[0][0] as Request;
+      expect(new URL(request.url).host).toBe("api.example.com");
+    });
+
+    test.each(["bad host", "a.com/foo?", "api.example.com:3000/zzz", "evil.com:99999999"])(
+      "malformed Host %j becomes `_invalid_` without throwing",
+      (host) => {
+        const request = awsRequest(
+          v2EventWith({ rawPath: "/x", headers: { host } }),
+          createMockContext(),
+        );
+
+        expect(new URL(request.url).host).toBe("_invalid_");
+      },
+    );
+
+    test("a malformed Host does not fail the invocation", async () => {
+      const fetchHandler = vi.fn().mockResolvedValue(new Response("ok"));
+
+      await expect(
+        handleLambdaEvent(
+          fetchHandler,
+          v2EventWith({ rawPath: "/x", headers: { host: "bad host" } }),
+          createMockContext(),
+        ),
+      ).resolves.toMatchObject({ statusCode: 200 });
+    });
+
+    test("a well-formed Host is still honored", () => {
+      const request = awsRequest(
+        v2EventWith({ rawPath: "/x", headers: { host: "api.example.com:3000" } }),
+        createMockContext(),
+      );
+
+      expect(new URL(request.url).host).toBe("api.example.com:3000");
+    });
+
+    test("invalid X-Forwarded-Host is ignored even when the proxy is trusted", () => {
+      const request = awsRequest(
+        v2EventWith({
+          rawPath: "/x",
+          headers: { host: "real.example.com", "x-forwarded-host": "evil.com/p?" },
+        }),
+        createMockContext(),
+        true,
+      );
+
+      expect(new URL(request.url).host).toBe("real.example.com");
+    });
+
+    test("missing Host falls back to domainName, then to `_invalid_`", () => {
+      const withDomainName = awsRequest(
+        v2EventWith({ rawPath: "/x", headers: {} as any, requestContext: {} as any }),
+        createMockContext(),
+      );
+      expect(new URL(withDomainName.url).host).toBe("api.example.com");
+
+      const withoutAnyHost = awsRequest(
+        {
+          rawPath: "/x",
+          rawQueryString: "",
+          headers: {},
+          requestContext: { http: { method: "GET" } },
+        } as any,
+        createMockContext(),
+      );
+      expect(new URL(withoutAnyHost.url).host).toBe("_invalid_");
+    });
+
+    test("a missing path falls back to `/` instead of `/undefined`", () => {
+      const request = awsRequest(
+        { headers: { host: "api.example.com" }, requestContext: {} } as any,
+        createMockContext(),
+      );
+
+      expect(request.url).toBe("https://api.example.com/");
+    });
+
+    test("benign paths and queries are unchanged", () => {
+      const request = awsRequest(
+        v2EventWith({ rawPath: "/api/users", rawQueryString: "page=1&limit=10" }),
+        createMockContext(),
+      );
+
+      expect(request.url).toBe("https://api.example.com/api/users?page=1&limit=10");
+    });
+
+    // v1/ALB events only expose the parsed `queryStringParameters`, so the raw
+    // query has to be rebuilt. `?foo` must not turn into `?foo=`: anything
+    // reading the raw URL (route rules, cache keys, canonical URLs, a signature
+    // over the query) sees a different string.
+    describe("v1 query reconstruction", () => {
+      const v1QueryEvent = (
+        queryStringParameters: Record<string, unknown> | null,
+        multiValueQueryStringParameters?: Record<string, unknown>,
+      ) =>
+        ({
+          httpMethod: "GET",
+          path: "/x",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters,
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters,
+        }) as unknown as APIGatewayProxyEvent;
+
+      const urlOf = (event: APIGatewayProxyEvent) =>
+        awsRequest(event, createMockContext()).url.replace("https://api.example.com", "");
+
+      test("keeps a valueless param bare", () => {
+        expect(urlOf(v1QueryEvent({ foo: "" }))).toBe("/x?foo");
+      });
+
+      test("keeps valueless and valued params side by side", () => {
+        expect(urlOf(v1QueryEvent({ foo: "", page: "1" }))).toBe("/x?foo&page=1");
+      });
+
+      test("keeps a null value bare instead of dropping the key", () => {
+        expect(urlOf(v1QueryEvent({ foo: null }))).toBe("/x?foo");
+      });
+
+      test("preserves valued params and their escaping", () => {
+        expect(urlOf(v1QueryEvent({ q: "a b", "&": "=" }))).toBe("/x?q=a+b&%26=%3D");
+      });
+
+      test("expands multi-value params, bare entries included", () => {
+        expect(urlOf(v1QueryEvent({ tag: "b" }, { tag: ["a", "", "b"] }))).toBe(
+          "/x?tag=a&tag&tag=b",
+        );
+      });
+
+      test("keeps an empty-named param rather than erasing it", () => {
+        // `?a=1&=` parses to `{ a: "1", "": "" }`; stripping the `=` off a bare
+        // `=` would drop the parameter instead of preserving it.
+        expect(urlOf(v1QueryEvent({ a: "1", "": "" }))).toBe("/x?a=1&=");
+      });
+
+      test("emits no query at all when there are no params", () => {
+        expect(urlOf(v1QueryEvent(null))).toBe("/x");
+      });
     });
   });
 
@@ -481,13 +851,154 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.cookies).toEqual([
-        "sessionId=abc123; HttpOnly; Secure",
-        "theme=dark; Path=/",
-      ]);
+      // v1: `multiValueHeaders` only, see the "malformed proxy response" tests below.
+      expect(awsResponse.cookies).toBeUndefined();
       expect(awsResponse.multiValueHeaders).toEqual({
         "set-cookie": ["sessionId=abc123; HttpOnly; Secure", "theme=dark; Path=/"],
       });
+    });
+
+    // API Gateway REST (v1) and ALB accept only `statusCode`, `headers`,
+    // `multiValueHeaders`, `body` and `isBase64Encoded`. Any extra top-level
+    // key fails the invocation with a 502 "Malformed Lambda proxy response",
+    // and `cookies` is a payload 2.0 field. See unjs/nitro#504.
+    test("should not put the v2-only `cookies` field on a v1 result", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [["set-cookie", "a=1"]],
+      });
+
+      const v1Event = {
+        httpMethod: "GET",
+        path: "/x",
+        headers: {},
+        requestContext: {},
+      } as unknown as APIGatewayProxyEvent;
+
+      for (const awsResponse of [
+        awsResponseHeaders(response),
+        awsResponseHeaders(response, v1Event),
+      ]) {
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1"] });
+      }
+    });
+
+    // ALB reads `multiValueHeaders` only when the target group has multi-value
+    // headers enabled, and `headers` otherwise. The same setting renames the
+    // request fields, so `multiValueHeaders` on the event is what tells the two
+    // configurations apart.
+    describe("ALB (`requestContext.elb`)", () => {
+      const albEvent = (multiValue: boolean) =>
+        ({
+          httpMethod: "GET",
+          path: "/",
+          headers: { host: "lb.elb.amazonaws.com" },
+          body: null,
+          isBase64Encoded: false,
+          ...(multiValue
+            ? { multiValueHeaders: { host: ["lb.elb.amazonaws.com"] } }
+            : { queryStringParameters: {} }),
+          requestContext: {
+            elb: { targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:0:targetgroup/tg/1" },
+          },
+        }) as unknown as APIGatewayProxyEvent;
+
+      const responseWith = (...cookies: string[]) =>
+        new Response("{}", {
+          status: 200,
+          headers: [
+            ["content-type", "application/json"],
+            ...cookies.map((cookie) => ["set-cookie", cookie] as [string, string]),
+          ],
+        });
+
+      test("keeps a single set-cookie in the flat record when multi-value is off", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1; Path=/"), albEvent(false));
+
+        // `multiValueHeaders` would be ignored by this target group, so the flat
+        // record is the only way the cookie reaches the client.
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
+        expect(awsResponse.headers["set-cookie"]).toBe("a=1; Path=/");
+        expect(awsResponse.headers["content-type"]).toBe("application/json");
+      });
+
+      test("keeps the last cookie when multi-value is off, matching ALB's own last-wins rule", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(false));
+
+        expect(awsResponse.headers["set-cookie"]).toBe("b=2");
+        expect(awsResponse.cookies).toBeUndefined();
+        expect(awsResponse.multiValueHeaders).toBeUndefined();
+      });
+
+      test("uses multiValueHeaders when the event carries them", () => {
+        const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(true));
+
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
+        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+      });
+
+      test("leaves cookie-less ALB responses untouched", () => {
+        const awsResponse = awsResponseHeaders(new Response("{}"), albEvent(false));
+
+        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
+      });
+    });
+
+    test("should not put the v1-only `multiValueHeaders` field on a v2 result", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [["set-cookie", "a=1"]],
+      });
+
+      const fromVersion = awsResponseHeaders(response, {
+        version: "2.0",
+      } as APIGatewayProxyEventV2);
+      const fromRequestContext = awsResponseHeaders(response, {
+        requestContext: { http: { method: "GET" } },
+      } as APIGatewayProxyEventV2);
+
+      for (const awsResponse of [fromVersion, fromRequestContext]) {
+        expect(Object.keys(awsResponse).sort()).toEqual(["cookies", "headers"]);
+        expect(awsResponse.cookies).toEqual(["a=1"]);
+      }
+    });
+
+    // `Headers` iteration yields one entry per `set-cookie`, so a flat record
+    // keeps only the last one - and AWS applies `headers` on top of
+    // `cookies`/`multiValueHeaders`, sending that last cookie twice.
+    test("should not leak set-cookie into the flat headers record", () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: [
+          ["content-type", "application/json"],
+          ["set-cookie", "a=1; Path=/"],
+          ["set-cookie", "b=2; HttpOnly"],
+        ],
+      });
+
+      const v1 = awsResponseHeaders(response);
+      expect(v1.headers["set-cookie"]).toBeUndefined();
+      expect(v1.headers["content-type"]).toBe("application/json");
+      expect(v1.multiValueHeaders).toEqual({ "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"] });
+
+      const v2 = awsResponseHeaders(response, { version: "2.0" } as APIGatewayProxyEventV2);
+      expect(v2.headers["set-cookie"]).toBeUndefined();
+      expect(v2.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
+      expect(v2.multiValueHeaders).toBeUndefined();
+    });
+
+    test("should keep a single set-cookie out of the flat record too", () => {
+      const response = new Response("{}", { status: 200, headers: [["set-cookie", "a=1"]] });
+
+      const awsResponse = awsResponseHeaders(response, {
+        version: "2.0",
+      } as APIGatewayProxyEventV2);
+
+      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+      expect(awsResponse.cookies).toEqual(["a=1"]);
     });
 
     test("should handle array headers by joining with commas", () => {
@@ -628,6 +1139,74 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(awsBody.body).toBe(binaryData.toString("base64"));
         expect(awsBody.isBase64Encoded).toBe(true);
       }
+    });
+
+    test("should not treat a charset/boundary parameter as the MIME type", async () => {
+      // `; charset=utf-8` and a boundary containing `utf8` used to match the
+      // content type as text, so the payload was UTF-8 decoded and every
+      // invalid byte was replaced with U+FFFD — unrecoverable.
+      const binaryData = Buffer.from([0xff, 0xfe, 0x00, 0x80, 0x01]);
+
+      for (const contentType of [
+        "application/octet-stream; charset=utf-8",
+        "multipart/form-data; boundary=--utf8x",
+      ]) {
+        const response = new Response(binaryData, {
+          status: 200,
+          headers: { "Content-Type": contentType },
+        });
+
+        const awsBody = await awsResponseBody(response);
+
+        expect(awsBody.isBase64Encoded).toBe(true);
+        expect(Buffer.from(awsBody.body, "base64")).toEqual(binaryData);
+      }
+    });
+
+    test("should treat +json/+xml structured syntax suffixes as text", async () => {
+      const content = '<svg xmlns="http://www.w3.org/2000/svg" />';
+
+      for (const contentType of [
+        "image/svg+xml",
+        "application/xhtml+xml",
+        "application/ld+json",
+        "application/manifest+json; charset=utf-8",
+      ]) {
+        const response = new Response(content, {
+          status: 200,
+          headers: { "Content-Type": contentType },
+        });
+
+        const awsBody = await awsResponseBody(response);
+
+        expect(awsBody.body).toBe(content);
+        expect(awsBody.isBase64Encoded).toBeUndefined();
+      }
+    });
+
+    test("should keep binary types with a `+` suffix binary", async () => {
+      const binaryData = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+      const response = new Response(binaryData, {
+        status: 200,
+        headers: { "Content-Type": "application/wasm" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.isBase64Encoded).toBe(true);
+      expect(Buffer.from(awsBody.body, "base64")).toEqual(binaryData);
+    });
+
+    test("should still detect text types carrying parameters", async () => {
+      const response = new Response("Hello, World!", {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+
+      const awsBody = await awsResponseBody(response);
+
+      expect(awsBody.body).toBe("Hello, World!");
+      expect(awsBody.isBase64Encoded).toBeUndefined();
     });
 
     test("should handle missing content-type header", async () => {
@@ -994,6 +1573,27 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("Hello World");
     });
+
+    test("a `//`-prefixed path round-trips without hijacking the origin", async () => {
+      // `requestToAwsEvent` puts `url.pathname` into `rawPath`/`path`, so this
+      // reaches the same sink as a real gateway event, with no AWS involvement.
+      // Before the fix the handler observed `https://evil.com/x`.
+      const observed: string[] = [];
+      const handler: AWSLambdaHandler = (event, context) => {
+        observed.push(awsRequest(event, context).url);
+        return { statusCode: 200, body: "OK" };
+      };
+
+      const response = await invokeLambdaHandler(
+        handler,
+        new Request("http://localhost:3000//evil.com/x"),
+      );
+
+      expect(response.status).toBe(200);
+      const url = new URL(observed[0]);
+      expect(url.host).toBe("localhost");
+      expect(url.pathname).toBe("//evil.com/x");
+    });
   });
 
   describe("awsStreamResponse", () => {
@@ -1016,6 +1616,7 @@ describe("[AWS Lambda] Request Utils", () => {
             drainCallback = callback;
           }
         }),
+        removeListener: vi.fn(),
       };
 
       const mockStream = {} as AWSLambdaResponseStream;
@@ -1166,6 +1767,446 @@ describe("[AWS Lambda] Request Utils", () => {
       const metadata = getMetadata() as any;
       expect(metadata.cookies).toEqual(["session=abc"]);
     });
+
+    // `drain` is only emitted by a live stream. If the response stream is torn
+    // down while buffered above its high-water mark, waiting on `drain` alone
+    // never settles and the invocation hangs until the Lambda timeout.
+    describe("backpressure teardown", () => {
+      function useWriter(writer: Writable) {
+        (globalThis as any).awslambda = {
+          HttpResponseStream: { from: () => writer },
+        };
+        return {} as AWSLambdaResponseStream;
+      }
+
+      function stalledWriter() {
+        // Never invokes the write callback, so the stream stays backpressured.
+        const writer = new Writable({ highWaterMark: 1, write() {} });
+        writer.on("error", () => {});
+        return writer;
+      }
+
+      function chunkedResponse(count = 2) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              for (let i = 0; i < count; i++) {
+                controller.enqueue(new Uint8Array(64).fill(i));
+              }
+              controller.close();
+            },
+          }),
+        );
+      }
+
+      test("rejects instead of hanging when the stream errors mid-backpressure", async () => {
+        const writer = stalledWriter();
+        const streaming = awsStreamResponse(chunkedResponse(), useWriter(writer));
+
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy(new Error("ECONNRESET"));
+
+        await expect(streaming).rejects.toThrow("ECONNRESET");
+        expect(writer.listenerCount("drain")).toBe(0);
+        expect(writer.listenerCount("close")).toBe(0);
+      });
+
+      test("rejects when the stream closes without an error mid-backpressure", async () => {
+        const writer = stalledWriter();
+        const streaming = awsStreamResponse(chunkedResponse(), useWriter(writer));
+
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy();
+
+        await expect(streaming).rejects.toThrow("Response stream closed before it could drain");
+        expect(writer.listenerCount("drain")).toBe(0);
+      });
+
+      test("rejects when the stream is already gone before the wait starts", async () => {
+        // Destroyed with no error, so `close` has already fired and there is
+        // nothing left to wait for and no underlying error to report.
+        const writer = new Writable({
+          highWaterMark: 1,
+          write() {
+            this.destroy();
+          },
+        });
+
+        await expect(awsStreamResponse(chunkedResponse(), useWriter(writer))).rejects.toThrow(
+          "Response stream closed before it could drain",
+        );
+      });
+
+      test("reports the stream's own error when it is already gone", async () => {
+        const writer = new Writable({
+          highWaterMark: 1,
+          write() {
+            this.destroy(new Error("ECONNRESET"));
+          },
+        });
+        writer.on("error", () => {});
+
+        // The generic "closed before it could drain" message would hide why.
+        await expect(awsStreamResponse(chunkedResponse(), useWriter(writer))).rejects.toThrow(
+          "ECONNRESET",
+        );
+      });
+
+      test("cancels the response body so the source stops producing", async () => {
+        const writer = stalledWriter();
+        let cancelledWith: unknown;
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(64));
+              controller.enqueue(new Uint8Array(64));
+            },
+            cancel(reason) {
+              cancelledWith = reason;
+            },
+          }),
+        );
+
+        const streaming = awsStreamResponse(response, useWriter(writer));
+        await vi.waitFor(() => expect(writer.listenerCount("drain")).toBe(1));
+        writer.destroy(new Error("ECONNRESET"));
+
+        await expect(streaming).rejects.toThrow("ECONNRESET");
+        expect((cancelledWith as Error)?.message).toBe("ECONNRESET");
+      });
+
+      test("resumes on drain and leaves no listeners behind", async () => {
+        const chunks: Buffer[] = [];
+        const writer = new Writable({
+          highWaterMark: 1,
+          write(chunk, _encoding, callback) {
+            chunks.push(Buffer.from(chunk));
+            // Flush asynchronously so every write is followed by a real `drain`.
+            setTimeout(callback, 0);
+          },
+        });
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              const encoder = new TextEncoder();
+              controller.enqueue(encoder.encode("chunk-1"));
+              controller.enqueue(encoder.encode("chunk-2"));
+              controller.enqueue(encoder.encode("chunk-3"));
+              controller.close();
+            },
+          }),
+        );
+
+        await awsStreamResponse(response, useWriter(writer));
+
+        expect(Buffer.concat(chunks).toString()).toBe("chunk-1chunk-2chunk-3");
+        for (const event of ["drain", "error", "close"]) {
+          expect(writer.listenerCount(event)).toBe(0);
+        }
+      });
+    });
+
+    // The prelude metadata headers become the response headers the Function URL
+    // puts on the wire. `transfer-encoding: chunked` on a response that never
+    // writes a byte promises a chunked body that never arrives: behind
+    // CloudFront the client waits until the Lambda timeout, and for a 204 it is
+    // illegal outright (RFC 9112 §6.1). Reported downstream as
+    // https://github.com/nitrojs/nitro/issues/4417
+    describe("bodyless responses", () => {
+      function useWriter() {
+        const written: Buffer[] = [];
+        let metadata: any;
+        let finished = 0;
+
+        const writer = new Writable({
+          write(chunk, _encoding, callback) {
+            written.push(Buffer.from(chunk));
+            callback();
+          },
+        });
+        writer.on("finish", () => finished++);
+
+        const writeSpy = vi.spyOn(writer, "write");
+        const endSpy = vi.spyOn(writer, "end");
+
+        (globalThis as any).awslambda = {
+          HttpResponseStream: {
+            from: vi.fn((_stream: unknown, meta: unknown) => {
+              metadata = meta;
+              return writer;
+            }),
+          },
+        };
+
+        return {
+          stream: {} as AWSLambdaResponseStream,
+          writeSpy,
+          endSpy,
+          getMetadata: () => metadata,
+          getHeaders: () => metadata.headers as Record<string, string | undefined>,
+          getBody: () => Buffer.concat(written).toString(),
+          getFinished: () => finished,
+        };
+      }
+
+      // Hanging is the failure being guarded against, so cap the wait here
+      // instead of leaving it to the runner's suite-wide timeout.
+      async function completes(streaming: Promise<void>) {
+        let timer: ReturnType<typeof setTimeout>;
+        const hang = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("stream did not complete")), 1000);
+        });
+        try {
+          await Promise.race([streaming, hang]);
+        } finally {
+          clearTimeout(timer!);
+        }
+      }
+
+      function eventFor(method: string): APIGatewayProxyEvent {
+        return {
+          httpMethod: method,
+          path: "/resource",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+      }
+
+      test("a 204 declares neither a chunked body nor a content-length", async () => {
+        const stream = useWriter();
+
+        await completes(awsStreamResponse(new Response(null, { status: 204 }), stream.stream));
+
+        expect(stream.getMetadata().statusCode).toBe(204);
+        // RFC 9112 §6.1 (transfer-encoding) and RFC 9110 §8.6 (content-length)
+        // both forbid framing headers on a 204.
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getHeaders()["content-length"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a 304 keeps its validators and the length of the representation", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 304,
+          // A 304 carries the header fields the 200 would have sent, so its
+          // `content-length` describes the cached representation and must not
+          // be rewritten to 0.
+          headers: { etag: '"v1"', "content-length": "1234" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getMetadata().statusCode).toBe(304);
+        expect(stream.getHeaders()).toMatchObject({ etag: '"v1"', "content-length": "1234" });
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a redirect still flushes its prelude, without declaring a body", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 307,
+          headers: { location: "/elsewhere" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        // The zero-length write is load-bearing: it is what makes the runtime
+        // flush the prelude, so dropping it would cost this redirect both its
+        // status and its `Location`.
+        expect(stream.writeSpy).toHaveBeenCalledTimes(1);
+        expect(stream.writeSpy).toHaveBeenCalledWith("");
+        expect(stream.getMetadata().statusCode).toBe(307);
+        expect(stream.getHeaders().location).toBe("/elsewhere");
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a redirect that already declares `content-length: 0` keeps it", async () => {
+        const stream = useWriter();
+
+        const response = new Response(null, {
+          status: 308,
+          headers: { location: "https://example.com/moved", "content-length": "0" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["content-length"]).toBe("0");
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a HEAD reply keeps the length of the representation it stands in for", async () => {
+        const stream = useWriter();
+
+        const fetchHandler = vi.fn().mockResolvedValue(
+          new Response(null, {
+            headers: { "content-type": "text/plain", "content-length": "1024" },
+          }),
+        );
+
+        await completes(
+          handleLambdaEventWithStream(
+            fetchHandler,
+            eventFor("HEAD"),
+            stream.stream,
+            createMockContext(),
+          ),
+        );
+
+        expect(fetchHandler.mock.calls[0][0].method).toBe("HEAD");
+        expect(stream.getMetadata().statusCode).toBe(200);
+        expect(stream.getHeaders()).toMatchObject({
+          "content-type": "text/plain",
+          "content-length": "1024",
+        });
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      // `new Response("")` carries a body that yields no bytes at all, so it
+      // reaches the wire exactly like a bodyless response and has to be framed
+      // like one. Only a read can tell the two apart.
+      test("an empty body is framed like no body at all", async () => {
+        const stream = useWriter();
+
+        const response = new Response("", { headers: { "content-type": "text/plain" } });
+        expect(response.body).not.toBeNull();
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.writeSpy).toHaveBeenCalledTimes(1);
+        expect(stream.writeSpy).toHaveBeenCalledWith("");
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a stream that closes without emitting is framed like no body at all", async () => {
+        const stream = useWriter();
+
+        const response = new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.close();
+            },
+          }),
+        );
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBeUndefined();
+        expect(stream.getBody()).toBe("");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      // The body is only read one chunk deep before the prelude is assembled,
+      // so a handler that enqueues an empty chunk to push its headers out early
+      // still starts the response there instead of waiting for real bytes.
+      test("an empty first chunk still starts a chunked response", async () => {
+        const stream = useWriter();
+
+        let sendRest: () => void;
+        const rest = new Promise<void>((resolve) => {
+          sendRest = resolve;
+        });
+
+        const response = new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new Uint8Array(0));
+              await rest;
+              controller.enqueue(new TextEncoder().encode("late"));
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+
+        const streaming = awsStreamResponse(response, stream.stream);
+
+        // The prelude is out and the headers are committed before the first
+        // real byte exists.
+        await vi.waitFor(() => expect(stream.getMetadata()).toBeDefined());
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("");
+
+        sendRest!();
+        await completes(streaming);
+
+        expect(stream.getBody()).toBe("late");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      // The other half of the contract: suppressing the framing header for
+      // bodyless responses must not touch responses that do carry bytes.
+      test("a response with a body still declares a chunked body", async () => {
+        const stream = useWriter();
+
+        const response = new Response("Hello, Stream!", {
+          headers: { "content-type": "text/plain" },
+        });
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("Hello, Stream!");
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+
+      test("a multi-chunk body arrives whole and the stream ends exactly once", async () => {
+        const stream = useWriter();
+
+        const response = new Response(
+          new ReadableStream({
+            async start(controller) {
+              const encoder = new TextEncoder();
+              for (const chunk of ["chunk-1", "chunk-2", "chunk-3"]) {
+                controller.enqueue(encoder.encode(chunk));
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
+              controller.close();
+            },
+          }),
+        );
+
+        await completes(awsStreamResponse(response, stream.stream));
+
+        expect(stream.getHeaders()["transfer-encoding"]).toBe("chunked");
+        expect(stream.getBody()).toBe("chunk-1chunk-2chunk-3");
+        expect(stream.writeSpy).toHaveBeenCalledTimes(3);
+        expect(stream.endSpy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(stream.getFinished()).toBe(1));
+      });
+    });
   });
 
   describe("handleLambdaEventWithStream", () => {
@@ -1180,6 +2221,7 @@ describe("[AWS Lambda] Request Utils", () => {
         }),
         end: vi.fn(),
         once: vi.fn(),
+        removeListener: vi.fn(),
       };
 
       const mockStream = {} as AWSLambdaResponseStream;
@@ -1454,6 +2496,47 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(
           metadata.headers["transfer-encoding"] || metadata.headers["content-length"],
         ).toBeTruthy();
+      });
+
+      test("carries cookies in the prelude as multiValueHeaders, never as `cookies`", async () => {
+        const { mockStream, getMetadata } = createMockResponseStream();
+
+        const fetchHandler = vi.fn().mockResolvedValue(
+          new Response("ok", {
+            headers: [
+              ["content-type", "text/plain"],
+              ["set-cookie", "a=1"],
+              ["set-cookie", "b=2"],
+            ],
+          }),
+        );
+
+        const v1Event: APIGatewayProxyEvent = {
+          httpMethod: "GET",
+          path: "/stream",
+          headers: { host: "api.example.com" },
+          body: null,
+          isBase64Encoded: false,
+          multiValueHeaders: {},
+          multiValueQueryStringParameters: {},
+          pathParameters: null,
+          stageVariables: null,
+          requestContext: {} as any,
+          resource: "",
+          queryStringParameters: null,
+        };
+
+        await handleLambdaEventWithStream(fetchHandler, v1Event, mockStream, createMockContext());
+
+        const metadata = getMetadata() as any;
+
+        expect(Object.keys(metadata).sort()).toEqual([
+          "headers",
+          "multiValueHeaders",
+          "statusCode",
+        ]);
+        expect(metadata.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+        expect(metadata.headers["set-cookie"]).toBeUndefined();
       });
     });
   });

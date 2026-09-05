@@ -70,7 +70,11 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
     // signal into the `Duplex` constructor instead would destroy the stream
     // mid-construction for an already-aborted signal, making `_destroy()` throw
     // while accessing not-yet-initialized private fields.
-    addAbortSignal(request.signal, this);
+    // `signal` is not guaranteed: request-like objects may omit it, and `addAbortSignal`
+    // throws on anything that is not an `AbortSignal`.
+    if (request.signal) {
+      addAbortSignal(request.signal, this);
+    }
   }
 
   setTimeout(ms?: number, cb?: () => void): this {
@@ -169,7 +173,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
       this.#_writeBody(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
     } else if (chunk?.length > 0) {
       this.#headersWritten = true;
-      const headerEnd = chunk.lastIndexOf("\r\n\r\n");
+      const headerEnd = chunk.indexOf("\r\n\r\n");
       if (headerEnd === -1) {
         throw new Error("Invalid HTTP headers chunk!");
       }

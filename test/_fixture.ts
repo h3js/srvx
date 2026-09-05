@@ -212,6 +212,14 @@ export const fixture: (
             headers: { "x-node-response": "1" },
           });
         }
+        case "/response/NodeResponse/json": {
+          // The static `NodeResponse.json()` fast path must also normalize to a
+          // native Response for bun/deno and set `content-type: application/json`.
+          return NodeResponse.json(
+            { hello: "world" },
+            { status: 201, headers: { "x-node-response": "1" } },
+          );
+        }
         case "/response/NodeResponse/stream": {
           // Same, but with a streaming body to verify the unwrapped native
           // Response still streams correctly under bun/deno.
@@ -228,7 +236,9 @@ export const fixture: (
           );
         }
         case "/clone-response": {
-          const res = new _Response("", {});
+          // Body must be non-empty: a clone() that drops the body entirely
+          // still yields "", so an empty body cannot detect the regression.
+          const res = new _Response("cloned", {});
           if (req.headers.get("x-clone-with-headers") === "true") {
             res.headers.set("x-clone-with-headers", "true");
           }

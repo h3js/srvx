@@ -15,6 +15,7 @@
 
 import { afterEach, describe, expect, test } from "vitest";
 import http from "node:http";
+import net from "node:net";
 import { serve } from "../src/adapters/node.ts";
 import type { Server } from "../src/types.ts";
 
@@ -200,5 +201,149 @@ describe("malformed Host header handling", () => {
     expect(result.statusCode).toBe(200);
     // Socket-derived fallback: URL should contain the actual port
     expect(result.body).toContain(String(port));
+  });
+});
+
+/**
+ * RFC 9112 §3.2.2 makes absolute-form (`GET http://host/p HTTP/1.1`) a
+ * MUST-accept for origin servers, and §3.3 says its authority supersedes
+ * `Host` — but srvx is not a proxy, so the request-line target must not become
+ * a way around the guarantees `Host` already gets. These assert the invariants
+ * end-to-end on a plaintext listener with the default `trustProxy: false`.
+ */
+describe("absolute-form request target", () => {
+  let server: Server;
+
+  afterEach(async () => {
+    if (server) {
+      await server.close(true);
+    }
+  });
+
+  /** Responses are chunked-encoded on the wire; pull the JSON body out. */
+  function jsonBody(body: string): any {
+    return JSON.parse(body.match(/\{.*\}/s)![0]);
+  }
+
+  /** Send an arbitrary raw request line (http.request rewrites some of these). */
+  function rawLine(
+    port: number,
+    requestLine: string,
+    host = "good.example",
+  ): Promise<{ statusCode: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => {
+        socket.write(`${requestLine}\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+      });
+      let data = "";
+      socket.on("data", (chunk) => {
+        data += chunk.toString();
+      });
+      socket.on("end", () => {
+        const statusLine = data.split("\r\n")[0] || "";
+        resolve({
+          statusCode: Number.parseInt(statusLine.split(" ")[1], 10),
+          body: data.split("\r\n\r\n").slice(1).join("\r\n\r\n"),
+        });
+      });
+      socket.on("error", reject);
+      socket.setTimeout(2000, () => {
+        socket.destroy();
+        reject(new Error("socket timed out"));
+      });
+    });
+  }
+
+  async function serveURLInfo(): Promise<number> {
+    server = serve({
+      port: 0,
+      fetch(request) {
+        // `clone()` builds the native Request, which throws on a URL with
+        // credentials — a userinfo target used to become an unauthenticated 500.
+        request.clone();
+        const url = new URL(request.url);
+        return new Response(
+          JSON.stringify({
+            url: request.url,
+            protocol: url.protocol,
+            host: url.host,
+            origin: url.origin,
+            username: url.username,
+          }),
+        );
+      },
+    });
+    await server.ready();
+    return getPort(server);
+  }
+
+  test("cannot claim https: on a plaintext socket", async () => {
+    const port = await serveURLInfo();
+    const result = await rawLine(port, "GET https://evil.example.com/x HTTP/1.1");
+    expect(result.statusCode).toBe(200);
+    const data = jsonBody(result.body);
+    expect(data.protocol).toBe("http:");
+    expect(data.origin).toBe("http://evil.example.com");
+    expect(data.url).toBe("http://evil.example.com/x");
+  });
+
+  test("userinfo is dropped instead of crashing the native Request (500)", async () => {
+    const port = await serveURLInfo();
+    const result = await rawLine(port, "GET http://evil.example.com@real.example/admin HTTP/1.1");
+    expect(result.statusCode).toBe(200);
+    const data = jsonBody(result.body);
+    expect(data.username).toBe("");
+    expect(data.host).toBe("real.example");
+    expect(data.url).toBe("http://real.example/admin");
+  });
+
+  test("a HOST_RE-invalid request-line authority becomes _invalid_", async () => {
+    const port = await serveURLInfo();
+    const result = await rawLine(port, "GET http://evil.example.com./x HTTP/1.1");
+    expect(result.statusCode).toBe(200);
+    expect(jsonBody(result.body).host).toBe("_invalid_");
+  });
+
+  test("non-http(s) schemes are rejected with 400", async () => {
+    const port = await serveURLInfo();
+    for (const line of [
+      "GET file:///etc/passwd HTTP/1.1",
+      "GET file://hehe/x HTTP/1.1",
+      "GET ftp://evil.com/ HTTP/1.1",
+      "GET zzz://evil/x HTTP/1.1",
+    ]) {
+      expect((await rawLine(port, line)).statusCode, line).toBe(400);
+    }
+  });
+
+  test("control: x-forwarded-* stays ignored with trustProxy: false", async () => {
+    const port = await serveURLInfo();
+    const result = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => {
+        socket.write(
+          "GET /foo HTTP/1.1\r\nHost: good.example\r\n" +
+            "X-Forwarded-Host: evil.example.com\r\nX-Forwarded-Proto: https\r\n" +
+            "Connection: close\r\n\r\n",
+        );
+      });
+      let data = "";
+      socket.on("data", (chunk) => {
+        data += chunk.toString();
+      });
+      socket.on("end", () =>
+        resolve({
+          statusCode: Number.parseInt((data.split("\r\n")[0] || "").split(" ")[1], 10),
+          body: data.split("\r\n\r\n").slice(1).join("\r\n\r\n"),
+        }),
+      );
+      socket.on("error", reject);
+      socket.setTimeout(2000, () => {
+        socket.destroy();
+        reject(new Error("socket timed out"));
+      });
+    });
+    expect(result.statusCode).toBe(200);
+    const data = jsonBody(result.body);
+    expect(data.url).toBe("http://good.example/foo");
   });
 });

@@ -1,5 +1,281 @@
 # Changelog
 
+## v1.0.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.2...v1.0.3)
+
+### 🩹 Fixes
+
+- **aws-lambda:** Strip parameters before matching content type ([5866bc7](https://github.com/h3js/srvx/commit/5866bc7))
+- **aws-lambda:** Don't declare chunked encoding for bodyless streamed responses ([9abe720](https://github.com/h3js/srvx/commit/9abe720))
+- **aws-lambda:** Frame empty streamed bodies as bodyless ([175d1cf](https://github.com/h3js/srvx/commit/175d1cf))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v1.0.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.1...v1.0.2)
+
+### 🩹 Fixes
+
+- **node/web:** Handle requests without an abort signal ([bf61f18](https://github.com/h3js/srvx/commit/bf61f18))
+- **aws-lambda:** Query params, set-cookie, v1 response shape, drain hang ([#300](https://github.com/h3js/srvx/pull/300))
+- **aws-lambda:** Address review follow-ups on the streaming and query paths ([4de428d](https://github.com/h3js/srvx/commit/4de428d))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+
+## v1.0.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.0...v1.0.1)
+
+### 🩹 Fixes
+
+- **node:** Report auto-listen failure instead of exiting 0 silently ([81a3b64](https://github.com/h3js/srvx/commit/81a3b64))
+
+### 📖 Documentation
+
+- Add url ([9bd4aeb](https://github.com/h3js/srvx/commit/9bd4aeb))
+- Fix typos in guide ([#298](https://github.com/h3js/srvx/pull/298))
+
+### 🏡 Chore
+
+- Update undocs ([3a64b7b](https://github.com/h3js/srvx/commit/3a64b7b))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Andrei L ([@unrevised6419](https://github.com/unrevised6419))
+
+## v0.12.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.7...v0.12.8)
+
+### 🔥 Performance
+
+- **url:** Avoid full parse when reading hash on the fast path ([#296](https://github.com/h3js/srvx/pull/296))
+
+### 🩹 Fixes
+
+- **node:** Allow body reads when stream is pre-drained with rawBody ([#295](https://github.com/h3js/srvx/pull/295))
+
+### ❤️ Contributors
+
+- Dương Ngọc Anh <duongngocanh2k03@gmail.com>
+- Daniel Roe ([@danielroe](https://github.com/danielroe))
+
+## v0.12.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.6...v0.12.7)
+
+### 🩹 Fixes
+
+- **node/http2:** Detect client disconnects on Node 26 ([dfb0306](https://github.com/h3js/srvx/commit/dfb0306))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.12.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.5...v0.12.6)
+
+### 🩹 Fixes
+
+- **node:** Make send-failure recovery unable to throw ([474ac29](https://github.com/h3js/srvx/commit/474ac29))
+- **node:** Discard the body for HEAD requests to a Node stream response ([e2fc775](https://github.com/h3js/srvx/commit/e2fc775))
+- **node:** Destroy body stream when client aborts before first chunk ([8d9c958](https://github.com/h3js/srvx/commit/8d9c958))
+- **node:** Normalize absolute-form request targets instead of trusting them ([a11765b](https://github.com/h3js/srvx/commit/a11765b))
+- **aws-lambda:** Prevent client path and Host header from overriding request.url origin ([b1e440c](https://github.com/h3js/srvx/commit/b1e440c))
+- **cli:** Honor `NODE_ENV=production` again ([2e7a135](https://github.com/h3js/srvx/commit/2e7a135))
+- **cli:** Forward tls/protocol/node from an intercepted serve() entry ([2f5ff20](https://github.com/h3js/srvx/commit/2f5ff20))
+- **body-limit:** Serve `_request` over the size-limited body ([6882f6d](https://github.com/h3js/srvx/commit/6882f6d))
+- **node/web:** Honor writeHead headers when statusMessage is not a string ([46336b3](https://github.com/h3js/srvx/commit/46336b3))
+- **aws-lambda:** Do not duplicate cookies from headers and cookies[] ([#291](https://github.com/h3js/srvx/pull/291))
+- **node:** Reject body reads with the abort reason after a client disconnect ([3a5187e](https://github.com/h3js/srvx/commit/3a5187e))
+- **node/http2:** Detect client disconnects before a body read ([5f1ed2c](https://github.com/h3js/srvx/commit/5f1ed2c))
+- **node/web:** Do not rely on Node's lazy IncomingMessage.headers accessor ([0fbfb06](https://github.com/h3js/srvx/commit/0fbfb06))
+
+### 📖 Documentation
+
+- **node:** Document that mutating response headers preserves the raw body ([8f8f95b](https://github.com/h3js/srvx/commit/8f8f95b))
+
+### 🌊 Types
+
+- **bun:** Derive `HeadersInit` from the ambient `Headers` ([#288](https://github.com/h3js/srvx/pull/288))
+
+### 🏡 Chore
+
+- Update undocs ([dff6ee9](https://github.com/h3js/srvx/commit/dff6ee9))
+- Apply automated updates ([37ce4ce](https://github.com/h3js/srvx/commit/37ce4ce))
+- Update undocs ([27ffd76](https://github.com/h3js/srvx/commit/27ffd76))
+- Update deps ([bf33115](https://github.com/h3js/srvx/commit/bf33115))
+- Update bench script ([d265cb6](https://github.com/h3js/srvx/commit/d265cb6))
+
+### ✅ Tests
+
+- **bun:** Actually run the node-compat suites under Bun ([27a071c](https://github.com/h3js/srvx/commit/27a071c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- SeaStar Deng ([@DSeaStar](https://github.com/DSeaStar))
+- Alexander Chepurnoy ([@cany748](https://github.com/cany748))
+
+## v0.12.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.4...v0.12.5)
+
+### 🌊 Types
+
+- Inline minimal runtime types ([#287](https://github.com/h3js/srvx/pull/287))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+
+## v0.12.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.3...v0.12.4)
+
+### 🚀 Enhancements
+
+- **body-limit:** Allow injecting the over-limit error ([#282](https://github.com/h3js/srvx/pull/282))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.12.3
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.2...v0.12.3)
+
+### 🩹 Fixes
+
+- **body-limit:** Preserve ServerRequest in limitRequestBody ([#281](https://github.com/h3js/srvx/pull/281))
+
+### 📖 Documentation
+
+- Fix order! ([f9e9c4b](https://github.com/h3js/srvx/commit/f9e9c4b))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.12.2
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.1...v0.12.2)
+
+### 🚀 Enhancements
+
+- Export body size limit helpers via `srvx/body-limit` ([#280](https://github.com/h3js/srvx/pull/280))
+
+### 🏡 Chore
+
+- Remove npmrc ([119de32](https://github.com/h3js/srvx/commit/119de32))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Pi0x <x@pi0.io>
+
+## v0.12.1
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.12.0...v0.12.1)
+
+### 🔥 Performance
+
+- **node:** Fast path for `FastResponse.json` ([2d28bae](https://github.com/h3js/srvx/commit/2d28bae))
+
+### 🏡 Chore
+
+- Apply automated updates ([b0e2274](https://github.com/h3js/srvx/commit/b0e2274))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
+## v0.12.0
+
+[compare changes](https://github.com/h3js/srvx/compare/v0.11.22...v0.12.0)
+
+### 🚀 Enhancements
+
+- **static:** ⚠️ Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- **static:** Add `Last-Modified` and `ETag` conditional caching ([#269](https://github.com/h3js/srvx/pull/269))
+- **static:** Add opt-in `Cache-Control` via `maxAge`/`immutable` ([#273](https://github.com/h3js/srvx/pull/273))
+- **log:** Flush on default-handled SIGTERM/SIGINT and add `batch` option ([#274](https://github.com/h3js/srvx/pull/274))
+- **static:** Add byte-range request support ([#275](https://github.com/h3js/srvx/pull/275))
+
+### 🔥 Performance
+
+- **middleware:** Precompose the middleware chain at construction time ([#264](https://github.com/h3js/srvx/pull/264))
+- **log:** Batch stdout writes and cache the timestamp ([#266](https://github.com/h3js/srvx/pull/266))
+
+### 🩹 Fixes
+
+- **service-worker:** Call respondWith synchronously and drop extension bypass ([#226](https://github.com/h3js/srvx/pull/226))
+- **node/web:** Correct body handling in toFetchHandler compat layer ([#232](https://github.com/h3js/srvx/pull/232))
+- Handle `file://` entry in loader and node-level TLS in mtls ([#231](https://github.com/h3js/srvx/pull/231))
+- **node:** Prevent body-read crashes and wire corruption in the Node adapter ([#228](https://github.com/h3js/srvx/pull/228))
+- Prevent waitUntil leak and reject NaN ports ([#225](https://github.com/h3js/srvx/pull/225))
+- **cli:** Stabilization batch and add CLI test suite ([#234](https://github.com/h3js/srvx/pull/234))
+- **url:** Repair FastURL origin-form string and HTTP/2 char normalization ([#227](https://github.com/h3js/srvx/pull/227))
+- Resolve `x-forwarded-*` hop-aware, right-to-left ([#229](https://github.com/h3js/srvx/pull/229))
+- **node:** Node adapter correctness fixes (statusText, empty body, HEAD streaming, send errors, sync bridge) ([#243](https://github.com/h3js/srvx/pull/243))
+- **node:** Make patchGlobalRequest idempotent ([#255](https://github.com/h3js/srvx/pull/255))
+- **node/web:** Remove "data" listener from the socket it was added to ([#261](https://github.com/h3js/srvx/pull/261))
+- **node:** Guard already-destroyed streamBody cancel against unhandled rejection ([#257](https://github.com/h3js/srvx/pull/257))
+- **node:** Enable SO_REUSEPORT for `reusePort` option ([#258](https://github.com/h3js/srvx/pull/258))
+- **node:** Don't permanently cache a missed kNeedDrain symbol lookup ([#256](https://github.com/h3js/srvx/pull/256))
+- **node:** Reject body reads after the body is consumed ([#254](https://github.com/h3js/srvx/pull/254))
+- **node/web:** Supply `next` to connect-style middleware on the synthetic bridge path ([#259](https://github.com/h3js/srvx/pull/259))
+- **node:** Answer 500 for unhandled handler errors ([#251](https://github.com/h3js/srvx/pull/251))
+- **node:** Copy `FastResponse` init headers instead of adopting them ([#263](https://github.com/h3js/srvx/pull/263))
+- **node:** Keep req.headers live and consistent across _request materialization ([#265](https://github.com/h3js/srvx/pull/265))
+- **node/web:** Strip explicit Transfer-Encoding to avoid corrupting the bridged body ([#268](https://github.com/h3js/srvx/pull/268))
+- **node/web:** Strip hop-by-hop headers from toWebResponse() ([#270](https://github.com/h3js/srvx/pull/270))
+- **node/web:** Stream bridged responses instead of buffering until end() ([#248](https://github.com/h3js/srvx/pull/248), [#271](https://github.com/h3js/srvx/pull/271))
+- **url:** Keep `searchParams` identity and reflect mutations across deopt ([#276](https://github.com/h3js/srvx/pull/276))
+
+### 💅 Refactors
+
+- Improve edge adapters and tests ([#242](https://github.com/h3js/srvx/pull/242))
+- ⚠️ Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+
+### 📖 Documentation
+
+- Improvements ([#238](https://github.com/h3js/srvx/pull/238))
+- Rename `onError` option to `error` ([#246](https://github.com/h3js/srvx/pull/246))
+
+### 🏡 Chore
+
+- Ignore `deno.lock` ([45f843f](https://github.com/h3js/srvx/commit/45f843f))
+- Update deps ([8e4e073](https://github.com/h3js/srvx/commit/8e4e073))
+- Pin undici to 8.4 ([d2e2b0d](https://github.com/h3js/srvx/commit/d2e2b0d))
+
+### ✅ Tests
+
+- **node-adapters:** Run fetch(nodeHandler) suite on Deno and Bun in CI ([#272](https://github.com/h3js/srvx/pull/272))
+
+### 🤖 CI
+
+- Run the full test suite ([#224](https://github.com/h3js/srvx/pull/224))
+
+#### ⚠️ Breaking Changes
+
+- **static:** ⚠️ Security hardenings and general improvements ([#252](https://github.com/h3js/srvx/pull/252))
+- ⚠️ Rename subpath exports to `*Middleware` / `*Plugin` ([#278](https://github.com/h3js/srvx/pull/278))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+
 ## v0.11.22
 
 [compare changes](https://github.com/h3js/srvx/compare/v0.11.21...v0.11.22)

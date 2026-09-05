@@ -4,16 +4,19 @@ import type { ServerPlugin, ServerRequest } from "./types.ts";
  * Controls whether `X-Forwarded-*` headers (proto, host, for, and the HTTP/2
  * `:scheme` pseudo-header) are trusted when deriving request metadata.
  *
- * These headers are set by the client on the wire, so they can only be trusted
- * when a proxy you control sits in front and overwrites them. See
- * {@link ServerOptions.trustProxy}.
+ * These headers are appended by every proxy on the wire, so trusting them is
+ * hop-aware: starting from the immediate peer and walking the forwarded chain
+ * right-to-left, each address in the trusted set is treated as a proxy we
+ * control. The first address *not* in the set is the real client (see
+ * {@link ServerOptions.trustProxy}).
  *
  *   - `false` (default): never trust forwarded headers; derive protocol, host
  *     and client IP from the real transport only.
- *   - `true`: always trust forwarded headers.
- *   - `"loopback"`: trust only when the immediate peer is a loopback address
- *     (`127.0.0.0/8` or `::1`), i.e. a proxy running on the same host.
- *   - `string[]`: trust only when the immediate peer address is in the allowlist.
+ *   - `true`: always trust forwarded headers (every hop is trusted, so the
+ *     leftmost `X-Forwarded-For` entry is the client).
+ *   - `"loopback"`: trust only hops on a loopback address (`127.0.0.0/8` or
+ *     `::1`), i.e. a proxy running on the same host.
+ *   - `string[]`: trust only hops whose address is in the allowlist.
  */
 export type TrustProxyOption = boolean | "loopback" | string[];
 
@@ -79,19 +82,108 @@ function forwardedHostHasPort(host: string): boolean {
 }
 
 /**
- * Leftmost/first entry of a comma-separated `X-Forwarded-*` header value. With a
- * chain of proxies the header is a comma-separated list; the leftmost entry is
- * the value seen by the outermost proxy. Node exposes repeated headers as a
- * `string[]`, so the array form is normalized to its first element.
+ * Split a comma-separated `X-Forwarded-*` header value into trimmed, non-empty
+ * entries in header order (left to right, i.e. outermost/original client first,
+ * nearest proxy last). Node exposes repeated headers as a `string[]`, which is
+ * joined before splitting.
  */
-export function firstForwardedValue(
-  value: string | string[] | null | undefined,
-): string | undefined {
+export function forwardedList(value: string | string[] | null | undefined): string[] {
   if (!value) {
+    return [];
+  }
+  const raw = Array.isArray(value) ? value.join(",") : value;
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const entry = part.trim();
+    if (entry) {
+      out.push(entry);
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the real client IP hop-aware, per {@link TrustProxyOption}.
+ *
+ * Conceptually the hop chain (nearest first) is `[peer, ...reversed(forwarded)]`:
+ * the socket peer added no entry of its own, and each proxy appended the address
+ * it saw. Walking right-to-left, every address in the trusted set is a proxy we
+ * control; the first untrusted address is the client. If every hop is trusted
+ * the client is the leftmost forwarded entry (matching Express `trust proxy`),
+ * falling back to the peer when no `X-Forwarded-For` is present. If the peer
+ * itself is untrusted the header is ignored entirely and the peer is the client.
+ */
+export function resolveClientIP(
+  trustProxy: TrustProxyOption | undefined,
+  peer: string | undefined,
+  forwardedFor: string | string[] | null | undefined,
+): string | undefined {
+  if (!isTrustedProxy(trustProxy, peer)) {
+    return peer;
+  }
+  const list = forwardedList(forwardedFor);
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (!isTrustedProxy(trustProxy, list[i])) {
+      return list[i];
+    }
+  }
+  return list.length > 0 ? list[0] : peer;
+}
+
+/**
+ * Number of trusted hops in front of the server, counting the immediate peer and
+ * every trusted `X-Forwarded-For` entry walking right-to-left. `0` means the peer
+ * is untrusted, so no forwarded value may be honored. This count also selects the
+ * trusted entry of the parallel `X-Forwarded-Proto`/`-Host` lists (see
+ * {@link forwardedHopValue}).
+ *
+ * When the whole visible chain is trusted (the peer and every `X-Forwarded-For`
+ * entry — e.g. `trustProxy: true`, or the real client sits upstream of all seen
+ * proxies), the number of trusted hops is effectively unbounded, so `Infinity` is
+ * returned. A proto/host list may then legitimately be longer than the seen
+ * `X-Forwarded-For` chain, and its leftmost (original-client) entry is honored.
+ */
+export function trustedHops(
+  trustProxy: TrustProxyOption | undefined,
+  peer: string | undefined,
+  forwardedFor: string | string[] | null | undefined,
+): number {
+  if (!isTrustedProxy(trustProxy, peer)) {
+    return 0;
+  }
+  const list = forwardedList(forwardedFor);
+  let hops = 1; // the peer
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (!isTrustedProxy(trustProxy, list[i])) {
+      return hops;
+    }
+    hops++;
+  }
+  // No untrusted boundary found in the visible chain: treat as unbounded.
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Pick the entry of a forwarded `X-Forwarded-Proto`/`-Host` list contributed by
+ * the outermost trusted proxy, given the {@link trustedHops} count. Proxies
+ * append these in lockstep with `X-Forwarded-For`, so with `hops` trusted hops we
+ * may trust the `hops` rightmost entries; the outermost trusted one is at index
+ * `length - hops` (clamped, so it degrades to the leftmost value when every hop
+ * is trusted or the list is shorter than the chain). Returns `undefined` when the
+ * peer is untrusted (`hops <= 0`) or the list is empty.
+ */
+export function forwardedHopValue(
+  value: string | string[] | null | undefined,
+  hops: number,
+): string | undefined {
+  if (hops <= 0) {
     return undefined;
   }
-  const first = (Array.isArray(value) ? value[0] : value).split(",")[0].trim();
-  return first || undefined;
+  const list = forwardedList(value);
+  if (list.length === 0) {
+    return undefined;
+  }
+  return list[Math.max(0, list.length - hops)];
 }
 
 /**
@@ -115,17 +207,20 @@ export const trustProxyPlugin: ServerPlugin = (server) => {
 };
 
 function applyTrustedProxy(request: ServerRequest, trustProxy: TrustProxyOption): void {
-  // The socket peer address stays authoritative for the trust decision, so read
-  // it (via the adapter's native getter) before any override below.
-  if (!isTrustedProxy(trustProxy, request.ip)) {
+  // The socket peer address (via the adapter's native getter) is the nearest hop
+  // and stays authoritative for the trust decision. `trustedHops` walks the
+  // `X-Forwarded-For` chain right-to-left from it; `0` means the peer is
+  // untrusted, so every forwarded header is ignored.
+  const peer = request.ip;
+  const headers = request.headers;
+  const hops = trustedHops(trustProxy, peer, headers.get("x-forwarded-for"));
+  if (hops === 0) {
     return;
   }
 
-  const headers = request.headers;
-
-  // request.url <- X-Forwarded-Proto / X-Forwarded-Host
-  const forwardedProto = firstForwardedValue(headers.get("x-forwarded-proto"));
-  const forwardedHost = firstForwardedValue(headers.get("x-forwarded-host"));
+  // request.url <- X-Forwarded-Proto / X-Forwarded-Host (trusted hop entry)
+  const forwardedProto = forwardedHopValue(headers.get("x-forwarded-proto"), hops);
+  const forwardedHost = forwardedHopValue(headers.get("x-forwarded-host"), hops);
   if (forwardedProto || forwardedHost) {
     const url = new URL(request.url);
     if (forwardedProto === "https" || forwardedProto === "http") {
@@ -151,11 +246,11 @@ function applyTrustedProxy(request: ServerRequest, trustProxy: TrustProxyOption)
     });
   }
 
-  // request.ip <- X-Forwarded-For (leftmost = original client)
-  const forwardedFor = firstForwardedValue(headers.get("x-forwarded-for"));
-  if (forwardedFor) {
+  // request.ip <- X-Forwarded-For (first untrusted address, hop-aware)
+  const client = resolveClientIP(trustProxy, peer, headers.get("x-forwarded-for"));
+  if (client && client !== peer) {
     Object.defineProperty(request, "ip", {
-      value: forwardedFor,
+      value: client,
       enumerable: true,
       configurable: true,
     });

@@ -1,5 +1,6 @@
-import { sendNodeResponseDetached } from "./_node/send.ts";
+import { sendErrorResponse, sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
+import { isValidAbsoluteForm } from "./_node/url.ts";
 import {
   fmtURL,
   resolveTLSOptions,
@@ -54,6 +55,7 @@ class NodeServer implements Server {
 
   #listeningPromise?: Promise<void>;
   #listenError?: Error;
+  #listenErrorObserved?: boolean;
 
   #wait?: ReturnType<typeof createWaitUntil>;
 
@@ -70,8 +72,13 @@ class NodeServer implements Server {
       // anything that isn't origin-form (/...), absolute-form, or the RFC 9110
       // §7.1 asterisk-form (`*`). Bun/Deno reject these at the parser layer;
       // Node leaves it to us. (Hot path is a single char compare.)
+      // Absolute-form must additionally name an http(s) authority: srvx is an
+      // origin server, not a proxy, so `file://`/`ftp://`/`zzz://` targets —
+      // which llhttp does deliver — are 400, per RFC 9110 §7.4. The ones that
+      // pass are normalized in `NodeRequestURL` (transport scheme wins, the
+      // authority is `HOST_RE`-validated, userinfo is dropped).
       const reqUrl = nodeReq.url;
-      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !URL.canParse(reqUrl)) {
+      if (reqUrl && reqUrl[0] !== "/" && reqUrl !== "*" && !isValidAbsoluteForm(reqUrl)) {
         nodeRes.statusCode = 400;
         nodeRes.end();
         return;
@@ -83,12 +90,24 @@ class NodeServer implements Server {
         trustProxy: this.options.trustProxy,
       });
       request.waitUntil = this.#wait?.waitUntil;
-      const res = fetchHandler(request);
+      let res: Response | Promise<Response>;
+      try {
+        res = fetchHandler(request);
+      } catch (error) {
+        // Sync throw with no `error` option: answer 500 instead of letting it
+        // escape as an `uncaughtException` (see sendErrorResponse).
+        return sendErrorResponse(nodeRes, error, this.options.silent);
+      }
       // node:http ignores the listener's return value — use the detached
       // variant to skip the per-response end-tracking Promise.
       return res instanceof Promise
-        ? res.then((resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes))
-        : sendNodeResponseDetached(nodeRes, res);
+        ? res.then(
+            (resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes, this.options.silent),
+            // Rejection handler (not `.catch`) so send failures, which
+            // `sendNodeResponseDetached` already answers, aren't handled twice.
+            (error) => sendErrorResponse(nodeRes, error, this.options.silent),
+          )
+        : sendNodeResponseDetached(nodeRes, res, this.options.silent);
     };
 
     this.node = { handler, server: undefined };
@@ -113,6 +132,9 @@ class NodeServer implements Server {
       port,
       host,
       exclusive: !this.options.reusePort,
+      // Enable SO_REUSEPORT for cross-process port sharing (Node >= 22.12).
+      // Older Node versions ignore this option; unsupported platforms throw.
+      reusePort: this.options.reusePort,
       ...tls,
       ...this.options.node,
     };
@@ -139,7 +161,36 @@ class NodeServer implements Server {
     this.node.server = server;
 
     if (!options.manual) {
-      this.serve().catch(() => {});
+      // Auto-listen: the constructor is the caller, so there is nobody for this
+      // rejection to reach. `ready()` is the documented way to observe it
+      // (`serve()` never throws; `ready()` rejects) but nothing forces a caller
+      // to await it -- and a failed listen leaves no open handle, so a bare
+      // `serve({ port })` would otherwise exit 0 without a word, or keep running
+      // with a dead server. Report it unless `ready()` has claimed it.
+      this.serve().catch((error) => this.#reportUnobservedListenError(error));
+    }
+  }
+
+  /**
+   * Last-resort reporting for a listen failure nobody is waiting on.
+   *
+   * A `ready()` chained synchronously after `serve()` -- the common shape --
+   * always wins the race, since the `error` event cannot fire before the
+   * constructor returns. A `ready()` awaited later still rejects; it just also
+   * gets this log, which is the safe way round.
+   */
+  #reportUnobservedListenError(error: unknown): void {
+    if (this.#listenErrorObserved) {
+      return;
+    }
+    // `silent` gates the adapter's error logs (see `_node/send.ts`).
+    if (!this.options.silent) {
+      console.error("[srvx] Failed to start server:", error);
+    }
+    // The server is dead; don't let the process report success on the way out.
+    const process = globalThis.process;
+    if (process && !process.exitCode) {
+      process.exitCode = 1;
     }
   }
 
@@ -188,6 +239,9 @@ class NodeServer implements Server {
   }
 
   ready(): Promise<Server> {
+    // Calling `ready()` is the caller taking responsibility for the outcome,
+    // which switches off `#reportUnobservedListenError`.
+    this.#listenErrorObserved = true;
     if (this.#listenError) {
       return Promise.reject(this.#listenError);
     }

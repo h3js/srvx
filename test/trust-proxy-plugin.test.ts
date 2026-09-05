@@ -115,7 +115,7 @@ describe("trustProxyPlugin", () => {
     expect(req.ip).toBe("1.2.3.4");
   });
 
-  test("uses the leftmost X-Forwarded-For entry and first host of a chain", async () => {
+  test("all hops trusted (trustProxy: true) -> leftmost X-Forwarded-For is the client", async () => {
     const req = await run(
       true,
       makeRequest("http://origin.example/", "10.0.0.1", {
@@ -123,8 +123,67 @@ describe("trustProxyPlugin", () => {
         "x-forwarded-for": "1.2.3.4, 10.0.0.9, 10.0.0.1",
       }),
     );
+    // Every address is trusted, so the outermost (leftmost) entries are the
+    // original client — matching Express `trust proxy: true`.
     expect(new URL(req.url).host).toBe("outer.example");
     expect(req.ip).toBe("1.2.3.4");
+  });
+
+  test("hop-aware: client is the rightmost address NOT in the trusted set", async () => {
+    // The attacker prepends a fake entry; the trusted peer appends the attacker's
+    // real address. Walking right-to-left, `1.2.3.4` is the first untrusted hop,
+    // so the spoofed `9.9.9.9` is ignored (old leftmost behavior would return it).
+    const req = await run(
+      ["10.0.0.1"],
+      makeRequest("http://origin.example/", "10.0.0.1", {
+        "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+      }),
+    );
+    expect(req.ip).toBe("1.2.3.4");
+    expect(req.ip).not.toBe("9.9.9.9");
+  });
+
+  test("hop-aware: skips a chain of trusted proxies to the first untrusted hop", async () => {
+    const req = await run(
+      ["10.0.0.1", "10.0.0.2"],
+      makeRequest("http://origin.example/", "10.0.0.1", {
+        // peer 10.0.0.1 (trusted) <- 10.0.0.2 (trusted) <- 1.2.3.4 (client)
+        "x-forwarded-for": "1.2.3.4, 10.0.0.2",
+      }),
+    );
+    expect(req.ip).toBe("1.2.3.4");
+  });
+
+  test("hop-aware proto/host: only the trusted peer's appended entry is honored", async () => {
+    // Attacker prepends `https` / `spoofed.example`; the single trusted peer
+    // appended `http` / `real.example`. With one trusted hop the rightmost (the
+    // peer's) entry wins, defeating scheme and host (cache/reset-link) poisoning.
+    const req = await run(
+      ["10.0.0.1"],
+      makeRequest("http://origin.example/", "10.0.0.1", {
+        "x-forwarded-for": "9.9.9.9, 1.2.3.4",
+        "x-forwarded-proto": "https, http",
+        "x-forwarded-host": "spoofed.example, real.example",
+      }),
+    );
+    const url = new URL(req.url);
+    expect(url.protocol).toBe("http:");
+    expect(url.host).toBe("real.example");
+  });
+
+  test("untrusted peer -> X-Forwarded-For (and proto/host) ignored entirely", async () => {
+    const req = await run(
+      ["10.0.0.1"],
+      makeRequest("http://origin.example/", "203.0.113.7", {
+        "x-forwarded-for": "1.2.3.4, 10.0.0.1",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "public.example",
+      }),
+    );
+    // The peer itself is untrusted, so nothing forwarded is honored.
+    expect(req.ip).toBe("203.0.113.7");
+    expect(new URL(req.url).host).toBe("origin.example");
+    expect(new URL(req.url).protocol).toBe("http:");
   });
 
   test("X-Forwarded-Host without a port drops the listener port", async () => {

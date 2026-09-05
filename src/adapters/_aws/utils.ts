@@ -1,17 +1,21 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { isTrustedProxy, firstForwardedValue } from "../../_trust-proxy.ts";
+import { resolveClientIP, trustedHops, forwardedHopValue, HOST_RE } from "../../_trust-proxy.ts";
+import type { ResponseBody } from "../../types.ts";
 import type {
-  APIGatewayProxyEvent,
-  Context as AWSContext,
-  APIGatewayProxyEventV2,
-} from "aws-lambda";
+  AWSLambdaContext,
+  AWSLambdaProxyEvent,
+  AWSLambdaProxyEventV2,
+  AWSLambdaProxyResult,
+  AWSLambdaProxyResultV2,
+} from "../../types/aws-lambda.ts";
 
 // -- Streaming types --
 
 export interface AWSLambdaStreamResponseMetadata {
   statusCode: number;
   headers?: Record<string, string>;
+  multiValueHeaders?: Record<string, string[]>;
   cookies?: string[];
 }
 
@@ -30,16 +34,18 @@ export interface AWSResponseHeaders {
 // Incoming (AWS => Web)
 
 export function awsRequest(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  context: AWSContext,
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
-  // Resolve the immediate-peer address and trust decision once and pass them
-  // down; both the URL and the client IP derivation need them.
+  // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
+  // count once (walking `X-Forwarded-For` right-to-left from it) and pass it
+  // down; both the URL and the client IP derivation are hop-aware.
   const sourceIp = awsEventIP(event);
-  const trusted = isTrustedProxy(trustProxy, sourceIp);
+  const forwardedFor = awsForwardedFor(event);
+  const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
-  const req = new Request(awsEventURL(event, trusted), {
+  const req = new Request(awsEventURL(event, hops), {
     method: awsEventMethod(event),
     headers: awsEventHeaders(event),
     body: awsEventBody(event),
@@ -50,92 +56,100 @@ export function awsRequest(
     awsLambda: { event, context },
   };
 
-  req.ip = awsEventClientIP(event, sourceIp, trusted);
+  req.ip = resolveClientIP(trustProxy, sourceIp, forwardedFor);
 
   return req;
 }
 
-function awsEventMethod(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string {
+function awsForwardedFor(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
+  return event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"];
+}
+
+function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string {
   return (
-    (event as APIGatewayProxyEvent).httpMethod ||
-    (event as APIGatewayProxyEventV2).requestContext?.http?.method ||
+    (event as AWSLambdaProxyEvent).httpMethod ||
+    (event as AWSLambdaProxyEventV2).requestContext?.http?.method ||
     "GET"
   );
 }
 
-function awsEventIP(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): string | undefined {
+function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
   return (
-    (event as APIGatewayProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
-    (event as APIGatewayProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
+    (event as AWSLambdaProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
+    (event as AWSLambdaProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
   );
 }
 
-/**
- * Resolve the client IP, preferring the leftmost `X-Forwarded-For` entry when
- * the immediate peer (the gateway `sourceIp`) is a trusted proxy.
- */
-function awsEventClientIP(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-  sourceIp: string | undefined,
-  trusted: boolean,
-): string | undefined {
-  if (trusted) {
-    const forwarded = firstForwardedValue(
-      event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"],
-    );
-    if (forwarded) {
-      return forwarded;
-    }
-  }
-  return sourceIp;
-}
+function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: number): URL {
+  const rawPath =
+    (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath || "/";
 
-function awsEventURL(event: APIGatewayProxyEvent | APIGatewayProxyEventV2, trusted: boolean): URL {
-  const path = (event as APIGatewayProxyEvent).path || (event as APIGatewayProxyEventV2).rawPath;
+  // The gateway path is client-controlled and must never contribute the
+  // authority. Resolving it as a *relative reference* would let `//evil.com/x`
+  // (a protocol-relative reference) or `https://evil.com/x` (absolute form)
+  // replace the origin, so it is concatenated after the authority instead and
+  // is always forced into origin-form. `//` runs are deliberately preserved
+  // rather than collapsed, so the routed `pathname` keeps matching the raw path
+  // the gateway saw — same as `NodeRequestURL`.
+  const path = rawPath[0] === "/" ? rawPath : `/${rawPath}`;
 
   const query = awsEventQuery(event);
 
-  // Only honor client-supplied `X-Forwarded-*` headers when the proxy is
-  // trusted; otherwise any client could spoof the host or protocol.
-  const forwardedHost = trusted
-    ? firstForwardedValue(event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"])
-    : undefined;
-  const hostname =
-    forwardedHost ||
+  // Only honor client-supplied `X-Forwarded-*` headers when the peer is trusted
+  // (`hops > 0`); otherwise any client could spoof the host or protocol. `hops`
+  // selects the outermost trusted proxy's entry from a comma-joined chain.
+  const forwardedHost = forwardedHopValue(
+    event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"],
+    hops,
+  );
+
+  // A malformed host must neither inject an authority/path into the URL built
+  // below nor throw out of `awsRequest` (which runs before the error
+  // middleware, so a throw fails the whole invocation). Same `HOST_RE` gate and
+  // `_invalid_` sentinel as the Node adapter.
+  const host =
+    (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
     event.headers.host ||
     event.headers.Host ||
-    event.requestContext?.domainName ||
-    ".";
+    event.requestContext?.domainName;
+  const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = trusted
-    ? firstForwardedValue(event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"])
-    : undefined;
+  const forwardedProto = forwardedHopValue(
+    event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"],
+    hops,
+  );
   const protocol = forwardedProto === "http" ? "http" : "https";
 
-  return new URL(`${path}${query ? `?${query}` : ""}`, `${protocol}://${hostname}`);
+  return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
 }
 
-function awsEventQuery(event: APIGatewayProxyEvent | APIGatewayProxyEventV2) {
-  if (typeof (event as APIGatewayProxyEventV2).rawQueryString === "string") {
-    return (event as APIGatewayProxyEventV2).rawQueryString;
+function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
+  if (typeof (event as AWSLambdaProxyEventV2).rawQueryString === "string") {
+    return (event as AWSLambdaProxyEventV2).rawQueryString;
   }
   const queryObj = {
     ...event.queryStringParameters,
-    ...(event as APIGatewayProxyEvent).multiValueQueryStringParameters,
+    ...(event as AWSLambdaProxyEvent).multiValueQueryStringParameters,
   };
   return stringifyQuery(queryObj);
 }
 
-function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): Headers {
+function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
   for (const [key, value] of Object.entries(event.headers)) {
     if (value) {
       headers.set(key, value);
     }
   }
-  if ("cookies" in event && event.cookies) {
-    for (const cookie of event.cookies) {
+  // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
+  // `headers.cookie` and the parsed `cookies[]` array. The array is the source
+  // of truth when non-empty, so drop the header instead of appending on top of
+  // it (which would hand the handler every cookie twice).
+  const cookies = "cookies" in event && event.cookies?.length ? event.cookies : undefined;
+  if (cookies) {
+    headers.delete("cookie");
+    for (const cookie of cookies) {
       headers.append("cookie", cookie);
     }
   }
@@ -143,8 +157,8 @@ function awsEventHeaders(event: APIGatewayProxyEvent | APIGatewayProxyEventV2): 
 }
 
 export function awsEventBody(
-  event: APIGatewayProxyEvent | APIGatewayProxyEventV2,
-): BodyInit | undefined {
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+): ResponseBody | undefined {
   if (!event.body) {
     return undefined;
   }
@@ -158,10 +172,19 @@ export function awsEventBody(
 
 export function awsResponseHeaders(
   response: Response,
-  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
 ): AWSResponseHeaders {
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
+    // `Headers` iteration yields one entry per `set-cookie`, so a flat record
+    // can only keep the last one, while the full list is carried below by
+    // `cookies` (v2) or `multiValueHeaders` (v1). v2 applies `cookies` *and*
+    // `headers`, so keeping a copy here would send that last cookie twice; v1
+    // merges the two records with `multiValueHeaders` winning per key, so there
+    // the copy is merely redundant. Neither wants it.
+    if (key === "set-cookie") {
+      continue;
+    }
     if (value) {
       headers[key] = Array.isArray(value) ? value.join(",") : String(value);
     }
@@ -174,12 +197,35 @@ export function awsResponseHeaders(
   }
 
   const isV2 =
-    (event as APIGatewayProxyEventV2)?.version === "2.0" ||
-    !!(event as APIGatewayProxyEventV2)?.requestContext?.http;
+    (event as AWSLambdaProxyEventV2)?.version === "2.0" ||
+    !!(event as AWSLambdaProxyEventV2)?.requestContext?.http;
 
-  return isV2
-    ? { headers, cookies }
-    : { headers, cookies, multiValueHeaders: { "set-cookie": cookies } };
+  // `cookies` is a payload 2.0 field (HTTP API / Function URL). The API Gateway
+  // REST (v1) proxy result is `statusCode`, `headers`, `multiValueHeaders`,
+  // `body` and `isBase64Encoded` — "If the function output is of a different
+  // format, API Gateway returns a 502 Bad Gateway error response" — so a stray
+  // `cookies` key 502s the whole invocation (unjs/nitro#504). ALB takes the same
+  // fields plus `statusDescription` and likewise has no `cookies`.
+  if (isV2) {
+    return { headers, cookies };
+  }
+
+  // ALB only reads `multiValueHeaders` when the target group has multi-value
+  // headers enabled ("You must use `multiValueHeaders` if you have enabled
+  // multi-value headers and `headers` otherwise"). That same setting renames
+  // the *request* fields, so an ALB event without `multiValueHeaders` means the
+  // flat record is the only channel back and dropping `set-cookie` from it
+  // would lose the cookie entirely. Only one fits, and the docs state the
+  // last-wins rule for requests only, so the last cookie is sent on the same
+  // principle — and because it is what this adapter sent before.
+  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
+  const albEvent = event as AWSLambdaProxyEvent | undefined;
+  if (albEvent?.requestContext?.elb && !albEvent.multiValueHeaders) {
+    headers["set-cookie"] = cookies[cookies.length - 1];
+    return { headers };
+  }
+
+  return { headers, multiValueHeaders: { "set-cookie": cookies } };
 }
 
 // AWS Lambda proxy integrations requires base64 encoded buffers
@@ -203,56 +249,139 @@ export async function awsResponseBody(
 export async function awsStreamResponse(
   response: Response,
   responseStream: AWSLambdaResponseStream,
-  event?: APIGatewayProxyEvent | APIGatewayProxyEventV2,
+  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
 ): Promise<void> {
   const metadata: AWSLambdaStreamResponseMetadata = {
     statusCode: response.status,
     ...awsResponseHeaders(response, event),
   };
 
-  if (!metadata.headers!["transfer-encoding"]) {
-    metadata.headers!["transfer-encoding"] = "chunked";
-  }
+  // `response.body` does not say whether any bytes follow — `new Response("")`
+  // has a body that yields none — and the prelude headers are frozen by the
+  // first write, so the first chunk is pulled before they are assembled. This
+  // costs no latency: the runtime only flushes the prelude on that write.
+  const reader = response.body?.getReader();
 
-  // awslambda is a global provided by Lambda runtime
-  const writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);
-  const body =
-    response.body ??
-    new ReadableStream<string>({
-      start(controller) {
-        controller.enqueue("");
-        controller.close();
-      },
-    });
+  let writer: NodeJS.WritableStream | undefined;
+  const startWriter = (hasBody: boolean): NodeJS.WritableStream => {
+    if (hasBody && !isBodylessStatus(response.status) && !metadata.headers!["transfer-encoding"]) {
+      metadata.headers!["transfer-encoding"] = "chunked";
+    }
+    // awslambda is a global provided by Lambda runtime
+    writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);
+    return writer!;
+  };
 
   try {
-    await streamToNodeStream(body, writer);
+    const first = await readFirstChunk(reader);
+    if (first.done) {
+      // Nothing to chunk. The prelude is only flushed by a write, so write once
+      // anyway: a zero-length write emits nothing on the wire.
+      startWriter(false).write("");
+      return;
+    }
+    await streamToNodeStream(reader!, startWriter(true), first);
   } finally {
-    writer.end();
+    // A body that errored before the first chunk never started a writer, and an
+    // unclosed response stream hangs the invocation until the Lambda timeout.
+    (writer ?? startWriter(false)).end();
+  }
+}
+
+// Statuses defined to carry no body, whatever the handler attached.
+function isBodylessStatus(status: number): boolean {
+  return status < 200 || status === 204 || status === 205 || status === 304;
+}
+
+// Exactly one chunk deep: an empty first chunk is a handler flushing its
+// headers early, so it still counts as a body and must start the response.
+async function readFirstChunk(
+  reader?: ReadableStreamDefaultReader<any>,
+): Promise<ReadableStreamReadResult<any>> {
+  if (!reader) {
+    return { done: true, value: undefined };
+  }
+  try {
+    return await reader.read();
+  } catch (error) {
+    reader.releaseLock();
+    throw error;
   }
 }
 
 async function streamToNodeStream(
-  body: ReadableStream,
+  reader: ReadableStreamDefaultReader<any>,
   writer: NodeJS.WritableStream,
+  first: ReadableStreamReadResult<any>,
 ): Promise<void> {
-  const reader = body.getReader();
   try {
-    let result = await reader.read();
+    let result = first;
     while (!result.done) {
       const canContinue = writer.write(result.value);
       if (!canContinue) {
-        await new Promise<void>((resolve) => writer.once("drain", resolve));
+        await waitForDrain(writer);
       }
       result = await reader.read();
     }
+  } catch (error) {
+    // The writer is gone, so tell the source (a proxied `fetch`, a database
+    // cursor, a file handle) to stop rather than leaving it producing into a
+    // stream nobody will read. Releasing the lock alone does not signal it.
+    reader.cancel(error).catch(() => {});
+    throw error;
   } finally {
     reader.releaseLock();
   }
 }
 
+// `drain` is only emitted by a live stream: if the response stream is torn down
+// while buffered above its high-water mark (client disconnect, socket reset), it
+// never fires. Awaiting it alone would leave the invocation pending until the
+// Lambda timeout — billing wall-clock and holding a concurrency slot — so
+// `error`/`close` settle the wait too.
+function waitForDrain(writer: NodeJS.WritableStream): Promise<void> {
+  const closedError = () => new Error("Response stream closed before it could drain");
+  const stream = writer as NodeJS.WritableStream & {
+    destroyed?: boolean;
+    writableEnded?: boolean;
+    errored?: Error | null;
+  };
+  if (stream.destroyed || stream.writableEnded) {
+    // Already gone: `close` has fired and will not fire again. Prefer the
+    // stream's own error, which says *why* it went away.
+    return Promise.reject(stream.errored ?? closedError());
+  }
+  return new Promise<void>((resolve, reject) => {
+    const settle = (error?: Error) => {
+      writer.removeListener("drain", onDrain);
+      writer.removeListener("error", onError);
+      writer.removeListener("close", onClose);
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const onDrain = () => settle();
+    const onError = (error: Error) => settle(error);
+    const onClose = () => settle(closedError());
+    writer.once("drain", onDrain);
+    writer.once("error", onError);
+    writer.once("close", onClose);
+  });
+}
+
+// The parameters are split off before matching: testing the raw header value
+// let the charset alternative match inside a parameter, so
+// `application/octet-stream; charset=utf-8` (or a `multipart/form-data`
+// boundary that merely contains `utf8`) was decoded with `toString("utf8")` and
+// every invalid byte became U+FFFD — unrecoverable corruption. Structured
+// syntax suffixes are matched too, since `/xml` and `/json` never match the
+// `+xml`/`+json` forms, which left `image/svg+xml`, `application/xhtml+xml` and
+// `application/ld+json` base64-inflated by ~33% for no reason.
 function isTextType(contentType = "") {
-  return /^text\/|\/(javascript|json|xml)|utf-?8/i.test(contentType);
+  const mimeType = contentType.split(";")[0].trim();
+  return /^text\/|\/(javascript|json|xml)|\+(json|xml)$/i.test(mimeType);
 }
 
 function toBuffer(data: ReadableStream): Promise<Buffer> {
@@ -276,24 +405,32 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
   });
 }
 
+// The gateway has already lossily parsed the query into `queryStringParameters`
+// (v1/ALB only; v2 carries `rawQueryString`), so the raw string cannot be
+// reconstructed exactly. `URLSearchParams` alone makes it worse though: it has
+// no way to express a valueless param, so `?foo` round-trips as `?foo=`. That
+// is invisible to anything re-parsing the query but not to route rules, cache
+// keys, canonical URLs or a signature computed over `request.url`, so a bare key
+// is emitted for empty values instead.
 function stringifyQuery(obj: Record<string, unknown>) {
-  const params = new URLSearchParams();
+  const parts: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
-    if (value == null) continue;
-    if (Array.isArray(value)) {
-      for (const v of value) {
-        params.append(key, String(v));
-      }
-    } else {
-      params.append(key, String(value));
+    for (const item of Array.isArray(value) ? value : [value]) {
+      // Encode through `URLSearchParams` to keep escaping identical, then drop
+      // the trailing `=` it always appends for an empty value.
+      const pair = new URLSearchParams([[key, item == null ? "" : String(item)]]).toString();
+      // `pair` is always `key=`; drop the `=` for a valueless param — unless the
+      // key is empty too (`"="`), where dropping it would erase the param.
+      const bare = (item == null || item === "") && key !== "";
+      parts.push(bare ? pair.slice(0, -1) : pair);
     }
   }
-  return params.toString();
+  return parts.join("&");
 }
 
 // Reverse: Web Request => AWS Event (v1/v2 compatible)
 
-export type AwsLambdaEvent = APIGatewayProxyEvent & APIGatewayProxyEventV2;
+export type AwsLambdaEvent = AWSLambdaProxyEvent & AWSLambdaProxyEventV2;
 
 export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEvent> {
   const url = new URL(request.url);
@@ -302,7 +439,8 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
   const cookies: string[] = [];
   for (const [key, value] of request.headers) {
     if (key.toLowerCase() === "cookie") {
-      cookies.push(value);
+      // Payload 2.0 exposes one entry per cookie, not the raw header value.
+      cookies.push(...splitCookieHeader(value));
     }
     headers[key] = value;
   }
@@ -393,6 +531,13 @@ export async function requestToAwsEvent(request: Request): Promise<AwsLambdaEven
   } as unknown as AwsLambdaEvent;
 }
 
+function splitCookieHeader(value: string): string[] {
+  return value
+    .split(";")
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
 function parseMultiValueQuery(params: URLSearchParams): Record<string, string[]> {
   const result: Record<string, string[]> = {};
   for (const [key, value] of params) {
@@ -406,9 +551,7 @@ function parseMultiValueQuery(params: URLSearchParams): Record<string, string[]>
 
 // Reverse: AWS Result => Web Response
 
-export type AwsLambdaResult =
-  | import("aws-lambda").APIGatewayProxyResult
-  | import("aws-lambda").APIGatewayProxyResultV2;
+export type AwsLambdaResult = AWSLambdaProxyResult | AWSLambdaProxyResultV2;
 
 export function awsResultToResponse(result: AwsLambdaResult): Response {
   // APIGatewayProxyResultV2 can be a plain string for simple responses
@@ -446,7 +589,7 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
   }
 
   // Handle body
-  let body: BodyInit | undefined;
+  let body: ResponseBody | undefined;
   if (typeof result.body === "string") {
     if (result.isBase64Encoded) {
       body = Buffer.from(result.body, "base64");
@@ -463,7 +606,7 @@ export function awsResultToResponse(result: AwsLambdaResult): Response {
   });
 }
 
-export function createMockContext(): AWSContext {
+export function createMockContext(): AWSLambdaContext {
   const id = crypto.randomUUID();
   return {
     callbackWaitsForEmptyEventLoop: true,

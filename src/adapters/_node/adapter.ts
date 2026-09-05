@@ -8,7 +8,7 @@ import type {
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
-import { sendNodeResponse } from "./send.ts";
+import { handleSendError, sendNodeResponse } from "./send.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -35,14 +35,26 @@ export function toNodeHandler(
     });
     const res = handler(request);
     return res instanceof Promise
-      ? res.then((resolvedRes) => sendNodeResponse(nodeRes, resolvedRes))
-      : sendNodeResponse(nodeRes, res);
+      ? res.then((resolvedRes) => send(nodeRes, resolvedRes))
+      : send(nodeRes, res);
   }
 
   (convertedNodeHandler as AdapterMeta).__fetchHandler = handler;
   assignFnName(convertedNodeHandler, handler, " (converted to Node handler)");
 
   return convertedNodeHandler;
+}
+
+/**
+ * `sendNodeResponse` reports a serialization failure (e.g. an invalid status code
+ * or header value in `writeHead`) by rejecting. The handler returned here is
+ * normally mounted on `node:http`/connect, which ignores its return value, so
+ * nothing would handle that rejection and the default
+ * `--unhandled-rejections=throw` takes the process down (#290). Answer a bare 500
+ * and keep serving instead, matching what `serve()` does on the same failure.
+ */
+function send(nodeRes: NodeServerResponse, webRes: Response): Promise<void> {
+  return sendNodeResponse(nodeRes, webRes).catch((error) => handleSendError(nodeRes, error));
 }
 
 /**

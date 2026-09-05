@@ -15,6 +15,7 @@ export default defineBuildConfig({
         "src/tracing.ts",
         "src/loader.ts",
         "src/mtls.ts",
+        "src/body-limit.ts",
         ...[
           "deno",
           "bun",
@@ -27,7 +28,6 @@ export default defineBuildConfig({
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {
-        external: ["bun", "@cloudflare/workers-types", "aws-lambda"],
         plugins: [
           pkg.name === "srvx-nightly" && {
             name: "nightly-alias",

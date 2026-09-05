@@ -12,6 +12,12 @@ export function addTests(opts: {
 }): void {
   const { url, fetch: _fetch = globalThis.fetch } = opts;
 
+  // srvx's Node adapter driven by Bun's `node:http` compat layer (test/node.test.ts
+  // run under Bun). Distinct from `"bun"`, which is srvx's native Bun adapter.
+  // Bun's `node:http` server never surfaces a client disconnect as a request
+  // abort, so every abort-dependent expectation below is a runtime gap there.
+  const isBunNodeCompat = opts.runtime === "bun-node-compat";
+
   let fetchCount = 0;
   const fetch = (...args: Parameters<typeof _fetch>) => {
     fetchCount++;
@@ -21,7 +27,7 @@ export function addTests(opts: {
   test("GET works", async () => {
     const response = await fetch(url("/"));
     expect(response.status).toBe(200);
-    expect(await response.text()).toMatch("ok");
+    expect(await response.text()).toBe("ok");
   });
 
   test("request instanceof Request", async () => {
@@ -122,7 +128,7 @@ export function addTests(opts: {
     expect(await response.text()).toBe("error: test error");
   });
 
-  test("abort request", async () => {
+  test.skipIf(isBunNodeCompat)("abort request", async () => {
     const controller = new AbortController();
     const response = await fetch(url("/abort"), {
       signal: controller.signal,
@@ -153,13 +159,14 @@ export function addTests(opts: {
     const aborts = await res.json();
     // console.log(aborts.map((a: any) => `${a.request}`).join("\n"));
 
-    // Deno Node.js compat behaves differently!!!
-    if (opts.runtime !== "deno-node-compat") {
+    // Deno Node.js compat behaves differently!!!, and Bun's never logs an abort
+    // at all (see `isBunNodeCompat`).
+    if (opts.runtime !== "deno-node-compat" && !isBunNodeCompat) {
       expect(aborts.length).toBe(expectedAbortCount);
     }
   });
 
-  test("cancel reading body", async () => {
+  test.skipIf(isBunNodeCompat)("cancel reading body", async () => {
     const res = await fetch(url("/body-cancel"), {
       method: "POST",
       // @ts-expect-error
@@ -179,7 +186,7 @@ export function addTests(opts: {
     });
   });
 
-  // TODO: Investigate writing test for HTTP2/TLS
+  // TODO: Investigate writing test for HTTP2/TLS (https://github.com/h3js/srvx/issues/235)
   test.skipIf(opts.http2)("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
     expect(res.status).toBe(200);
@@ -193,8 +200,11 @@ export function addTests(opts: {
       if (done) break;
     }
     const body = Buffer.concat(chunks).toString("utf8").trim();
-    if ("Bun" in globalThis) {
-      // It seems a Bun bug (from fetch client-side not server-side!)
+    if ("Bun" in globalThis && !isBunNodeCompat) {
+      // It seems a Bun bug (from fetch client-side not server-side!) -- hence the
+      // check on the runtime executing the fetch rather than on the adapter under
+      // test. It does not reproduce against a `node:http` server, which is what the
+      // Node adapter serves over under Bun node-compat.
       expect(body).toBe("chunk1\nchunk2\n\r\nchunk1\nchunk2");
     } else {
       expect(body).toBe("chunk1\nchunk2");
@@ -265,6 +275,14 @@ export function addTests(opts: {
         expect(await res.text()).toBe("chunk0\nchunk1\nchunk2\n");
       });
 
+      test("from static json()", async () => {
+        const res = await fetch(url("/response/NodeResponse/json"));
+        expect(res.status).toBe(201);
+        expect(res.headers.get("content-type")).toBe("application/json");
+        expect(res.headers.get("x-node-response")).toBe("1");
+        expect(await res.json()).toEqual({ hello: "world" });
+      });
+
       test("from middleware", async () => {
         const res = await fetch(url("/"), {
           headers: { "X-node-response-mw": "1" },
@@ -279,6 +297,7 @@ export function addTests(opts: {
     test("clone simple response", async () => {
       const response = await fetch(url("/clone-response"));
       expect(response.status).toBe(200);
+      expect(await response.text()).toBe("cloned");
     });
 
     test("clone with headers", async () => {
@@ -288,8 +307,8 @@ export function addTests(opts: {
         },
       });
       expect(response.status).toBe(200);
-
       expect(response.headers.get("x-clone-with-headers")).toBe("true");
+      expect(await response.text()).toBe("cloned");
     });
 
     test.skipIf(!opts.fastResponse)("clone response with Node.js pipe-style body", async () => {
@@ -304,13 +323,19 @@ export function addTests(opts: {
     });
   });
 
-  test("inspect objects", async () => {
+  // Skipped on Bun: `util.inspect(new Headers())` prints `Headers {}` without
+  // enumerating entries, while Node and Deno list them. Nothing for srvx to fix --
+  // it does not implement a custom inspect. This applies to the Node adapter under
+  // Bun node-compat too; the exemption previously claimed otherwise, which went
+  // unnoticed while the Bun scripts were silently running on Node.
+  // Re-enable if Bun fixes util.inspect.
+  test.skipIf(opts.runtime === "bun" || isBunNodeCompat)("inspect objects", async () => {
     const response = await fetch(url("/node-inspect"), {
       headers: { "x-foo": "1" },
     });
     expect(response.status).toBe(200);
     const data = await response.text();
-    expect(data.includes("x-foo"));
+    expect(data.includes("x-foo")).toBe(true);
   });
 
   test("normalize traversal in request path", async () => {
@@ -368,7 +393,31 @@ export function addTests(opts: {
     expect(data.pathname).toBe("/bar/baz");
   });
 
-  // TODO: Write test to make sure it is forbidden for http2/tls
+  // HTTP/2 forbids an absolute-form `:path` outright (nghttp2 answers
+  // PROTOCOL_ERROR before the handler runs), so absolute-form is an HTTP/1-only
+  // concern. On HTTP/1 it is a MUST-accept (RFC 9112 §3.2.2); the security
+  // normalization of its scheme/authority/userinfo is covered by
+  // test/url.test.ts, test/node-host-header.test.ts and test/node.test.ts.
+  // (closes https://github.com/h3js/srvx/issues/236)
+  test.runIf(opts.http2)("absolute URI in :path is rejected by HTTP/2", async () => {
+    const _url = new URL(url("/"));
+    const client = http2.connect(_url.origin, { ca: opts.ca });
+    try {
+      for (const path of ["https://evil.example.com/x", "http://evil.example.com/x"]) {
+        const req = client.request({ ":path": path, ":authority": "localhost" });
+        const error = await new Promise<Error | undefined>((resolve) => {
+          req.on("response", () => resolve(undefined));
+          req.on("error", resolve);
+          req.on("end", () => resolve(undefined));
+        });
+        expect(error, path).toBeInstanceOf(Error);
+        expect((error as any).code, path).toBe("ERR_HTTP2_STREAM_ERROR");
+      }
+    } finally {
+      client.close();
+    }
+  });
+
   test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));
 

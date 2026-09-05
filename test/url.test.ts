@@ -54,6 +54,211 @@ describe("FastURL", () => {
     expect(url.searchParams).toEqual(new URLSearchParams("?search"));
   });
 
+  describe("searchParams identity & mutation", () => {
+    // Native URL hands out the SAME `searchParams` object for the lifetime of
+    // the URL, and mutations are reflected in `search`/`href`. The fast path
+    // used to hand out a detached URLSearchParams whose identity broke on any
+    // deopt (even a read-only `url.host` access) and whose mutations were
+    // silently discarded. The facade (with `_adopt`, mirroring
+    // NodeRequestHeaders) must close both gaps.
+
+    test("same object across a read-only deopt", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      void url.hostname; // deopt to native URL
+      expect(url.searchParams).toBe(params);
+      expect(params.get("a")).toBe("1");
+    });
+
+    test("instanceof URLSearchParams, iterable, and copyable", () => {
+      const url = new FastURL("/p?a=1&b=2");
+      const params = url.searchParams;
+      expect(params instanceof URLSearchParams).toBe(true);
+      expect([...params]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+      ]);
+      expect(new URLSearchParams(params as any).toString()).toBe("a=1&b=2");
+      expect(params.size).toBe(2);
+      expect(params.getAll("a")).toEqual(["1"]);
+      expect(params.toString()).toBe("a=1&b=2");
+    });
+
+    test("set/append/delete/sort are reflected in search & href (like native)", () => {
+      const std = new URL("http://localhost/p?b=2&a=1");
+      const url = new FastURL("/p?b=2&a=1");
+      for (const u of [std, url]) {
+        u.searchParams.set("c", "3");
+        u.searchParams.append("a", "x");
+        u.searchParams.delete("b");
+        u.searchParams.sort();
+      }
+      expect(url.search, ".search").toBe(std.search);
+      expect(url.href, ".href").toBe(std.href);
+      expect(url.searchParams.toString()).toBe(std.searchParams.toString());
+    });
+
+    test("reference taken before deopt observes later URL mutations", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      url.search = "?z=9"; // setter deopts and mutates the native URL
+      expect(params.get("z")).toBe("9");
+      expect(params.get("a")).toBe(null);
+      expect(url.searchParams).toBe(params);
+    });
+
+    test("mutation on the fast path deopts and drops cached search", () => {
+      const url = new FastURL("/p?a=1");
+      expect(url.search).toBe("?a=1"); // populate fast-path cache first
+      url.searchParams.delete("a");
+      expect(url.search).toBe("");
+      expect(url.href).toBe("http://localhost/p");
+    });
+
+    test("constructor slow path keeps stable native searchParams", () => {
+      const url = new FastURL("http://example.com/p?a=1");
+      const params = url.searchParams;
+      expect(url.searchParams).toBe(params);
+      params.set("b", "2");
+      expect(url.search).toBe("?a=1&b=2");
+    });
+
+    test("read-then-mutate: detached read cache is discarded on adoption", () => {
+      const url = new FastURL("/p?a=1");
+      const params = url.searchParams;
+      expect(params.get("a")).toBe("1"); // populate the lazily-parsed read store
+      params.set("b", "2"); // adopts the native URL's params; read store discarded
+      expect(url.search).toBe("?a=1&b=2");
+      expect(url.href).toBe("http://localhost/p?a=1&b=2");
+      expect(params.get("b")).toBe("2");
+    });
+
+    test("encoding round-trip matches native (%2B, +, %20)", () => {
+      const input = "/p?a=%2B&b=+&c=%20";
+      const std = new URL(`http://localhost${input}`);
+      const url = new FastURL(input);
+      expect(url.searchParams.get("a")).toBe(std.searchParams.get("a")); // "+"
+      expect(url.searchParams.get("b")).toBe(std.searchParams.get("b")); // " "
+      expect(url.searchParams.get("c")).toBe(std.searchParams.get("c")); // " "
+      for (const u of [std, url]) {
+        u.searchParams.set("d", "+ &=");
+      }
+      expect(url.search).toBe(std.search);
+      expect(url.href).toBe(std.href);
+    });
+
+    test("forEach forwards thisArg", () => {
+      const url = new FastURL("/p?a=1&b=2");
+      const thisArg = { tag: "ctx" };
+      const seen: [string, string, unknown][] = [];
+      url.searchParams.forEach(function (this: unknown, value, key) {
+        seen.push([key, value, this]);
+      }, thisArg);
+      expect(seen).toEqual([
+        ["a", "1", thisArg],
+        ["b", "2", thisArg],
+      ]);
+    });
+
+    test("delete/has with value argument match native", () => {
+      const std = new URL("http://localhost/p?a=1&a=2&b=3");
+      const url = new FastURL("/p?a=1&a=2&b=3");
+      expect(url.searchParams.has("a", "2")).toBe(true);
+      expect(url.searchParams.has("a", "9")).toBe(false);
+      for (const u of [std, url]) {
+        u.searchParams.delete("a", "1");
+      }
+      expect(url.search).toBe(std.search);
+      for (const u of [std, url]) {
+        u.searchParams.delete("b");
+      }
+      expect(url.search).toBe(std.search);
+      expect(url.href).toBe(std.href);
+    });
+
+    test("NodeRequestURL: mutation reflected, raw req.url untouched", () => {
+      const req = { url: "/p?a=1", headers: { host: "localhost" } } as any;
+      const url = new NodeRequestURL({ req });
+      url.searchParams.set("b", "2");
+      expect(url.href).toBe("http://localhost/p?a=1&b=2");
+      expect(url.searchParams).toBe(url.searchParams);
+      expect(req.url).toBe("/p?a=1");
+    });
+  });
+
+  describe("origin-form string (bare path)", () => {
+    // Regression (F12): `new FastURL("/foo?x=1")` is a documented fast path.
+    // It must resolve against `http://localhost` semantics (like the adapter's
+    // URLInit path) instead of deopting to `new URL("/foo?x=1")` with no base,
+    // which throws `TypeError: Invalid URL`. Getters must match native both
+    // before and after a mutation-triggered deopt.
+    const cases = ["/foo?x=1", "/", "/a/b/c", "/p?a=1&b=2", "/only-path"] as const;
+
+    for (const input of cases) {
+      test(`FastURL "${input}" matches native`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.searchParams.toString(), ".searchParams").toBe(std.searchParams.toString());
+        expect(url.href, ".href").toBe(std.href);
+      });
+
+      test(`FastURL "${input}" stays consistent after deopt`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        void url.hostname; // force deopt to native URL
+        expect(url.hostname, ".hostname").toBe("localhost");
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.href, ".href").toBe(std.href);
+      });
+    }
+  });
+
+  describe("HTTP/2-reachable chars (control, space, DEL, non-ASCII)", () => {
+    // Regression (F33): the normalization regexes assumed control chars and
+    // space are rejected by the HTTP parser — true for HTTP/1, FALSE over
+    // HTTP/2 which the Node adapter serves. A raw `:path` like `/p?q=é` reaches
+    // the handler verbatim; native URL percent-encodes/strips these, so the
+    // fast path must deopt to match — both before and after a later deopt.
+    const chars = {
+      "é (non-ASCII)": "é",
+      "DEL (\\x7f)": "\x7f",
+      space: " ",
+    };
+
+    for (const [name, ch] of Object.entries(chars)) {
+      for (const input of [`/a${ch}b`, `/p?x=${ch}y`]) {
+        test(`FastURL string ${name} in "${JSON.stringify(input)}" matches native`, () => {
+          const std = new URL(`http://localhost${input}`);
+          // sanity: native did rewrite the raw char
+          expect(std.href).not.toBe(`http://localhost${input}`);
+
+          const url = new FastURL(input);
+          expect(url.pathname, ".pathname").toBe(std.pathname);
+          expect(url.search, ".search").toBe(std.search);
+          expect(url.href, ".href").toBe(std.href);
+          expect(url.searchParams.toString(), ".searchParams").toBe(std.searchParams.toString());
+        });
+
+        test(`NodeRequestURL ${name} in "${JSON.stringify(input)}" matches native (before & after deopt)`, () => {
+          const std = new URL(`http://localhost${input}`);
+          const url = new NodeRequestURL({
+            req: { url: input, headers: { host: "localhost" } } as any,
+          });
+          expect(url.pathname, ".pathname").toBe(std.pathname);
+          expect(url.search, ".search").toBe(std.search);
+          expect(url.href, ".href").toBe(std.href);
+          void url.hostname; // force deopt to native URL
+          expect(url.pathname, ".pathname (deopt)").toBe(std.pathname);
+          expect(url.search, ".search (deopt)").toBe(std.search);
+          expect(url.href, ".href (deopt)").toBe(std.href);
+        });
+      }
+    }
+  });
+
   describe("WPT tests", () => {
     for (const t of urlTests) {
       if (typeof t === "string") {
@@ -128,32 +333,101 @@ describe("FastURL", () => {
   });
 
   describe("absolute URI in request line", () => {
+    // RFC 9112 §3.2.2 requires accepting absolute-form and §3.3 makes its
+    // authority supersede `Host` — but srvx is an origin server, not a proxy, so
+    // the target is rebuilt rather than trusted verbatim:
+    //  - the scheme always comes from the transport (a client must never be able
+    //    to claim `https:` on a plaintext socket),
+    //  - the authority goes through `HOST_RE` exactly like a `Host` header
+    //    (`_invalid_` on failure),
+    //  - userinfo is dropped (`new Request()` throws on credentials → 500).
+    // Asserting only `pathname` is what let this slip through, so every case
+    // pins href/protocol/host/username.
     const cases = [
-      ["http://example.com/path", "/path"],
-      ["http://example.com/path?q=1", "/path"],
-      ["file://hehe?/internal/run", "/"],
-      ["file://hehe/abc", "/abc"],
-      ["http://evil.com?/secret", "/"],
-      ["https://host/a/b/c?x=1", "/a/b/c"],
+      // [input, pathname, href]
+      ["http://example.com/path", "/path", "http://example.com/path"],
+      ["http://example.com/path?q=1", "/path", "http://example.com/path?q=1"],
+      ["file://hehe?/internal/run", "/", "http://hehe/?/internal/run"],
+      ["file://hehe/abc", "/abc", "http://hehe/abc"],
+      ["http://evil.com?/secret", "/", "http://evil.com/?/secret"],
+      ["https://host/a/b/c?x=1", "/a/b/c", "http://host/a/b/c?x=1"],
+      // scheme is transport-derived, never client-derived
+      ["https://evil.com/x", "/x", "http://evil.com/x"],
+      ["HTTPS://EVIL.example.com/x", "/x", "http://evil.example.com/x"],
+      // userinfo is dropped
+      ["http://evil.com@real.example/admin", "/admin", "http://real.example/admin"],
+      ["http://user:pass@real.example/admin", "/admin", "http://real.example/admin"],
+      // HOST_RE-invalid authority -> `_invalid_` (same convention as `Host`)
+      ["http://evil.com./x", "/x", "http://_invalid_/x"],
+      ["http://evil.com.:8080/x", "/x", "http://_invalid_/x"],
+      // authority-less / unparseable targets keep the validated `Host`
+      ["file:///etc/passwd", "/etc/passwd", "http://localhost/etc/passwd"],
+      ["http://evil.com:99999/x", "/", "http://localhost/"],
+      ["http://[bad]/x", "/", "http://localhost/"],
+      // an explicit non-default port survives (it passes HOST_RE)
+      ["http://evil.com:8080/x", "/x", "http://evil.com:8080/x"],
+      // dot segments are normalized by the WHATWG parse
+      ["http://example.com/a/../b", "/b", "http://example.com/b"],
     ] as const;
 
-    for (const [input, expected] of cases) {
-      test(`"${input}" => pathname "${expected}"`, () => {
+    for (const [input, expected, href] of cases) {
+      const expectedURL = new URL(href);
+
+      test(`"${input}" => "${href}"`, () => {
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
-        expect(url.pathname).toBe(expected);
+        expect(url.pathname, ".pathname").toBe(expected);
+        expect(url.protocol, ".protocol").toBe("http:");
+        expect(url.host, ".host").toBe(expectedURL.host);
+        expect(url.origin, ".origin").toBe(expectedURL.origin);
+        expect(url.username, ".username").toBe("");
+        expect(url.password, ".password").toBe("");
+        expect(url.href, ".href").toBe(href);
       });
 
-      test(`"${input}" => pathname "${expected}" (after deopt)`, () => {
+      test(`"${input}" => "${href}" (after deopt)`, () => {
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
         // Access hostname to trigger _url deopt
         void url.hostname;
-        expect(url.pathname).toBe(expected);
+        expect(url.pathname, ".pathname").toBe(expected);
+        expect(url.protocol, ".protocol").toBe("http:");
+        expect(url.host, ".host").toBe(expectedURL.host);
+        expect(url.origin, ".origin").toBe(expectedURL.origin);
+        expect(url.username, ".username").toBe("");
+        expect(url.password, ".password").toBe("");
+        expect(url.href, ".href").toBe(href);
       });
     }
+
+    test("an encrypted socket keeps https: for an http: absolute-form target", () => {
+      const req = {
+        url: "http://evil.com/x",
+        headers: { host: "localhost" },
+        socket: { encrypted: true },
+      } as any;
+      expect(new NodeRequestURL({ req }).href).toBe("https://evil.com/x");
+      const deopt = new NodeRequestURL({ req });
+      void deopt.hostname;
+      expect(deopt.href).toBe("https://evil.com/x");
+    });
+
+    test("untrusted x-forwarded-* cannot change an absolute-form target", () => {
+      const req = {
+        url: "http://evil.com/x",
+        headers: {
+          host: "localhost",
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "forwarded.example",
+        },
+      } as any;
+      // hops = 0 (trustProxy: false)
+      expect(new NodeRequestURL({ req }).href).toBe("http://evil.com/x");
+      // a trusted hop may set the scheme, but never via the request line
+      expect(new NodeRequestURL({ req, hops: 1 }).href).toBe("https://evil.com/x");
+    });
   });
 
   describe("non-URL request targets (asterisk-form & friends)", () => {
@@ -238,6 +512,36 @@ describe("FastURL", () => {
         });
       },
     );
+
+    // llhttp delivers any hierarchical `scheme://...` absolute-form target.
+    // srvx is an origin server for http(s) only (RFC 9110 §7.4).
+    test.each([
+      "GET file:///etc/passwd HTTP/1.1",
+      "GET file://hehe/x HTTP/1.1",
+      "GET ftp://evil.com/ HTTP/1.1",
+      "GET zzz://evil/x HTTP/1.1",
+      "GET http:// HTTP/1.1",
+      "GET http://evil.com:99999/x HTTP/1.1",
+    ])("%s over the wire returns 400", async (requestLine) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 400 /);
+      });
+    });
+
+    test("http(s) absolute-form is accepted, with the transport scheme", async () => {
+      await withServer(async (port) => {
+        const ok = await sendRaw(port, "GET http://evil.com/x HTTP/1.1");
+        expect(ok.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(ok.body).toContain("http://evil.com/x");
+
+        // `https:` on a plaintext socket must not survive.
+        const spoofed = await sendRaw(port, "GET https://evil.com/x HTTP/1.1");
+        expect(spoofed.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(spoofed.body).toContain("http://evil.com/x");
+        expect(spoofed.body).not.toContain("https://");
+      });
+    });
   });
 
   describe("fragment (#) in request target", () => {
@@ -269,15 +573,18 @@ describe("FastURL", () => {
         expect(url.pathname, ".pathname").toBe(pathname);
         expect(url.search, ".search").toBe(search);
         expect(url.searchParams.getAll("id"), ".searchParams id").toEqual([...ids]);
+        expect(url.hash, ".hash").toBe(std.hash);
       });
 
       test(`FastURL "${input}" stays consistent after deopt`, () => {
+        const std = new URL(`http://localhost${input}`);
         const url = new NodeRequestURL({
           req: { url: input, headers: { host: "localhost" } } as any,
         });
         void url.hostname; // force deopt to native URL
         expect(url.pathname, ".pathname").toBe(pathname);
         expect(url.search, ".search").toBe(search);
+        expect(url.hash, ".hash").toBe(std.hash);
       });
     }
 
@@ -285,6 +592,38 @@ describe("FastURL", () => {
       const url = new FastURL("/p#frag");
       expect(url.pathname).toBe("/p");
       expect(url.search).toBe("");
+    });
+  });
+
+  describe(".hash", () => {
+    test("is empty without a full parse for object-form input", () => {
+      const url = new NodeRequestURL({
+        req: { url: "/p?a=1", headers: { host: "localhost" } } as any,
+      });
+      expect(url.hash).toBe("");
+      expect(url.pathname).toBe("/p"); // still on the fast path
+      expect(url.search).toBe("?a=1");
+    });
+
+    test("is empty without a full parse for origin-form string input", () => {
+      const url = new FastURL("/p?a=1");
+      expect(url.hash).toBe("");
+      expect(url.pathname).toBe("/p");
+      expect(url.search).toBe("?a=1");
+    });
+
+    test("is preserved for absolute-form string input", () => {
+      expect(new FastURL("https://example.com/a#b").hash).toBe("#b");
+      expect(new FastURL("https://example.com/a?q=1#b=c").hash).toBe("#b=c");
+      expect(new FastURL("https://example.com/a").hash).toBe("");
+    });
+
+    test("setter is reflected in .hash and .href", () => {
+      const url = new FastURL("/p?a=1");
+      url.hash = "#frag";
+      expect(url.hash).toBe("#frag");
+      expect(url.href).toBe("http://localhost/p?a=1#frag");
+      expect(url.pathname).toBe("/p");
     });
   });
 

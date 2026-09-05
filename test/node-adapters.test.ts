@@ -1,6 +1,9 @@
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
-import { describe, expect, test } from "vitest";
+import { Readable } from "node:stream";
+import { connect, type AddressInfo } from "node:net";
+import http2 from "node:http2";
+import { describe, expect, test, vi } from "vitest";
+import { getTLSCert } from "./_utils.ts";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import {
@@ -13,6 +16,35 @@ import {
 
 import express from "express";
 import fastify from "fastify";
+
+// Deno's node-compat HTTP layer poisons reused keep-alive connections and
+// mishandles some streaming/error paths when srvx's Node adapter is driven over
+// a real socket. These cases pass on Node and Bun; skip them on Deno until
+// upstream stabilises. Tracked against the `tests_deno_node_adapters` CI job.
+const isDeno = !!(globalThis as any).Deno;
+const isBun = !!(globalThis as any).Bun;
+
+// HTTP/2 is not implemented in the Deno/Bun node-compat layers.
+// https://github.com/h3js/srvx/issues/237
+const skipHttp2 = isDeno || isBun;
+
+// Bun's `node:http` `ServerResponse` is inert unless it is servicing a live
+// request from a real Bun server: constructed standalone and handed a socket via
+// `assignSocket()`, `res.end()` writes nothing at all -- `_header` stays
+// `undefined` and `headersSent` stays `false`. srvx's web fetch bridge works by
+// splitting the raw `HTTP/1.1 ...` head block Node writes to that socket, so
+// `toFetchHandler()` / `fetchNodeHandler()` called outside a request never
+// produces a response and every read of it hangs. Driven from *inside* a live
+// server the same bridge does work, which is why the "through srvx/node" caller
+// below still runs on Bun. Tracked against the `tests_bun` CI job.
+const noBridge = isBun;
+
+// Bun's node-compat surface differs from Node's in ways these cases assert on
+// directly: a client disconnect never aborts the request, a disturbed
+// `ReadableStream` does not flip `bodyUsed` (Bun raises "ReadableStream has
+// already been used" instead of a `TypeError`), and `new Response("")` carries no
+// default content-type. Runtime gaps rather than srvx behavior.
+const noBunCompat = isBun;
 
 const fetchCallers = [
   {
@@ -92,7 +124,14 @@ describe("fetchNodeHandler", () => {
   for (const fixture of fixtures) {
     describe(fixture.name, () => {
       for (const caller of fetchCallers) {
-        test(caller.name, async () => {
+        // Deno: the "through srvx/node" caller fetches over a real socket and
+        // trips Deno's node-compat keep-alive body-read bug (passes on Node/Bun).
+        // Bun: the mirror image -- only "direct fetch" drives the bridge outside a
+        // live request, the one shape Bun cannot serve (see `noBridge`).
+        const skip =
+          (isDeno && caller.name === "through srvx/node") ||
+          (noBridge && caller.name === "direct fetch");
+        test.skipIf(skip)(caller.name, async () => {
           const res = await caller.fetchNodeHandler(
             fixture.handler as any,
             new Request("http://localhost/", {
@@ -127,7 +166,7 @@ describe("adapters", () => {
     return new Response("ok", { status: 200 });
   }
 
-  test("toFetchHandler", async () => {
+  test.skipIf(noBridge)("toFetchHandler", async () => {
     const webHandler = toFetchHandler(simpleNodeHandler);
     expect(webHandler.__nodeHandler).toBe(simpleNodeHandler);
     expect(webHandler.name).toBe("simpleNodeHandler (converted to Web handler)");
@@ -136,7 +175,7 @@ describe("adapters", () => {
     expect(await res.text()).toBe("ok");
   });
 
-  test("toNodeHandler", async () => {
+  test.skipIf(noBridge)("toNodeHandler", async () => {
     const nodeHandler = toNodeHandler(simpleWebHandler);
     expect(nodeHandler.__fetchHandler).toBe(simpleWebHandler);
     expect(nodeHandler.name).toBe("simpleWebHandler (converted to Node handler)");
@@ -155,7 +194,7 @@ describe("adapters", () => {
   });
 
   // https://github.com/h3js/srvx/issues/208
-  test("backpressure-aware handler does not deadlock", async () => {
+  test.skipIf(noBridge)("backpressure-aware handler does not deadlock", async () => {
     const backpressureHandler: NodeHttp1Handler = (_req, res) => {
       return (async () => {
         res.statusCode = 200;
@@ -204,6 +243,28 @@ describe("adapters", () => {
     expect(settled).not.toBe("hung");
   });
 
+  test.skipIf(noBridge)("request without a signal is handled", async () => {
+    const req = new Request("http://localhost/", { method: "POST", body: "ping" });
+    // Shadow the prototype `signal` getter with an own `undefined` property,
+    // keeping the rest of the Request (headers, body) intact.
+    Object.defineProperty(req, "signal", { value: undefined, configurable: true });
+    expect(req.signal).toBeUndefined();
+
+    // Echoes the request body so the socket's readable side is exercised too.
+    const echoHandler: NodeHttp1Handler = (nodeReq, nodeRes) => {
+      const chunks: Buffer[] = [];
+      nodeReq.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      nodeReq.on("end", () => {
+        nodeRes.writeHead(200, { "content-type": "text/plain" });
+        nodeRes.end(Buffer.concat(chunks));
+      });
+    };
+
+    const res = await fetchNodeHandler(echoHandler, req);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ping");
+  });
+
   // https://github.com/h3js/srvx/issues/208
   test("client abort mid-stream does not crash or hang", async () => {
     const controller = new AbortController();
@@ -238,6 +299,417 @@ describe("adapters", () => {
     ]);
 
     expect(settled).not.toBe("hung");
+  });
+
+  // F13: head/body split must use the FIRST CRLFCRLF, not the last, otherwise
+  // response bodies that themselves contain "\r\n\r\n" (multipart, proxied HTTP,
+  // binary) get silently truncated.
+  test.skipIf(noBridge)("response body containing CRLFCRLF arrives intact", async () => {
+    const payload = "before\r\n\r\nafter\r\n\r\nend";
+    const bodyHandler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(payload);
+    };
+    const webHandler = toFetchHandler(bodyHandler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(payload);
+  });
+
+  // https://github.com/h3js/srvx/issues/248
+  // A streaming/SSE handler that writes the head + a chunk but never calls
+  // res.end() must NOT block the returned Response: toWebResponse() has to settle
+  // once the head is known so the body streams incrementally instead of buffering
+  // until finish (which, for open-ended SSE, never happens).
+  test.skipIf(noBridge)("streaming response is returned before res.end()", async () => {
+    let pushChunk!: () => void;
+    let endStream!: () => void;
+    const sseHandler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      let n = 2;
+      pushChunk = () => res.write(`data: ${n++}\n\n`);
+      endStream = () => res.end();
+      // Intentionally never returns end(); the response stays open.
+    };
+    const webHandler = toFetchHandler(sseHandler);
+
+    // The Response must resolve without the handler ever calling res.end().
+    const res = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("streaming response hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    // And the body must flow chunk-by-chunk while the handler keeps writing.
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    const read = async () => decoder.decode((await reader.read()).value);
+
+    expect(await read()).toBe("data: 1\n\n");
+    pushChunk();
+    expect(await read()).toBe("data: 2\n\n");
+    pushChunk();
+    expect(await read()).toBe("data: 3\n\n");
+    endStream();
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/248
+  // An explicit `Transfer-Encoding: chunked` must not chunk-frame the bridged
+  // body. The synthetic response is close-delimited (its raw bytes are captured
+  // and re-wrapped in a web Response), so framing would surface as literal chunk
+  // metadata in the body ("5\r\nhello\r\n...") and leak a hop-by-hop header.
+  describe("explicit Transfer-Encoding: chunked does not corrupt the body", () => {
+    const cases: { name: string; setHeaders: (res: any) => void }[] = [
+      {
+        name: "writeHead object form",
+        setHeaders: (res) => res.writeHead(200, { "transfer-encoding": "chunked" }),
+      },
+      {
+        name: "writeHead with statusMessage",
+        setHeaders: (res) => res.writeHead(200, "OK", { "Transfer-Encoding": "chunked" }),
+      },
+      {
+        name: "writeHead with a non-string statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "Transfer-Encoding": "chunked" }),
+      },
+      {
+        name: "writeHead flat array form",
+        setHeaders: (res) => res.writeHead(200, ["transfer-encoding", "chunked"] as any),
+      },
+      {
+        name: "writeHead nested array form",
+        setHeaders: (res) => res.writeHead(200, [["transfer-encoding", "chunked"]] as any),
+      },
+      {
+        name: "setHeader",
+        setHeaders: (res) => res.setHeader("Transfer-Encoding", "chunked"),
+      },
+    ];
+
+    for (const { name, setHeaders } of cases) {
+      test.skipIf(noBridge)(name, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          setHeaders(res as any);
+          res.write("hello");
+          res.end("world");
+        };
+        const webHandler = toFetchHandler(handler);
+        const res = await webHandler(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        // Body arrives verbatim, without chunk framing.
+        expect(await res.text()).toBe("helloworld");
+        // The hop-by-hop framing header does not leak into the web Response.
+        expect(res.headers.get("transfer-encoding")).toBe(null);
+      });
+    }
+  });
+
+  // `writeHead()` has two overloads and Node picks between them with
+  // `obj ??= reason`: the headers argument is whichever of the last two is
+  // present, and the third wins when both are. A reason phrase that is not a
+  // string (`undefined`/`null`) therefore still leaves real headers in the third
+  // argument -- what proxying an HTTP/2 upstream, which carries no status
+  // message, produces. Dropping them would silently strip response headers the
+  // handler set, including security ones like CSP.
+  describe("writeHead forwards headers for every argument form", () => {
+    const cases: { name: string; setHeaders: (res: any) => void }[] = [
+      {
+        name: "2-arg object form",
+        setHeaders: (res) => res.writeHead(200, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a string statusMessage",
+        setHeaders: (res) => res.writeHead(200, "OK", { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with an undefined statusMessage",
+        setHeaders: (res) => res.writeHead(200, undefined, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg with a null statusMessage",
+        setHeaders: (res) => res.writeHead(200, null, { "x-frame-options": "DENY" }),
+      },
+      {
+        name: "3-arg flat array form",
+        setHeaders: (res) => res.writeHead(200, undefined, ["x-frame-options", "DENY"]),
+      },
+      {
+        name: "3-arg nested array form",
+        setHeaders: (res) => res.writeHead(200, undefined, [["x-frame-options", "DENY"]]),
+      },
+    ];
+
+    for (const { name, setHeaders } of cases) {
+      test.skipIf(noBridge)(name, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          setHeaders(res as any);
+          res.end("hello");
+        };
+        const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("hello");
+        expect(res.headers.get("x-frame-options")).toBe("DENY");
+      });
+    }
+
+    // Node prefers the third argument when both could be headers; mirror it so
+    // the bridge and a plain `http.Server` cannot disagree on which one applies.
+    test.skipIf(noBridge)("the third argument wins over a non-string second one", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        (res as any).writeHead(200, { "x-from": "reason" }, { "x-from": "obj" });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.headers.get("x-from")).toBe("obj");
+      expect(await res.text()).toBe("hello");
+    });
+  });
+
+  // https://github.com/h3js/srvx/issues/248
+  // Hop-by-hop headers (RFC 9110 §7.6.1) describe a single transport hop, not
+  // the message. Node auto-generates `Connection` on the synthetic wire and a
+  // handler may set any of them explicitly; none may leak into the web Response
+  // that `toWebResponse()` synthesizes.
+  describe("hop-by-hop headers do not leak into the web Response", () => {
+    test.skipIf(noBridge)("auto-generated Connection: close is stripped", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello");
+      expect(res.headers.get("connection")).toBe(null);
+      // End-to-end headers are untouched.
+      expect(res.headers.get("content-type")).toBe("text/plain");
+    });
+
+    const hopByHop: [string, string][] = [
+      ["connection", "keep-alive"],
+      ["keep-alive", "timeout=5"],
+      ["proxy-authenticate", "Basic"],
+      ["proxy-authorization", "Basic abc"],
+      ["te", "trailers"],
+      ["transfer-encoding", "chunked"],
+      ["upgrade", "h2c"],
+    ];
+    for (const [name, value] of hopByHop) {
+      test.skipIf(noBridge)(`explicit ${name} is stripped`, async () => {
+        const handler: NodeHttp1Handler = (_req, res) => {
+          res.writeHead(200, { [name]: value, "content-type": "text/plain" });
+          res.end("hello");
+        };
+        const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("hello");
+        expect(res.headers.get(name)).toBe(null);
+        expect(res.headers.get("content-type")).toBe("text/plain");
+      });
+    }
+
+    // Any field-name listed in `Connection` is itself hop-by-hop and must go too.
+    test.skipIf(noBridge)("field-names listed in Connection are stripped", async () => {
+      const handler: NodeHttp1Handler = (_req, res) => {
+        res.writeHead(200, {
+          connection: "close, x-secret",
+          "x-secret": "leak",
+          "content-type": "text/plain",
+        });
+        res.end("hello");
+      };
+      const res = await toFetchHandler(handler)(new Request("http://localhost/"));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("connection")).toBe(null);
+      expect(res.headers.get("x-secret")).toBe(null);
+      expect(res.headers.get("content-type")).toBe("text/plain");
+    });
+  });
+
+  // F14: null-body statuses (204/304/...) must not throw when constructing the
+  // web Response (which would surface as a 500).
+  test("null-body status 204 does not become a 500", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(204);
+      res.end();
+    };
+    const webHandler = toFetchHandler(handler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe("");
+  });
+
+  test("conditional-GET 304 does not become a 500", async () => {
+    const handler: NodeHttp1Handler = (_req, res) => {
+      res.writeHead(304);
+      res.end();
+    };
+    const webHandler = toFetchHandler(handler);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(304);
+    expect(await res.text()).toBe("");
+  });
+
+  // F15: body listeners attached after an `await` (e.g. async middleware in
+  // front of express.json()) must still receive data + "end", and req.complete
+  // must become true.
+  test.skipIf(noBridge)("late-attached body listeners still receive data and end", async () => {
+    const handler: NodeHttp1Handler = (req, res) => {
+      return (async () => {
+        // Defer attaching listeners past a microtask/tick.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const chunks: Uint8Array[] = [];
+        const body = await new Promise<string>((resolve) => {
+          req.on("data", (chunk) => chunks.push(chunk));
+          req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        });
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(JSON.stringify({ body, complete: req.complete }));
+      })();
+    };
+    const webHandler = toFetchHandler(handler);
+    const settled = await Promise.race([
+      Promise.resolve(
+        webHandler(new Request("http://localhost/", { method: "POST", body: "hello world" })),
+      ).then((r) => r.json()),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for body")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ body: "hello world", complete: true });
+  });
+
+  // F16: a large upload must apply backpressure rather than buffering the whole
+  // body in memory. A handler that defers reading (e.g. slow async middleware)
+  // must NOT cause the source to flood the internal buffer — with the source
+  // paused on `push() === false`, only about one highWaterMark of data can
+  // accumulate before reading resumes. Without the fix the full upload buffers.
+  test.skipIf(noBridge)("large upload applies backpressure and arrives completely", async () => {
+    const chunkSize = 64 * 1024;
+    const chunk = "x".repeat(chunkSize);
+    const totalChunks = 32;
+    const expectedLength = chunkSize * totalChunks;
+
+    let bufferedBeforeReading = 0;
+    const handler: NodeHttp1Handler = (req, res) => {
+      return (async () => {
+        // Defer reading so an unthrottled source would have time to flood the
+        // internal buffer with the entire upload.
+        await new Promise((r) => setTimeout(r, 100));
+        bufferedBeforeReading = (req as any).readableLength ?? 0;
+        let received = 0;
+        for await (const c of req as any) {
+          received += (c as Uint8Array).length;
+        }
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(String(received));
+      })();
+    };
+    const webHandler = toFetchHandler(handler);
+
+    // Fast producer: enqueue everything up front without waiting.
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const data = new TextEncoder().encode(chunk);
+        for (let i = 0; i < totalChunks; i++) {
+          controller.enqueue(data);
+        }
+        controller.close();
+      },
+    });
+
+    const res = await webHandler(
+      new Request("http://localhost/", {
+        method: "POST",
+        body: source,
+        // @ts-expect-error duplex is required for a stream body
+        duplex: "half",
+      }),
+    );
+    expect(res.status).toBe(200);
+    // Full body arrives intact.
+    expect(Number(await res.text())).toBe(expectedLength);
+    // The source was throttled: far less than the full upload buffered while the
+    // handler was not reading. (Without the fix this equals expectedLength.)
+    expect(bufferedBeforeReading).toBeLessThan(expectedLength / 2);
+  });
+
+  // Connect-style `(req, res, next)` middleware on the synthetic bridge path
+  // (no real Node req/res) must receive a working `next`. Without it, invoking
+  // `next` threw ("next is not a function") and surfaced as a 500.
+  test.skipIf(noBridge)("connect-style middleware that ends the response works", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      // @ts-expect-error http1/http2 union
+      res.writeHead(201, { "content-type": "text/plain" });
+      res.end("middleware ok");
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe("middleware ok");
+  });
+
+  test.skipIf(noBridge)("connect-style middleware calling next() does not 500", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      res.setHeader("x-mw", "1");
+      // No downstream handler: finalize with the current response state.
+      next();
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    const settled = await Promise.race([
+      Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
+        status: r.status,
+        header: r.headers.get("x-mw"),
+      })),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("hung waiting for next()")), 3000),
+      ),
+    ]);
+    expect(settled).toMatchObject({ status: 200, header: "1" });
+  });
+
+  test("connect-style middleware calling next(err) propagates as an error", async () => {
+    const error = new Error("boom");
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      next(error);
+    };
+    const webHandler = toFetchHandler(middleware as any);
+    // Silence the expected error log from fetchNodeHandler's catch.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws async propagates as an error", async () => {
+    const middleware = (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => Promise.reject(new Error("async boom"));
+    const webHandler = toFetchHandler(middleware as any);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
 
@@ -297,7 +769,204 @@ describe("request signal", () => {
     expect(abortFired).toBe(false);
   });
 
-  test("should fire abort signal when client disconnects", async () => {
+  test("should read body when stream was pre-drained by middleware with rawBody", async () => {
+    let rawBodyDone: () => void;
+    const rawBodyPromise = new Promise<void>((resolve) => {
+      rawBodyDone = resolve;
+    });
+
+    const handler = toNodeHandler(async (request) => {
+      await rawBodyPromise;
+      return new Response(await request.text());
+    });
+
+    const server = createServer(async (req: any, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) {
+        chunks.push(c);
+      }
+      req.rawBody = Buffer.concat(chunks);
+      rawBodyDone();
+      handler(req, res as any);
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const res = await fetch(`http://localhost:${port}`, {
+      method: "POST",
+      body: JSON.stringify({ hello: "world" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ hello: "world" });
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("should parse json body when stream was pre-drained by middleware with rawBody", async () => {
+    const handler = toNodeHandler(async (request) => {
+      return Response.json(await request.json());
+    });
+
+    const server = createServer(async (req: any, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) {
+        chunks.push(c);
+      }
+      req.rawBody = Buffer.concat(chunks);
+      handler(req, res as any);
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    const res = await fetch(`http://localhost:${port}`, {
+      method: "POST",
+      body: JSON.stringify({ test: 123 }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ test: 123 });
+
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  // `IncomingMessage` is `autoDestroy`, so a fully read body leaves `req`
+  // destroyed while the response is still open. Touching `signal` only *after*
+  // the read is the order that catches a disconnect check keying off
+  // `req.destroyed` alone -- it would abort every healthy handler that reads its
+  // body first, breaking the common `fetch(upstream, { signal: request.signal })`
+  // proxy shape.
+  test("should not abort when the signal is first read after the body", async () => {
+    let aborted: boolean | undefined;
+    let receivedBody: string | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        receivedBody = await request.text();
+        aborted = request.signal.aborted;
+        return new Response(`Received: ${receivedBody}`);
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "test body" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("Received: test body");
+
+    await server.close();
+
+    expect(receivedBody).toBe("test body");
+    expect(aborted).toBe(false);
+  });
+
+  test("should not abort when the signal is first read after a streamed body", async () => {
+    let aborted: boolean | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(request) {
+        await new Response(request.body).text();
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      },
+    });
+
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "test body" });
+    expect(await res.text()).toBe("ok");
+
+    await server.close();
+
+    expect(aborted).toBe(false);
+  });
+
+  // The HTTP/2 half of the two guards above. `Http2ServerRequest` reports
+  // `complete === true` for an *aborted* body and never destroys itself, so the
+  // HTTP/1 disconnect conditions are inert there and the predicate has to lean on
+  // `req.aborted` instead -- which must stay false for a request that finished
+  // normally, or `fetch(upstream, { signal: request.signal })` breaks for every
+  // handler that reads its body before touching `signal`.
+  describe.skipIf(skipHttp2)("http2", () => {
+    async function serveAndPost(fetchHandler: (request: any) => Promise<Response>) {
+      const tls = await getTLSCert();
+      const server = serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        silent: true,
+        tls,
+        node: { http2: true, allowHTTP1: false } as any,
+        fetch: fetchHandler,
+      });
+      await server.ready();
+      const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+      client.on("error", () => {});
+      try {
+        const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 9 });
+        stream.end("test body");
+        const chunks: Buffer[] = [];
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        await new Promise((resolve, reject) => {
+          stream.once("end", resolve);
+          stream.once("error", reject);
+        });
+        return Buffer.concat(chunks).toString();
+      } finally {
+        client.destroy();
+        await server.close(true);
+      }
+    }
+
+    test("should not abort when the signal is first read after the body", async () => {
+      let aborted: boolean | undefined;
+      let receivedBody: string | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        receivedBody = await request.text();
+        aborted = request.signal.aborted;
+        return new Response(`Received: ${receivedBody}`);
+      });
+
+      expect(body).toBe("Received: test body");
+      expect(receivedBody).toBe("test body");
+      expect(aborted).toBe(false);
+    });
+
+    test("should not abort when the signal is first read after a streamed body", async () => {
+      let aborted: boolean | undefined;
+      let receivedBody: string | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        receivedBody = await new Response(request.body).text();
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      });
+
+      expect(body).toBe("ok");
+      expect(receivedBody).toBe("test body");
+      expect(aborted).toBe(false);
+    });
+
+    // Responding without reading closes the stream while the promised body is
+    // still outstanding, which leaves `complete`/`readableEnded` true on an
+    // untouched request -- neither can stand in for the disconnect check.
+    test("should not abort when the body is never read", async () => {
+      let aborted: boolean | undefined;
+
+      const body = await serveAndPost(async (request) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        aborted = request.signal.aborted;
+        return new Response("ok");
+      });
+
+      expect(body).toBe("ok");
+      expect(aborted).toBe(false);
+    });
+  });
+
+  test.skipIf(noBunCompat)("should fire abort signal when client disconnects", async () => {
     let abortFired: () => void;
     const abortFiredPromise = new Promise<void>((resolve) => {
       abortFired = resolve;
@@ -383,14 +1052,124 @@ describe("node server startup", () => {
 
   test("auto-serve port conflict surfaces via ready()", async () => {
     await withBlockedPort(async (port) => {
-      const server = serve({
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(""),
+        });
+        await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
+        // Claimed by `ready()`, so the last-resort report stays quiet.
+        expect(consoleError).not.toHaveBeenCalled();
+        await server.close();
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+  });
+
+  // F18: nothing forces a caller to await `ready()`, and a failed listen leaves
+  // no open handle -- so a bare `serve({ port })` used to exit 0 in silence with
+  // a dead server, invisible to a supervisor watching the exit code.
+  test("auto-serve port conflict is reported when nothing awaits ready()", async () => {
+    const previousExitCode = process.exitCode;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withBlockedPort(async (port) => {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(""),
+        });
+        await vi.waitFor(() =>
+          expect(consoleError).toHaveBeenCalledWith(
+            "[srvx] Failed to start server:",
+            expect.objectContaining({ code: "EADDRINUSE" }),
+          ),
+        );
+        expect(process.exitCode).toBe(1);
+        await server.close();
+      });
+    } finally {
+      consoleError.mockRestore();
+      // Never leak the failure marker into vitest's own exit code.
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  test("auto-serve port conflict log is muted by `silent`", async () => {
+    const previousExitCode = process.exitCode;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withBlockedPort(async (port) => {
+        const server = serve({
+          port,
+          hostname: "127.0.0.1",
+          silent: true,
+          fetch: () => new Response(""),
+        });
+        // `silent` mutes the log but not the exit code: the server is still dead.
+        await vi.waitFor(() => expect(process.exitCode).toBe(1));
+        expect(consoleError).not.toHaveBeenCalled();
+        await server.close();
+      });
+    } finally {
+      consoleError.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+});
+
+describe("reusePort", () => {
+  test("maps reusePort to the SO_REUSEPORT listen option", () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      reusePort: true,
+      manual: true,
+      fetch: () => new Response(""),
+    });
+    const serveOptions = (server as { serveOptions?: Record<string, unknown> }).serveOptions;
+    expect(serveOptions).toMatchObject({ reusePort: true, exclusive: false });
+  });
+
+  // SO_REUSEPORT is only supported on Linux (and a few BSDs) with Node >= 22.12.
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  const supported =
+    !globalThis.Deno &&
+    !globalThis.Bun &&
+    process.platform === "linux" &&
+    (major > 22 || (major === 22 && minor >= 12));
+
+  test.skipIf(!supported)("two servers can bind the same port with reusePort", async () => {
+    // Reserve then release a free port to reuse across both servers.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+    const makeServer = () =>
+      serve({
         port,
         hostname: "127.0.0.1",
-        fetch: () => new Response(""),
+        reusePort: true,
+        manual: true,
+        fetch: () => new Response("ok"),
       });
-      await expect(server.ready()).rejects.toMatchObject({ code: "EADDRINUSE" });
-      await server.close();
-    });
+
+    const a = makeServer();
+    const b = makeServer();
+    try {
+      // Without reusePort, the second listen() on the same port would EADDRINUSE.
+      await a.serve();
+      await b.serve();
+      expect(new URL(a.url!).port).toBe(String(port));
+      expect(new URL(b.url!).port).toBe(String(port));
+    } finally {
+      await a.close();
+      await b.close();
+    }
   });
 });
 
@@ -445,3 +1224,831 @@ describe("FastResponse header dedup", () => {
     expect(cl[0]).toEqual(["content-length", "5"]);
   });
 });
+
+// https://github.com/h3js/srvx/issues/250
+describe("FastResponse copies init Headers", () => {
+  const headerPairs = (headers: string[]) => {
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      pairs.push([headers[i], headers[i + 1]]);
+    }
+    return pairs;
+  };
+
+  test("mutating res.headers does not leak into a shared Headers init", () => {
+    const shared = new Headers({ a: "1" });
+
+    const res = new FastResponse("x", { headers: shared });
+    res.headers.set("b", "2");
+
+    expect(shared.has("b")).toBe(false);
+    expect(res.headers.get("a")).toBe("1");
+    expect(res.headers.get("b")).toBe("2");
+  });
+
+  test("a shared Headers template survives reuse across responses", () => {
+    const preset = new Headers({ "x-preset": "1" });
+
+    const first = new FastResponse("x", { headers: preset });
+    first.headers.append("set-cookie", "session=abc");
+
+    const second = new FastResponse("y", { headers: preset });
+
+    expect(second.headers.getSetCookie()).toEqual([]);
+    expect(first.headers.getSetCookie()).toEqual(["session=abc"]);
+  });
+
+  test("the copy preserves multiple set-cookie values", () => {
+    const shared = new Headers();
+    shared.append("set-cookie", "a=1");
+    shared.append("set-cookie", "b=2");
+
+    const res = new FastResponse("x", { headers: shared });
+
+    expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
+  });
+
+  test("mutations via res.headers reach the wire", () => {
+    const res = new FastResponse("x", { headers: new Headers({ a: "1" }) });
+    res.headers.set("b", "2");
+
+    const { headers } = res._toNodeResponse();
+
+    expect(headerPairs(headers)).toContainEqual(["a", "1"]);
+    expect(headerPairs(headers)).toContainEqual(["b", "2"]);
+  });
+
+  test("an untouched Headers init still reaches the wire", () => {
+    const { headers } = new FastResponse("x", {
+      headers: new Headers({ a: "1" }),
+    })._toNodeResponse();
+
+    expect(headerPairs(headers)).toContainEqual(["a", "1"]);
+  });
+});
+
+// Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
+// decorating a response must be able to mutate `res.headers` without paying for
+// materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
+// which is ~2x slower because it replaces the raw body with a ReadableStream.
+describe("FastResponse header mutation preserves the raw body", () => {
+  test("mutating headers keeps a string body raw", () => {
+    const res = new FastResponse("hello world", { headers: { "x-a": "1" } });
+    res.headers.append("set-cookie", "session=abc");
+
+    const prepared = res._toNodeResponse();
+
+    expect(prepared.body).toBe("hello world");
+    expect(prepared.headers).toContain("session=abc");
+    // Implicit content-type/length are still derived from the raw body.
+    expect(prepared.headers).toContain("text/plain; charset=UTF-8");
+    expect(prepared.headers).toContain("11");
+  });
+
+  test("mutating headers keeps a Uint8Array body raw", () => {
+    const body = new TextEncoder().encode("hello world");
+    const res = new FastResponse(body);
+    res.headers.set("x-a", "1");
+
+    expect(res._toNodeResponse().body).toBe(body);
+  });
+
+  test("reading .body is what forfeits the fast path", () => {
+    const res = new FastResponse("hello world");
+    void res.body;
+
+    expect(res._toNodeResponse().body).toBeInstanceOf(ReadableStream);
+  });
+
+  test("headers stay mutable after materialization", () => {
+    const res = new FastResponse("hello world");
+    void res.body; // materialize
+
+    expect(() => res.headers.append("set-cookie", "session=abc")).not.toThrow();
+    expect(res._toNodeResponse().headers).toContain("session=abc");
+  });
+
+  test("a plain Response is mutable too, so middleware need not branch", () => {
+    // Only fetch()/Response.error()/Response.redirect() results are immutable.
+    const res = new Response("hello world");
+
+    expect(() => {
+      res.headers.set("cache-control", "no-store");
+      res.headers.append("set-cookie", "session=abc");
+    }).not.toThrow();
+    expect(res.headers.getSetCookie()).toEqual(["session=abc"]);
+  });
+});
+
+// v1 stabilization: Node-adapter crash/corruption regressions.
+describe("node body crash regressions", () => {
+  // F1: the non-middleware branch of callNodeHandler had no `.catch`, so an async
+  // node handler that threw caused an unhandledRejection AND never settled (the
+  // request hung). It must reject like the middleware branch.
+  test("F1: async node handler that throws does not crash or hang", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown) => rejections.push(err);
+    process.on("unhandledRejection", onRejection);
+
+    const throwingHandler: NodeHttp1Handler = async () => {
+      throw new Error("boom");
+    };
+
+    const server = serve({
+      port: 0,
+      // Surface the callNodeHandler rejection as a clean 500 so we can assert it
+      // settled instead of hanging.
+      error: () => new Response("caught", { status: 500 }),
+      fetch: (webReq) => fetchNodeHandler(throwingHandler, webReq),
+    });
+    await server.ready();
+
+    try {
+      const res = await Promise.race([
+        fetch(server.url!),
+        new Promise<Response>((_, reject) =>
+          setTimeout(() => reject(new Error("request hung")), 3000),
+        ),
+      ]);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("caught");
+      // Let any (buggy) unhandledRejection flush before asserting the process survived.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(rejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      await server.close(true);
+    }
+  });
+
+  // F2: after the buffered fast path consumes the IncomingMessage, a second
+  // text()/json() re-attached data/end listeners to an ended stream and hung.
+  // It must reject with `TypeError: Body is unusable`.
+  test("F2: second body read rejects with TypeError instead of hanging", async () => {
+    let firstRead: string | undefined;
+    let secondReadOutcome: string | undefined;
+
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        firstRead = await req.text();
+        secondReadOutcome = await Promise.race([
+          req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : "other-error"),
+          ),
+          new Promise<string>((r) => setTimeout(() => r("hung"), 2000)),
+        ]);
+        return new Response("ok");
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(res.status).toBe(200);
+    expect(firstRead).toBe("hello");
+    expect(secondReadOutcome).toBe("TypeError");
+    await server.close(true);
+  });
+
+  // F3: the `_request` getter wrapped the already-consumed stream in a native
+  // Request, throwing "... disturbed or locked" synchronously and poisoning
+  // bodyUsed / clone() / mode. These must all work after consumption.
+  test("F3: bodyUsed / clone() / mode work after body consumption", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const bodyUsedBefore = req.bodyUsed;
+        const text = await req.text();
+        const bodyUsedAfter = req.bodyUsed;
+
+        let cloneOk = true;
+        try {
+          req.clone();
+        } catch {
+          cloneOk = false;
+        }
+
+        let mode: string;
+        try {
+          mode = req.mode;
+        } catch {
+          mode = "THREW";
+        }
+
+        return Response.json({ text, bodyUsedBefore, bodyUsedAfter, cloneOk, mode });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      text: "hello",
+      bodyUsedBefore: false,
+      bodyUsedAfter: true,
+      cloneOk: true,
+      mode: "cors",
+    });
+    await server.close(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/247
+  // Only text()/json() guarded against a second read. The rest of the body
+  // methods are inherited from the native Request, which `_request` hands a
+  // *null* body once srvx has consumed the real one — so undici's own guard saw
+  // a pristine body and they resolved empty, silently masking double-read bugs
+  // that throw on every other runtime.
+  test("every body method rejects after the body is consumed", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        await req.text();
+        const outcomes: Record<string, string> = { bodyUsed: String(req.bodyUsed) };
+        for (const method of [
+          "arrayBuffer",
+          "bytes",
+          "blob",
+          "formData",
+          "text",
+          "json",
+        ] as const) {
+          outcomes[method] = await (req[method]() as Promise<unknown>).then(
+            () => "resolved",
+            (error) =>
+              error instanceof TypeError && /unusable/.test(error.message)
+                ? "TypeError: unusable"
+                : `other: ${error}`,
+          );
+        }
+        return Response.json(outcomes);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({
+      bodyUsed: "true",
+      arrayBuffer: "TypeError: unusable",
+      bytes: "TypeError: unusable",
+      blob: "TypeError: unusable",
+      formData: "TypeError: unusable",
+      text: "TypeError: unusable",
+      json: "TypeError: unusable",
+    });
+    await server.close(true);
+  });
+
+  // https://github.com/h3js/srvx/issues/247 (related)
+  // Draining `req.body` never flipped `bodyUsed`, so a later read still looked
+  // like a first read: it reached the `_request` getter, which threw
+  // "... disturbed or locked" *synchronously* out of the handler.
+  test.skipIf(isDeno || noBunCompat)(
+    "streaming the body directly marks it used and rejects later reads",
+    async () => {
+      const server = serve({
+        port: 0,
+        async fetch(req) {
+          let streamed = "";
+          for await (const chunk of req.body!) {
+            streamed += new TextDecoder().decode(chunk as Uint8Array);
+          }
+          return Response.json({
+            streamed,
+            bodyUsed: req.bodyUsed,
+            arrayBuffer: await req.arrayBuffer().then(
+              () => "resolved",
+              (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+            ),
+          });
+        },
+      });
+      await server.ready();
+
+      const res = await fetch(server.url!, { method: "POST", body: "hello" });
+      expect(await res.json()).toEqual({
+        streamed: "hello",
+        bodyUsed: true,
+        arrayBuffer: "TypeError",
+      });
+      await server.close(true);
+    },
+  );
+
+  // The flip side of the above: `bodyUsed` tracks the spec's "disturbed" bit, so
+  // merely *touching* `request.body` must not consume it — `isDisturbed` on the
+  // handed-out stream must stay false until an actual read or cancel.
+  test("accessing req.body without reading it does not mark the body used", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const hasBody = req.body !== null;
+        const bodyUsed = req.bodyUsed;
+        // The body is undisturbed, so a buffered read must still work.
+        return Response.json({ hasBody, bodyUsed, text: await req.text() });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ hasBody: true, bodyUsed: false, text: "hello" });
+    await server.close(true);
+  });
+
+  // Cancelling the body disturbs it per the fetch spec, exactly like reading it:
+  // `bodyUsed` flips and later reads reject.
+  test.skipIf(isDeno || noBunCompat)(
+    "cancelling req.body marks the body used and rejects later reads",
+    async () => {
+      const server = serve({
+        port: 0,
+        async fetch(req) {
+          await req.body!.cancel();
+          return Response.json({
+            bodyUsed: req.bodyUsed,
+            text: await req.text().then(
+              () => "resolved",
+              (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+            ),
+          });
+        },
+      });
+      await server.ready();
+
+      const res = await fetch(server.url!, { method: "POST", body: "hello" });
+      expect(await res.json()).toEqual({ bodyUsed: true, text: "TypeError" });
+      await server.close(true);
+    },
+  );
+
+  // `clone()` tees the body, so reading the clone must leave the original
+  // readable — the "disturbed" tracking on the underlying stream must not
+  // mistake a pull driven by the clone for a read of this request's body.
+  test("reading a clone leaves the original body readable", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const fromClone = await req.clone().text();
+        return Response.json({
+          fromClone,
+          fromOriginal: await req.text().then(
+            (text) => `resolved(${text})`,
+            (error) => `${error}`,
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ fromClone: "hello", fromOriginal: "resolved(hello)" });
+    await server.close(true);
+  });
+
+  // The native Request owns the accounting once it holds the real body: a first
+  // arrayBuffer() must read it, and only the second read rejects.
+  test("arrayBuffer() reads the body once and rejects on a second read", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const first = new TextDecoder().decode(await req.arrayBuffer());
+        return Response.json({
+          first,
+          bodyUsed: req.bodyUsed,
+          second: await req.arrayBuffer().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+          ),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "POST", body: "hello" });
+    expect(await res.json()).toEqual({ first: "hello", bodyUsed: true, second: "TypeError" });
+    await server.close(true);
+  });
+
+  // GET/HEAD are always null-body per the fetch spec, regardless of what was on
+  // the wire and regardless of property-access order.
+  for (const order of ["text-first", "body-first"] as const) {
+    test(`GET with a body on the wire is null-body (${order})`, async () => {
+      const server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          const result: Record<string, unknown> = {};
+          if (order === "body-first") {
+            result.bodyNull = req.body === null;
+            result.text = await req.text();
+          } else {
+            result.text = await req.text();
+            result.bodyNull = req.body === null;
+          }
+          // FastResponse with a string body is content-length framed, which the
+          // raw parser below relies on.
+          return new FastResponse(JSON.stringify(result));
+        },
+      });
+      await server.ready();
+
+      // Send a GET with a body on the wire via a raw socket (fetch forbids it).
+      const u = new URL(server.url!);
+      const raw = await rawExchange(
+        Number(u.port),
+        u.hostname,
+        "GET / HTTP/1.1\r\n" +
+          `Host: ${u.hostname}\r\n` +
+          "Content-Length: 5\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "hello",
+      );
+      const responses = parseHttpResponses(raw);
+      expect(responses).toHaveLength(1);
+      expect(JSON.parse(responses[0].body.toString())).toEqual({ bodyNull: true, text: "" });
+      await server.close(true);
+    });
+  }
+
+  // F5: a TypedArray/DataView view of a larger buffer must send only the view's
+  // window. `Buffer.from(view.buffer)` sent the whole ArrayBuffer while
+  // content-length was the view length — wrong bytes out, stray bytes left in the
+  // keep-alive connection (corrupting the next pipelined response).
+  test("F5: DataView view body sends exact bytes and keeps the connection clean", async () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/view") {
+          // 4-byte view (values 3,4,5,6) of a 10-byte buffer.
+          const buffer = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).buffer;
+          const view = new DataView(buffer, 3, 4);
+          return new FastResponse(view);
+        }
+        return new FastResponse("second");
+      },
+    });
+    await server.ready();
+
+    const u = new URL(server.url!);
+    // Two pipelined keep-alive requests on one socket; the second closes it.
+    const raw = await rawExchange(
+      Number(u.port),
+      u.hostname,
+      `GET /view HTTP/1.1\r\nHost: ${u.hostname}\r\n\r\n` +
+        `GET /second HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+    );
+
+    const responses = parseHttpResponses(raw);
+    expect(responses).toHaveLength(2);
+    expect([...responses[0].body]).toEqual([3, 4, 5, 6]);
+    expect(responses[1].body.toString()).toBe("second");
+    await server.close(true);
+  });
+});
+
+// Regressions where the Node adapter diverged from native fetch semantics
+// (Response defaults, HEAD handling, send diagnostics, node-compat bridge).
+describe("node fetch-spec correctness regressions", () => {
+  const headerPairs = (headers: string[]) => {
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < headers.length; i += 2) {
+      pairs.push([headers[i], headers[i + 1]]);
+    }
+    return pairs;
+  };
+
+  // A streaming body for a HEAD request must be cancelled immediately, not
+  // pumped to completion (an unbounded SSE stream would pump forever).
+  test("HEAD cancels a streaming body instead of pumping it", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream({
+          pull(controller) {
+            pulls++;
+            controller.enqueue(new TextEncoder().encode("data\n"));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(stream);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    // Let the cancellation settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(cancelled).toBe(true);
+    // The stream was cancelled up front rather than pumped.
+    expect(pulls).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // Same guarantee for the Node `Readable` fast path, which goes through
+  // pipeBody instead of streamBody. Node's write() is a no-op for HEAD, so
+  // without the guard the stream is pumped with zero backpressure.
+  test("HEAD discards a Node Readable body instead of pumping it", async () => {
+    let reads = 0;
+    let readable!: Readable;
+    const server = serve({
+      port: 0,
+      fetch() {
+        readable = new Readable({
+          read() {
+            reads++;
+            // Bounded so a regression fails the assertion below instead of
+            // OOMing the worker (the real-world body would be unbounded).
+            this.push(reads > 64 ? null : Buffer.alloc(1024, "x"));
+          },
+        });
+        return new FastResponse(readable as unknown as BodyInit);
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+    // Let the destroy settle.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readable.destroyed).toBe(true);
+    // The stream was destroyed up front rather than pumped.
+    expect(reads).toBeLessThanOrEqual(1);
+    await server.close(true);
+  });
+
+  // The HEAD guard still commits to the handler's status/headers, and does not
+  // leak into non-HEAD requests on the same server.
+  test("HEAD keeps the handler's headers for a Node Readable body", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        return new FastResponse(Readable.from(["hello", "world"]) as unknown as BodyInit, {
+          status: 206,
+          headers: { "content-length": "10", "x-custom": "1" },
+        });
+      },
+    });
+    await server.ready();
+
+    const headRes = await fetch(server.url!, { method: "HEAD" });
+    expect(headRes.status).toBe(206);
+    expect(headRes.headers.get("content-length")).toBe("10");
+    expect(headRes.headers.get("x-custom")).toBe("1");
+    expect((await headRes.arrayBuffer()).byteLength).toBe(0);
+
+    // A GET on the same server still streams the body.
+    const getRes = await fetch(server.url!);
+    expect(getRes.status).toBe(206);
+    expect(await getRes.text()).toBe("helloworld");
+    await server.close(true);
+  });
+
+  // statusText defaults to the spec's empty reason phrase, not Node's phrase.
+  test("statusText defaults to empty string, not Node's reason phrase", () => {
+    expect(new FastResponse("x", { status: 200 }).statusText).toBe("");
+    expect(new FastResponse("x", { status: 404 }).statusText).toBe("");
+    expect(new FastResponse("x", { status: 200, statusText: "Custom" }).statusText).toBe("Custom");
+  });
+
+  // An empty-string body still gets the implicit text content-type + length 0,
+  // matching native Response("").
+  test.skipIf(noBunCompat)(
+    "empty-string body keeps default content-type and content-length",
+    () => {
+      const { headers } = new FastResponse("")._toNodeResponse();
+      const pairs = headerPairs(headers);
+      expect(pairs).toContainEqual(["content-type", "text/plain; charset=UTF-8"]);
+      expect(pairs).toContainEqual(["content-length", "0"]);
+
+      // Sanity: a native Response agrees on the content-type.
+      expect(new Response("").headers.get("content-type")).toBe("text/plain;charset=UTF-8");
+    },
+  );
+
+  // text()/json() on a locked/disturbed body stream must reject, not throw
+  // synchronously.
+  test.skipIf(noBunCompat)(
+    "text() on a locked body stream rejects instead of throwing",
+    async () => {
+      let outcome = "unset";
+      const server = serve({
+        port: 0,
+        async fetch(req) {
+          // Disturb the body stream directly (bypassing srvx's own bodyUsed
+          // tracking) so text() hits the `new Response(stream)` path with a
+          // locked/disturbed stream.
+          const reader = req.body!.getReader();
+          await reader.cancel();
+          outcome = await req.text().then(
+            () => "resolved",
+            (error) => (error instanceof TypeError ? "TypeError" : "other-error"),
+          );
+          return new Response(outcome);
+        },
+      });
+      await server.ready();
+
+      const res = await fetch(server.url!, { method: "POST", body: "hello" });
+      expect(await res.text()).toBe("TypeError");
+      await server.close(true);
+    },
+  );
+
+  // A headers reference taken before `_request` materialization must stay live:
+  // `req.headers` keeps its identity and mutations through the old reference
+  // remain visible (https://github.com/h3js/srvx/issues/245).
+  test("headers reference stays live across _request materialization", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const h = req.headers;
+        // Force materialization of the underlying native Request.
+        void req._request;
+        h.set("x-added-after", "1");
+        return Response.json({
+          sameIdentity: req.headers === h,
+          viaGetter: req.headers.get("x-added-after"),
+          viaRef: h.get("x-added-after"),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(await res.json()).toEqual({
+      sameIdentity: true,
+      viaGetter: "1",
+      viaRef: "1",
+    });
+    await server.close(true);
+  });
+
+  // The dual of the identity test — the case that sank the #243 approach:
+  // after materialization there is a single header store, so mutations through
+  // `req.headers` must be visible to the native views (`_request.headers`,
+  // `clone()`, and `formData()`'s content-type sniff), and vice versa.
+  test("headers mutations after _request materialization reach both views", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        const native = req._request!; // materialize first
+        req.headers.set("x-via-wrapper", "1");
+        native.headers.set("x-via-native", "1");
+        return Response.json({
+          nativeSeesWrapperSet: native.headers.get("x-via-wrapper"),
+          cloneSeesWrapperSet: req.clone().headers.get("x-via-wrapper"),
+          wrapperSeesNativeSet: req.headers.get("x-via-native"),
+          preMaterializationHeader: native.headers.get("x-early"),
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, { headers: { "x-early": "yes" } });
+    expect(await res.json()).toEqual({
+      nativeSeesWrapperSet: "1",
+      cloneSeesWrapperSet: "1",
+      wrapperSeesNativeSet: "1",
+      preMaterializationHeader: "yes",
+    });
+    await server.close(true);
+  });
+
+  // formData() sniffs content-type off the native request; a content-type set
+  // via `req.headers` before the native Request exists must be honored.
+  test("formData() sees content-type set through req.headers", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        // Overwrite the incoming content-type before materialization.
+        req.headers.set("content-type", "application/x-www-form-urlencoded");
+        const form = await req.formData();
+        return Response.json({ value: form.get("a") });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "a=1",
+    });
+    expect(await res.json()).toEqual({ value: "1" });
+    await server.close(true);
+  });
+
+  // A synchronous send failure (e.g. an invalid header value hitting writeHead)
+  // must be logged for diagnostics (unless silenced) and returned as a bare 500
+  // without leaking details to the client.
+  test.skipIf(isDeno)("send error is logged and returns a bare 500", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = serve({
+      port: 0,
+      fetch() {
+        // An invalid header value throws synchronously inside writeHead().
+        return new FastResponse("body", { headers: [["x-bad", "bad\r\ninjected"]] });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe(""); // no error detail leaked to the client
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    await server.close(true);
+  });
+
+  test.skipIf(isDeno)("send error is not logged when the server is silent", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const server = serve({
+      port: 0,
+      silent: true,
+      fetch() {
+        return new FastResponse("body", { headers: [["x-bad", "bad\r\ninjected"]] });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(500);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    await server.close(true);
+  });
+
+  // The synthetic IncomingMessage built for the web->node bridge must expose
+  // httpVersion / rawHeaders (morgan's :http-version, keep-alive logic).
+  test.skipIf(noBridge)(
+    "synthetic IncomingMessage exposes httpVersion and rawHeaders",
+    async () => {
+      const handler: NodeHttp1Handler = (req, res) => {
+        const idx = req.rawHeaders.findIndex((h) => h.toLowerCase() === "x-test");
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            httpVersion: req.httpVersion,
+            major: req.httpVersionMajor,
+            minor: req.httpVersionMinor,
+            rawXTestValue: idx === -1 ? null : req.rawHeaders[idx + 1],
+          }),
+        );
+      };
+
+      const res = await fetchNodeHandler(
+        handler,
+        new Request("http://localhost/", { headers: { "x-test": "abc" } }),
+      );
+      expect(await res.json()).toMatchObject({
+        httpVersion: "1.1",
+        major: 1,
+        minor: 1,
+        rawXTestValue: "abc",
+      });
+    },
+  );
+});
+
+// Raw HTTP/1.1 helpers: write `payload`, collect every byte until the server
+// closes the connection (driven by a `Connection: close` on the last request).
+function rawExchange(port: number, host: string, payload: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, host);
+    const chunks: Buffer[] = [];
+    socket.on("data", (d: Buffer) => chunks.push(d));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(Buffer.concat(chunks)));
+    socket.on("connect", () => socket.write(payload));
+    setTimeout(() => {
+      socket.destroy();
+      reject(new Error("rawExchange timed out"));
+    }, 3000).unref?.();
+  });
+}
+
+// Minimal content-length-framed response parser (sufficient for these fixtures).
+function parseHttpResponses(buf: Buffer): { headers: string; body: Buffer }[] {
+  const responses: { headers: string; body: Buffer }[] = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const headerEnd = buf.indexOf("\r\n\r\n", offset);
+    if (headerEnd === -1) break;
+    const headers = buf.toString("latin1", offset, headerEnd);
+    const clMatch = /content-length:\s*(\d+)/i.exec(headers);
+    const bodyStart = headerEnd + 4;
+    const len = clMatch ? Number(clMatch[1]) : 0;
+    responses.push({ headers, body: buf.subarray(bodyStart, bodyStart + len) });
+    offset = bodyStart + len;
+  }
+  return responses;
+}

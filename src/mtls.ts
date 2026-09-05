@@ -49,7 +49,7 @@ declare module "srvx" {
     /**
      * TLS connection state, including the client (peer) certificate for mutual TLS.
      *
-     * Populated by the {@link mtls} plugin. `undefined` when the request was not served over TLS.
+     * Populated by the {@link mtlsPlugin}. `undefined` when the request was not served over TLS.
      */
     tls?: ServerRequestTLS | undefined;
   }
@@ -61,9 +61,9 @@ declare module "./types.ts" {
 }
 
 /**
- * Options for the {@link mtls} plugin.
+ * Options for the {@link mtlsPlugin}.
  */
-export interface MTLSOptions {
+export interface MTLSPluginOptions {
   /**
    * File path(s) or inlined CA certificate(s) in PEM format used to verify client certificates.
    *
@@ -103,7 +103,8 @@ export interface MTLSOptions {
  * `node:http(s)` server do not expose the peer certificate, so the plugin throws there
  * rather than silently doing nothing. It also requires the server to be configured for
  * TLS (`tls.cert` / `tls.key`) and throws otherwise, since mutual TLS cannot run over
- * plain HTTP.
+ * plain HTTP. A request that still reaches the plugin over a plain socket (TLS dropped
+ * after construction by an outer host) is answered with `496` rather than run.
  *
  * With the default `rejectUnauthorized: true`, unauthenticated clients are rejected
  * during the TLS handshake and never reach the `fetch` handler. Set it to `false` to
@@ -113,11 +114,11 @@ export interface MTLSOptions {
  * @example
  * ```js
  * import { serve } from "srvx/node";
- * import { mtls } from "srvx/mtls";
+ * import { mtlsPlugin } from "srvx/mtls";
  *
  * serve({
  *   tls: { cert, key },
- *   plugins: [mtls({ ca, requestCert: true, rejectUnauthorized: false })],
+ *   plugins: [mtlsPlugin({ ca, requestCert: true, rejectUnauthorized: false })],
  *   fetch: (request) => {
  *     if (!request.tls?.authorized) {
  *       return new Response("client certificate required", { status: 401 });
@@ -127,28 +128,29 @@ export interface MTLSOptions {
  * });
  * ```
  */
-export function mtls(options: MTLSOptions = {}): ServerPlugin {
+export function mtlsPlugin(options: MTLSPluginOptions = {}): ServerPlugin {
   return (server) => {
     // Only the Node.js adapter exposes the peer certificate. Fail loudly on anything
     // else instead of silently leaving `request.tls` empty in production.
     if (server.runtime !== "node") {
       throw new Error(
-        `[srvx] mtls() requires srvx's Node.js adapter (import { serve } from "srvx/node"). The "${server.runtime}" server cannot request or expose client certificates.`,
+        `[srvx] mtlsPlugin() requires srvx's Node.js adapter (import { serve } from "srvx/node"). The "${server.runtime}" server cannot request or expose client certificates.`,
       );
     }
     if ("Bun" in globalThis) {
       throw new Error(
-        "[srvx] mtls() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
+        "[srvx] mtlsPlugin() is not available on Bun: Bun does not expose the peer certificate to node:http(s) request handlers. See https://github.com/oven-sh/bun/issues/16254",
       );
     }
-    // Mutual TLS is meaningless without TLS.
-    if (
-      server.options.protocol === "http" ||
-      !server.options.tls?.cert ||
-      !server.options.tls?.key
-    ) {
+    // Mutual TLS is meaningless without TLS. The node adapter accepts cert/key
+    // either via `tls.cert/key` or directly through node server options
+    // (`node.cert/key`), so mirror that when deciding HTTP vs HTTPS.
+    const nodeOptions = server.options.node as { cert?: unknown; key?: unknown } | undefined;
+    const cert = server.options.tls?.cert ?? nodeOptions?.cert;
+    const key = server.options.tls?.key ?? nodeOptions?.key;
+    if (server.options.protocol === "http" || !cert || !key) {
       throw new Error(
-        "[srvx] mtls() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
+        "[srvx] mtlsPlugin() requires an HTTPS server: set `tls.cert` and `tls.key`. Mutual TLS cannot run over plain HTTP.",
       );
     }
 
@@ -159,7 +161,9 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
       ca = entries.map((entry) => {
         const resolved = resolveCertOrKey(entry);
         if (!resolved) {
-          throw new TypeError("mtls() `ca` entries must be non-empty PEM strings or file paths.");
+          throw new TypeError(
+            "mtlsPlugin() `ca` entries must be non-empty PEM strings or file paths.",
+          );
         }
         return resolved;
       });
@@ -178,16 +182,25 @@ export function mtls(options: MTLSOptions = {}): ServerPlugin {
     // Expose the peer certificate on each request from the raw TLS socket.
     server.options.middleware.unshift((request, next) => {
       const socket = request.runtime?.node?.req?.socket as TLS.TLSSocket | undefined;
-      // Plain (non-TLS) sockets have no `getPeerCertificate`.
-      if (socket && typeof socket.getPeerCertificate === "function") {
-        request.tls = {
-          peerCertificate: socket.getPeerCertificate(),
-          authorized: socket.authorized,
-          authorizationError: socket.authorizationError ?? undefined,
-          protocol: socket.getProtocol?.() ?? undefined,
-          cipher: socket.getCipher?.(),
-        };
+      // Plain (non-TLS) sockets have no `getPeerCertificate`. The HTTPS check above
+      // runs at construction time, so arriving here on a plain socket means the TLS
+      // configuration was dropped between construction and listen — e.g. by a host
+      // that re-serves this handler on a listener of its own. Fail closed: leaving
+      // `request.tls` undefined would hand an unauthenticated client the very
+      // handler the client certificate was meant to protect.
+      if (!socket || typeof socket.getPeerCertificate !== "function") {
+        return new Response("Client certificate required", {
+          status: 496, // nginx's "SSL Certificate Required"
+          headers: { "content-type": "text/plain; charset=UTF-8" },
+        });
       }
+      request.tls = {
+        peerCertificate: socket.getPeerCertificate(),
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError ?? undefined,
+        protocol: socket.getProtocol?.() ?? undefined,
+        cipher: socket.getCipher?.(),
+      };
       return next();
     });
   };

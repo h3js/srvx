@@ -55,7 +55,17 @@ export function withCluster(
     // Deno supports SO_REUSEPORT on Linux only (non-Linux runs a single
     // supervised worker that binds the port exclusively).
     const reusePort = !(IS_DENO && process.platform !== "linux");
-    const server = factory({ ...options, cluster: false, reusePort, silent: true });
+    const server = factory({
+      ...options,
+      cluster: false,
+      reusePort,
+      silent: true,
+      // Node workers get the listening handle from the `node:cluster` primary,
+      // so they only need a non-exclusive bind: asking for SO_REUSEPORT on top
+      // is pointless and throws ENOTSUP on platforms that reject it for the
+      // resolved address (e.g. `::1` on macOS).
+      ...(IS_BUN || IS_DENO ? undefined : { node: { ...options.node, reusePort: false } }),
+    });
     Promise.resolve(server.ready()).then(
       () => process.send?.({ srvx: "cluster-worker-ready", url: server.url }),
       (error) => {

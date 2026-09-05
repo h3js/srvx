@@ -1,5 +1,5 @@
 import type { BunFetchHandler, Server, ServerHandler, ServerOptions } from "../types.ts";
-import type * as bun from "bun";
+import type { BunServeOptions } from "../types/bun.ts";
 import {
   fmtURL,
   printListening,
@@ -26,7 +26,7 @@ class BunServer implements Server<BunFetchHandler> {
   readonly runtime = "bun";
   readonly options: Server["options"];
   readonly bun: Server["bun"] = {};
-  readonly serveOptions: bun.Serve.Options<any> | undefined;
+  readonly serveOptions: BunServeOptions | undefined;
   readonly fetch: BunFetchHandler;
   readonly waitUntil?: Server["waitUntil"];
 
@@ -88,12 +88,12 @@ class BunServer implements Server<BunFetchHandler> {
       ...(this.options.maxRequestBodySize !== undefined
         ? { maxRequestBodySize: this.options.maxRequestBodySize }
         : {}),
-      ...(this.options.bun as any),
+      ...this.options.bun,
       tls: {
         cert: tls?.cert,
         key: tls?.key,
         passphrase: tls?.passphrase,
-        ...(this.options.bun as bun.Serve.Options<any>)?.tls,
+        ...this.options.bun?.tls,
       },
       fetch: this.fetch,
     };
@@ -105,7 +105,10 @@ class BunServer implements Server<BunFetchHandler> {
 
   serve(): Promise<this> {
     if (!this.bun!.server) {
-      this.bun!.server = Bun.serve(this.serveOptions!);
+      // `BunServeOptions` is the open shape srvx accepts (see
+      // `src/types/README.md`); `Bun.serve` overloads on mutually exclusive
+      // tcp/unix variants that no single object type satisfies.
+      this.bun!.server = Bun.serve(this.serveOptions as Bun.Serve.Options<any>);
     }
     printListening(this.options, this.url);
     return Promise.resolve(this);

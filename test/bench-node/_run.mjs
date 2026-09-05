@@ -30,14 +30,14 @@ const release = process.argv.includes("--release");
 
 const names = [
   "node",
-  "srvx",
   "srvx-fast",
-  release && "srvx-release",
+  "whatwg-node-fast",
+  "hono-fast",
   release && "srvx-fast-release",
+  all && release && "srvx-release",
+  all && "srvx",
   all && "whatwg-node",
-  all && "whatwg-node-fast",
   all && "hono",
-  all && "hono-fast",
   all && "remix",
 ]
   .filter(Boolean)

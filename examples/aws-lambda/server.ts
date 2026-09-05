@@ -1,8 +1,8 @@
 import { toLambdaHandler } from "srvx/aws-lambda";
-import { serveStatic } from "srvx/static";
+import { staticMiddleware } from "srvx/static";
 
 export const handler = toLambdaHandler({
-  middleware: [serveStatic({ dir: "public" })],
+  middleware: [staticMiddleware({ dir: "public" })],
   fetch(req: Request) {
     return Response.json({ hello: "world!" });
   },

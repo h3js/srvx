@@ -1,6 +1,7 @@
 import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
 import { lazyInherit } from "../../_inherit.ts";
+import type { ResponseBody } from "../../types.ts";
 
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null
@@ -20,23 +21,25 @@ export interface PreparedNodeResponse {
  */
 export const NodeResponse: {
   new (
-    body?: BodyInit | null,
+    body?: ResponseBody | null,
     init?: ResponseInit,
   ): globalThis.Response & {
     _toNodeResponse: () => PreparedNodeResponse;
   };
+  json(
+    data: unknown,
+    init?: ResponseInit,
+  ): globalThis.Response & { _toNodeResponse: () => PreparedNodeResponse };
 } = /* @__PURE__ */ (() => {
   const NativeResponse = globalThis.Response;
 
-  const STATUS_CODES = globalThis.process?.getBuiltinModule?.("node:http")?.STATUS_CODES || {};
-
   class NodeResponse implements Partial<Response> {
-    #body?: BodyInit | null;
+    #body?: ResponseBody | null;
     #init?: ResponseInit;
     #headers?: Headers;
     #response?: globalThis.Response;
 
-    constructor(body?: BodyInit | null, init?: ResponseInit) {
+    constructor(body?: ResponseBody | null, init?: ResponseInit) {
       this.#body = body;
       this.#init = init;
     }
@@ -45,14 +48,34 @@ export const NodeResponse: {
       return val instanceof NativeResponse;
     }
 
+    static json(data: unknown, init?: ResponseInit) {
+      const body = JSON.stringify(data);
+      if (body === undefined) {
+        throw new TypeError("Value is not JSON serializable");
+      }
+      let headers = init?.headers;
+      if (!headers) {
+        headers = { "content-type": "application/json" };
+      } else {
+        const merged = new Headers(headers);
+        if (!merged.has("content-type")) {
+          merged.set("content-type", "application/json");
+        }
+        headers = merged;
+      }
+      return new NodeResponse(body, init ? { ...init, headers } : { headers });
+    }
+
     get status(): number {
       return this.#response?.status || this.#init?.status || 200;
     }
 
     get statusText(): string {
-      return (
-        this.#response?.statusText || this.#init?.statusText || STATUS_CODES[this.status] || ""
-      );
+      // Default to the spec's empty reason phrase (matching native `Response`,
+      // Bun and Deno) rather than Node's `STATUS_CODES` phrase (e.g. "OK").
+      // Node uses an explicit "" verbatim in `writeHead`, so the wire status
+      // line carries an empty reason phrase too (legal per RFC 9112).
+      return this.#response?.statusText || this.#init?.statusText || "";
     }
 
     get headers(): Headers {
@@ -62,9 +85,13 @@ export const NodeResponse: {
       if (this.#headers) {
         return this.#headers;
       }
-      const initHeaders = this.#init?.headers;
-      return (this.#headers =
-        initHeaders instanceof Headers ? initHeaders : new Headers(initHeaders));
+      // Copy the init headers instead of adopting the caller's instance, so that
+      // mutating `res.headers` can't leak back into a shared "template" Headers
+      // (CORS/security presets, per-route defaults), matching native `Response`.
+      // The copy is lazy: it only happens once someone reaches for `.headers`.
+      // The read-only path (`_toNodeResponse()`) iterates `#init.headers`
+      // directly and stays zero-copy.
+      return (this.#headers = new Headers(this.#init?.headers));
     }
 
     get ok(): boolean {
@@ -82,7 +109,7 @@ export const NodeResponse: {
 
       // Undici accepts standard Response body or async iterators (which Node Readable implements too).
       // Pipeable objects, like React's renderToPipeableStream, do not implement async iterators.
-      let body: BodyInit | null | undefined = this.#body;
+      let body: ResponseBody | null | undefined = this.#body;
       if (
         body &&
         typeof (body as unknown as NodeReadable).pipe === "function" &&
@@ -94,7 +121,7 @@ export const NodeResponse: {
         if (abort) {
           stream.once("close", () => abort());
         }
-        body = stream as unknown as BodyInit;
+        body = stream as unknown as ResponseBody;
       }
 
       this.#response = new NativeResponse(
@@ -119,7 +146,10 @@ export const NodeResponse: {
       let contentLength: string | number | undefined | null;
       if (this.#response) {
         body = this.#response.body;
-      } else if (this.#body) {
+      } else if (this.#body != null) {
+        // `!= null` (not a truthy check): an empty-string body is falsy but must
+        // still receive the implicit `text/plain` content-type and a
+        // `content-length: 0`, matching native `Response("")`.
         if (this.#body instanceof ReadableStream) {
           body = this.#body;
         } else if (typeof this.#body === "string") {
@@ -133,7 +163,11 @@ export const NodeResponse: {
           body = this.#body;
           contentLength = this.#body.byteLength;
         } else if (this.#body instanceof DataView) {
-          body = Buffer.from(this.#body.buffer);
+          // Only the view's window (byteOffset..byteOffset+byteLength) is part of
+          // the body. `Buffer.from(view.buffer)` would send the whole underlying
+          // ArrayBuffer while content-length is the view length — wrong bytes to
+          // the client and stray bytes left in a keep-alive connection.
+          body = Buffer.from(this.#body.buffer, this.#body.byteOffset, this.#body.byteLength);
           contentLength = this.#body.byteLength;
         } else if (this.#body instanceof Blob) {
           body = this.#body.stream();
@@ -183,7 +217,9 @@ export const NodeResponse: {
       if (contentType && !hasContentTypeHeader) {
         headers.push("content-type", contentType);
       }
-      if (contentLength && !hasContentLength) {
+      // `!= null` so a computed `content-length: 0` (e.g. an empty-string body)
+      // is emitted, matching native `Response`.
+      if (contentLength != null && !hasContentLength) {
         headers.push("content-length", String(contentLength));
       }
 

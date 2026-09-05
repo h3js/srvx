@@ -8,8 +8,8 @@ export function resolvePortAndHost(opts: ServerOptions): {
 } {
   const _port = opts.port ?? globalThis.process?.env.PORT ?? 3000;
   const port = typeof _port === "number" ? _port : Number.parseInt(_port, 10);
-  if (port < 0 || port > 65_535) {
-    throw new RangeError(`Port must be between 0 and 65535 (got "${port}").`);
+  if (Number.isNaN(port) || port < 0 || port > 65_535) {
+    throw new RangeError(`Port must be a number between 0 and 65535 (got "${_port}").`);
   }
 
   const hostname = opts.hostname ?? globalThis.process?.env.HOST;
@@ -139,16 +139,19 @@ export function createWaitUntil() {
   return {
     waitUntil: (promise: Promise<any> | PromiseLike<any>): void => {
       if (typeof promise?.then !== "function") return;
-      promises.add(
-        Promise.resolve(promise)
-          .catch(console.error)
-          .finally(() => {
-            promises.delete(promise);
-          }),
-      );
+      const chained = Promise.resolve(promise)
+        .catch(console.error)
+        .finally(() => {
+          promises.delete(chained);
+        });
+      promises.add(chained);
     },
     wait: (): Promise<any> => {
       return Promise.all(promises);
+    },
+    /** @internal Number of pending promises. Exposed for testing only. */
+    get _size(): number {
+      return promises.size;
     },
   };
 }

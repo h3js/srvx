@@ -1,4 +1,4 @@
-import type { ServerRequest, NodeHttpHandler } from "../../../types.ts";
+import type { ServerRequest, NodeHttpHandler, NodeHTTPMiddleware } from "../../../types.ts";
 
 import { WebIncomingMessage } from "./incoming.ts";
 import { WebRequestSocket } from "./socket.ts";
@@ -37,7 +37,32 @@ export async function fetchNodeHandler(
   const nodeRes = new WebServerResponse(nodeReq, socket);
 
   try {
-    await handler(nodeReq as any, nodeRes as any);
+    // Connect-style middleware `(req, res, next)` is invoked with a bridged
+    // `next` so it can signal completion or forward an error. Mirrors the
+    // arity-aware handling in `callNodeHandler` (used on the real-runtime path).
+    // A plain `(req, res)` handler keeps its original 2-arg invocation.
+    if (handler.length > 2) {
+      await new Promise<void>((resolve, reject) => {
+        nodeRes.once("finish", () => resolve());
+        nodeRes.once("close", () => resolve());
+        nodeRes.once("error", (error) => reject(error));
+        Promise.resolve(
+          (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
+            if (error) {
+              return reject(error);
+            }
+            // `next()` with no downstream handler: finalize the response so
+            // `toWebResponse()` can settle instead of waiting forever.
+            if (!nodeRes.writableEnded) {
+              nodeRes.end();
+            }
+            resolve();
+          }),
+        ).catch((error) => reject(error));
+      });
+    } else {
+      await handler(nodeReq as any, nodeRes as any);
+    }
     return await nodeRes.toWebResponse();
   } catch (error: any) {
     // Client aborts / premature socket closes are routine (the client is already

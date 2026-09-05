@@ -38,20 +38,82 @@ export function sendNodeResponse(
 export function sendNodeResponseDetached(
   nodeRes: NodeServerResponse,
   webRes: Response | NodeResponse,
+  silent?: boolean,
 ): Promise<void> | void {
   try {
     return _sendNodeResponse(nodeRes, webRes, true);
   } catch (error) {
-    handleSendError(nodeRes, error);
+    handleSendError(nodeRes, error, silent);
   }
 }
 
-function handleSendError(nodeRes: NodeServerResponse, _error: unknown): void {
+/** @internal */
+export function handleSendError(
+  nodeRes: NodeServerResponse,
+  error: unknown,
+  silent?: boolean,
+): void {
+  // A synchronous throw here is almost always a serialization bug (e.g. an
+  // invalid header name/value passed to `writeHead`). Without a diagnostic the
+  // client just sees a bare 500 with no way to trace the cause. Surface the
+  // underlying error on the server (unless silenced) while keeping the client
+  // response detail-free.
+  if (!silent) {
+    console.error("[srvx] Failed to send response:", error);
+  }
+  failResponse(nodeRes);
+}
+
+/**
+ * Answers an error that escaped the fetch handler with a bare 500.
+ *
+ * Bun and Deno both back their handler with a runtime-level catch that answers
+ * 500 and keeps serving; node:http has no equivalent, so an escaping error
+ * becomes a process-level `uncaughtException`/`unhandledRejection` (fatal for
+ * an unguarded process) and leaves the client socket hanging until it times
+ * out. Catching here keeps the default path consistent across runtimes.
+ *
+ * Mostly reached when no `error` option is set, since `errorPlugin` otherwise
+ * handles the error as middleware first — but it also backstops an `error`
+ * handler that throws itself.
+ *
+ * @internal
+ */
+export function sendErrorResponse(
+  nodeRes: NodeServerResponse,
+  error: unknown,
+  silent?: boolean,
+): void {
+  // Mirrors the Bun/Deno default of logging the cause server-side; the client
+  // response stays detail-free.
+  if (!silent) {
+    console.error("[srvx] Unhandled error in fetch handler:", error);
+  }
+  failResponse(nodeRes);
+}
+
+function failResponse(nodeRes: NodeServerResponse): void {
+  if (nodeRes.writableEnded) {
+    // Response already complete (e.g. the handler wrote directly to
+    // `req.runtime.node.res` and then failed) — nothing left to answer with.
+    return;
+  }
   if (nodeRes.headersSent) {
-    // Response already committed — the only recovery is to tear down the socket.
+    // Status line already committed — the only recovery is to tear down the socket.
     nodeRes.destroy();
   } else {
     nodeRes.statusCode = 500;
+    // `writeHead` assigns `statusMessage` *before* validating it, so a throw from
+    // an invalid reason phrase leaves the bad value behind on the response.
+    // `end()` re-enters `writeHead` via `_implicitHeader()`, so without this reset
+    // the recovery path throws the same error again -- out of the catch that was
+    // meant to contain it, and fatally (#290). Empty lets Node fill in the
+    // default phrase for the new status code.
+    // HTTP/2 has no reason phrase (touching `statusMessage` there only emits a
+    // process warning) and `writeHead` never sets one for it.
+    if (nodeRes.req?.httpVersion !== "2.0") {
+      nodeRes.statusMessage = "";
+    }
     nodeRes.end();
   }
 }
@@ -114,9 +176,30 @@ function writeHead(
       nodeRes.writeHead(status, rawHeaders);
     } else {
       // @ts-expect-error
-      nodeRes.writeHead(status, statusText, rawHeaders);
+      nodeRes.writeHead(status, safeStatusText(statusText), rawHeaders);
     }
   }
+}
+
+// Anything outside the chars Node accepts in a reason phrase (RFC 9110
+// `reason-phrase`, plus the deprecated `obs-text` range Node still allows).
+const INVALID_REASON_PHRASE_RE = /[^\t\u0020-\u007E\u0080-\u00FF]/g;
+
+/**
+ * Strips characters that are invalid in a status line reason phrase.
+ *
+ * `FastResponse` skips the `statusText` validation native `Response` does in its
+ * constructor (kept out for speed, see #262), so a CR/LF can reach the wire here.
+ * Node throws `ERR_INVALID_CHAR` for it -- fatally before #290 -- and runtimes
+ * that don't validate would emit a split response instead. Sanitize at the write
+ * boundary so neither is possible. Untouched for the common empty phrase.
+ */
+function safeStatusText(statusText: string): string {
+  // A non-string phrase is left alone: `writeHead` ignores it and fills in the
+  // default phrase for the status code.
+  return typeof statusText === "string" && statusText
+    ? statusText.replace(INVALID_REASON_PHRASE_RE, "")
+    : statusText;
 }
 
 function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
@@ -139,6 +222,22 @@ function pipeBody(
     return;
   }
 
+  // HEAD responses must carry no body. Node's write() is a no-op that always
+  // returns true for HEAD, so pipeline() never sees backpressure and drains an
+  // unbounded body (e.g. an SSE stream) as fast as it is produced, starving the
+  // event loop. Discard the source up front instead, mirroring streamBody.
+  // Headers are still deferred here, so write them before ending.
+  if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
+    if (typeof stream.destroy === "function") {
+      stream.destroy();
+    } else {
+      // Duck-typed pipe objects (e.g. React's PipeableStream) expose abort().
+      (stream as unknown as { abort?: () => void }).abort?.();
+    }
+    writeHead(nodeRes, status, statusText, headers);
+    return endNodeResponse(nodeRes);
+  }
+
   // Duck-typed pipe objects (e.g. React's PipeableStream) only have .pipe()
   // and don't support pipeline() — use the raw path.
   if (typeof stream.on !== "function" || typeof stream.destroy !== "function") {
@@ -159,14 +258,20 @@ function pipeBody(
   }
 
   return new Promise<void>((resolve) => {
-    function onEarlyError() {
+    // All three outcomes are terminal: whichever fires first detaches the others.
+    function cleanup() {
+      stream.off("error", onEarlyError);
       stream.off("readable", onReadable);
+      nodeRes.off("close", onResClose);
+    }
+    function onEarlyError() {
+      cleanup();
       stream.destroy();
       writeHead(nodeRes, 500, "Internal Server Error", []);
       (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     function onReadable() {
-      stream.off("error", onEarlyError);
+      cleanup();
       if (nodeRes.destroyed) {
         stream.destroy();
         return resolve();
@@ -176,8 +281,17 @@ function pipeBody(
         .catch(() => {})
         .then(() => resolve());
     }
+    // The client can vanish before the stream produces its first byte. Nothing
+    // else observes that here (`pipeline()` has not started yet), so the source
+    // — and whatever fd/socket backs it — would stay open forever.
+    function onResClose() {
+      cleanup();
+      stream.destroy();
+      resolve();
+    }
     stream.once("error", onEarlyError);
     stream.once("readable", onReadable);
+    nodeRes.once("close", onResClose);
   });
 }
 
@@ -187,8 +301,17 @@ export function streamBody(
 ): Promise<void> | void {
   // stream is already destroyed
   if (nodeRes.destroyed) {
-    stream.cancel();
+    stream.cancel().catch(() => {});
     return;
+  }
+
+  // HEAD responses must carry no body. Cancel the stream immediately instead of
+  // pumping it to completion — an unbounded body (e.g. an SSE stream) would
+  // otherwise pump forever. Headers are already written by the caller; just end
+  // the response. Matches Deno/Bun, which discard the body for HEAD.
+  if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
+    stream.cancel().catch(() => {});
+    return endNodeResponse(nodeRes);
   }
 
   const reader = stream.getReader();

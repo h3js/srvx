@@ -1,4 +1,5 @@
-import { describe, beforeAll, afterAll } from "vitest";
+import { connect as tlsConnect } from "node:tls";
+import { describe, beforeAll, afterAll, expect, test } from "vitest";
 import { fetch, Agent } from "undici";
 import { addTests } from "./_tests.ts";
 import { serve, FastResponse } from "../src/adapters/node.ts";
@@ -40,7 +41,7 @@ const testConfigs = [
 
 for (const config of testConfigs) {
   if ((isDeno || isBun) && config.http2) {
-    continue; // Not implemented yet in Deno, Bun fails somehow too!
+    continue; // Not implemented yet in Deno, Bun fails somehow too! (https://github.com/h3js/srvx/issues/237)
   }
   describe.sequential(`${runtime} (${config.name})`, () => {
     const client = getHttpClient(config.http2);
@@ -86,6 +87,59 @@ for (const config of testConfigs) {
     });
   });
 }
+
+// An absolute-form request target (RFC 9112 §3.2.2) must never define the
+// scheme: on a TLS listener a `http://...` target used to downgrade
+// `request.url` to `http:`, defeating handler secure-request checks.
+describe.skipIf(isDeno || isBun)(`${runtime} (absolute-form over TLS)`, () => {
+  let server: ReturnType<typeof serve> | undefined;
+
+  beforeAll(async () => {
+    server = serve({
+      port: 0,
+      tls: { cert: tls.cert, key: tls.key },
+      fetch: (request) => new Response(request.url),
+    });
+    await server!.ready();
+  });
+
+  afterAll(async () => {
+    await server!.close(true);
+  });
+
+  function rawTLS(requestLine: string): Promise<string> {
+    const address = server!.node!.server!.address() as { port: number };
+    return new Promise((resolve, reject) => {
+      const socket = tlsConnect(
+        { port: address.port, host: "127.0.0.1", rejectUnauthorized: false },
+        () => {
+          socket.write(`${requestLine}\r\nHost: good.example\r\nConnection: close\r\n\r\n`);
+        },
+      );
+      let data = "";
+      socket.on("data", (chunk) => {
+        data += chunk.toString();
+      });
+      socket.on("end", () => resolve(data));
+      socket.on("error", reject);
+      socket.setTimeout(3000, () => {
+        socket.destroy();
+        reject(new Error("socket timed out"));
+      });
+    });
+  }
+
+  test("origin-form keeps https:", async () => {
+    expect(await rawTLS("GET /foo HTTP/1.1")).toContain("https://good.example/foo");
+  });
+
+  test("an http: absolute-form target cannot downgrade request.url", async () => {
+    const response = await rawTLS("GET http://evil.example.com/x HTTP/1.1");
+    expect(response).toMatch(/^HTTP\/1\.1 200 /);
+    expect(response).toContain("https://evil.example.com/x");
+    expect(response).not.toContain("http://evil.example.com/x");
+  });
+});
 
 function getHttpClient(h2?: boolean) {
   if (!h2) {

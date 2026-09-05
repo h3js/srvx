@@ -19,6 +19,7 @@ jobs:
   tests_node:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22, 24, 26]
     steps:
@@ -27,7 +28,8 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: "${{ matrix.node-version }}", cache: pnpm }
       - run: pnpm install
-      - run: pnpm vitest --coverage test/node.test.ts test/node-adapters.test.ts test/url.test.ts test/tls-peer-cert.test.ts test/cluster.test.ts
+      - run: pnpm build
+      - run: pnpm vitest run --coverage --exclude '**/{deno,bun}*.test.ts' test/
       - uses: codecov/codecov-action@v3
         if: matrix.node-version == 24
         with:
@@ -44,9 +46,20 @@ jobs:
       # - uses: denoland/setup-deno@v2
       - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/download/v2.7.12/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
       - run: pnpm install
-      - run: pnpm vitest --coverage test/deno.test.ts test/url.test.ts test/cluster.test.ts
+      - run: pnpm vitest run --coverage test/deno.test.ts test/deno-max-body-size.test.ts test/url.test.ts test/cluster.test.ts
       - run: pnpm add -D undici@^7.25.0
       - run: deno run test:node-compat:deno
+  tests_deno_node_adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npm i -g --force corepack && corepack enable
+      - uses: actions/setup-node@v5
+        with: { node-version: lts/*, cache: pnpm }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - run: pnpm install
+      - run: deno run test:node-adapters:deno
   tests_bun:
     runs-on: ubuntu-latest
     steps:
@@ -56,12 +69,13 @@ jobs:
         with: { node-version: lts/*, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install
-      - run: pnpm vitest --coverage test/bun.test.ts test/url.test.ts test/cluster.test.ts
+      - run: pnpm vitest run --coverage test/bun.test.ts test/bun-max-body-size.test.ts test/url.test.ts test/cluster.test.ts
       - run: bun run test:node-compat:bun
+      - run: bun run test:node-adapters:bun
   publish:
     runs-on: ubuntu-latest
     permissions: { id-token: write, contents: read }
-    needs: [tests_common, tests_node, tests_deno, tests_bun]
+    needs: [tests_common, tests_node, tests_deno, tests_deno_node_adapters, tests_bun]
     if: contains('refs/heads/main', github.ref) && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v5
@@ -74,7 +88,7 @@ jobs:
       - run: npm i -g npm@latest && npm publish --tag latest
   publish-pkg-pr-new:
     runs-on: ubuntu-latest
-    needs: [tests_common, tests_node, tests_deno, tests_bun]
+    needs: [tests_common, tests_node, tests_deno, tests_deno_node_adapters, tests_bun]
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
