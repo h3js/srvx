@@ -52,19 +52,27 @@ export function withCluster(
 
   // Worker process: start a regular server on the shared port
   if (env[CLUSTER_WORKER_ENV]) {
-    // Deno supports SO_REUSEPORT on Linux only (non-Linux runs a single
-    // supervised worker that binds the port exclusively).
-    const reusePort = !(IS_DENO && process.platform !== "linux");
+    const isNodeRuntime = !IS_BUN && !IS_DENO;
+    // Bun and Deno workers bind the shared port themselves with SO_REUSEPORT.
+    // Deno supports it on Linux only (non-Linux runs a single supervised worker
+    // that binds the port exclusively).
+    const reusePort = !isNodeRuntime && !(IS_DENO && process.platform !== "linux");
     const server = factory({
       ...options,
       cluster: false,
       reusePort,
+      // A worker must start listening as soon as the supervisor spawns it: with
+      // `manual` left on it would report ready without ever accepting a request.
+      manual: false,
       silent: true,
       // Node workers get the listening handle from the `node:cluster` primary,
-      // so they only need a non-exclusive bind: asking for SO_REUSEPORT on top
-      // is pointless and throws ENOTSUP on platforms that reject it for the
-      // resolved address (e.g. `::1` on macOS).
-      ...(IS_BUN || IS_DENO ? undefined : { node: { ...options.node, reusePort: false } }),
+      // so the bind has to stay non-exclusive; SO_REUSEPORT on top is pointless
+      // and throws ENOTSUP on platforms that reject it for the resolved address
+      // (e.g. `::1` on macOS). Set explicitly so an entry's own `node` options
+      // cannot opt a worker out of the shared handle.
+      ...(isNodeRuntime
+        ? { node: { ...options.node, exclusive: false, reusePort: false } }
+        : undefined),
     });
     Promise.resolve(server.ready()).then(
       () => process.send?.({ srvx: "cluster-worker-ready", url: server.url }),
@@ -169,7 +177,7 @@ class ClusterServer implements Server {
 
       // SO_REUSEPORT load balancing is Linux-only for Bun/Deno: fall back to a
       // single supervised worker instead of spawning processes that would never
-      // receive connections (Node uses node:cluster round-robin on all platforms).
+      // receive connections (Node load balances via node:cluster on all platforms).
       if (process.platform !== "linux" && (IS_BUN || IS_DENO) && this.#size > 1) {
         this.#log(
           c.yellow,
@@ -329,7 +337,8 @@ class ClusterServer implements Server {
    * Forks a worker process that re-executes the current entry.
    *
    * Node workers are created with `node:cluster` so they share the listening
-   * handle (round-robin on all platforms). Bun and Deno workers are plain forks
+   * handle, which load balances on all platforms (round-robin except on Windows,
+   * where Node defaults to `SCHED_NONE`). Bun and Deno workers are plain forks
    * that bind the port themselves with `SO_REUSEPORT`.
    *
    * @param slot Worker slot index, exposed to the worker via `SRVX_CLUSTER_WORKER`.

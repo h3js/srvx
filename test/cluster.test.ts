@@ -116,7 +116,7 @@ function testClusterExec(cmd: string[], opts: { workers: number; lb: boolean }) 
 }
 
 describe("cluster (node, programmatic)", () => {
-  // node:cluster round-robin load balances on all platforms
+  // node:cluster load balances on all platforms (round-robin except on Windows)
   testClusterExec(["node", fixtureEntry], { workers: 2, lb: true });
 });
 

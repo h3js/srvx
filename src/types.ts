@@ -110,9 +110,10 @@ export interface ServerOptions {
    * Run multiple server processes sharing the same port (cluster mode).
    *
    * The main process becomes a small supervisor that spawns workers (re-executing the same entry),
-   * restarts them when they crash and forwards shutdown signals. Set to a number for an exact
+   * restarts them when they crash and forwards shutdown signals. Set to a positive integer for the
    * worker count, or `true` to read it from the `SRVX_WORKERS` environment variable (number of
-   * CPU cores when unset). `SRVX_WORKERS` alone also enables cluster mode; `false` disables it entirely.
+   * CPU cores when unset). `SRVX_WORKERS` alone also enables cluster mode; `false` (or `0`)
+   * disables it entirely.
    *
    * Worker processes can be detected via the `SRVX_CLUSTER_WORKER` environment variable (worker index, starting at `"0"`).
    *

@@ -109,7 +109,7 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
     server = srvxServe({
       ...serverOptions,
       gracefulShutdown: !!cliOpts.prod,
-      cluster: cliOpts.prod ? (cliOpts.cluster ?? serverOptions.cluster) : false,
+      cluster: cliOpts.prod ? (cliOpts.cluster ?? serverOptions.cluster ?? nested?.cluster) : false,
       port: cliOpts.port ?? serverOptions.port,
       hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
       tls,
