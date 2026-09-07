@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.3...v1.0.4)
+
+### 🩹 Fixes
+
+- **node:** Handle promises independently of the global constructor ([#303](https://github.com/h3js/srvx/pull/303))
+
+### ❤️ Contributors
+
+- Ben Snyder <ben@snyder.tech>
+
 ## v1.0.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.2...v1.0.3)
