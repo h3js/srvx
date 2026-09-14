@@ -43,7 +43,7 @@ for (const config of testConfigs) {
   if ((isDeno || isBun) && config.http2) {
     continue; // Not implemented yet in Deno, Bun fails somehow too! (https://github.com/h3js/srvx/issues/237)
   }
-  describe.sequential(`${runtime} (${config.name})`, () => {
+  describe(`${runtime} (${config.name})`, () => {
     const client = getHttpClient(config.http2);
     let server: ReturnType<typeof serve> | undefined;
 
