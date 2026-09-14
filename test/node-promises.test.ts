@@ -18,7 +18,8 @@ for (const adapter of ["serve", "toNodeHandler"] as const) {
         vi.stubGlobal("Promise", ReplacementPromise);
         const response = () =>
           kind === "non-callable-then"
-            ? Object.assign(new Response("ok"), { then: undefined })
+            ? // oxlint-disable-next-line unicorn/no-thenable -- non-callable `then` is the case under test
+              Object.assign(new Response("ok"), { then: undefined })
             : new Response("ok");
         const handler: FetchHandler =
           kind === "sync" || kind === "non-callable-then"
