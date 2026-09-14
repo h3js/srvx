@@ -42,7 +42,7 @@ export interface BunHttpServer {
   /** Publish a message to every client subscribed to `topic`. */
   publish(
     topic: string,
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Blob,
     compress?: boolean,
   ): number;
   subscriberCount(topic: string): number;
