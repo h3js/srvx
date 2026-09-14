@@ -43,11 +43,10 @@ describe("bunny adapter", () => {
     expect(serveSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("delegates waitUntil to Bunny.unstable.waitUntil", () => {
+  test("delegates waitUntil to Bunny.v1.waitUntil", () => {
     const waitUntilSpy = vi.fn();
     vi.stubGlobal("Bunny", {
-      v1: { serve: () => {} },
-      unstable: { waitUntil: waitUntilSpy },
+      v1: { serve: () => {}, waitUntil: waitUntilSpy },
     });
 
     const server = serve({ fetch: () => new Response("ok") });

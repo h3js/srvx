@@ -10,18 +10,15 @@ export const FastResponse: typeof globalThis.Response = Response;
 /**
  * Bunny global namespace types
  *
- * Source: https://github.com/BunnyWay/edge-script-sdk/blob/main/libs/bunny-sdk/types/bunny.d.ts
+ * Docs: https://bunny.net/docs/scripting/runtime
  *
  * @internal
  */
 declare namespace Bunny {
   export const v1: BunnySDKV1;
-  export const unstable: BunnySDKUnstable;
   type BunnySDKV1 = {
     serve: (handler: (request: Request) => MaybePromise<Response>) => void;
-  };
-  type BunnySDKUnstable = {
-    waitUntil(promise: Promise<unknown>): void;
+    waitUntil: (promise: Promise<unknown>) => void;
   };
 }
 
@@ -45,7 +42,7 @@ class BunnyServer implements Server {
     const fetchHandler = wrapFetch(this);
 
     const waitUntil = (this.waitUntil = (p: Promise<unknown>) =>
-      (globalThis as any).Bunny?.unstable?.waitUntil?.(p));
+      (globalThis as any).Bunny?.v1?.waitUntil?.(p));
 
     this.fetch = (request: Request) => {
       Object.defineProperties(request, {
