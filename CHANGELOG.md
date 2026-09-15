@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.0.5
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.4...v1.0.5)
+
+### 🩹 Fixes
+
+- **body-limit:** Export BodyTooLargeError class with HTTPError shape ([d0c8079](https://github.com/h3js/srvx/commit/d0c8079))
+
+### 💅 Refactors
+
+- **bunny:** Use stable `Bunny.v1.waitUntil` ([#304](https://github.com/h3js/srvx/pull/304))
+
+### 🏡 Chore
+
+- Update deps ([c8bd6f9](https://github.com/h3js/srvx/commit/c8bd6f9))
+- Fix lint issue ([3be9e84](https://github.com/h3js/srvx/commit/3be9e84))
+- Fix type issue ([b99e9c5](https://github.com/h3js/srvx/commit/b99e9c5))
+- Fix tests ([52df7c2](https://github.com/h3js/srvx/commit/52df7c2))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Sandro Circi ([@sandros94](https://github.com/sandros94))
+
+## v1.0.4
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.3...v1.0.4)
+
+### 🩹 Fixes
+
+- **node:** Handle promises independently of the global constructor ([#303](https://github.com/h3js/srvx/pull/303))
+
+### ❤️ Contributors
+
+- Ben Snyder <ben@snyder.tech>
+
 ## v1.0.3
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.2...v1.0.3)

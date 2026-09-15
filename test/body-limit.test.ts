@@ -1,5 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { createBodyTooLargeError, limitBodyStream, limitRequestBody } from "../src/body-limit.ts";
+import {
+  BodyTooLargeError,
+  createBodyTooLargeError,
+  limitBodyStream,
+  limitRequestBody,
+} from "../src/body-limit.ts";
 
 const encode = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -7,10 +12,33 @@ describe("createBodyTooLargeError", () => {
   test("carries the canonical 413 shape", () => {
     const error = createBodyTooLargeError(8);
     expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(BodyTooLargeError);
     expect(error.code).toBe("ERR_BODY_TOO_LARGE");
     expect(error.statusCode).toBe(413);
     expect(error.status).toBe(413);
     expect(error.message).toContain("8");
+  });
+
+  test("matches h3's HTTPError shape", () => {
+    const error = createBodyTooLargeError(8);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe("HTTPError");
+    expect(Object.keys(error)).not.toContain("name");
+    expect(Object.prototype.propertyIsEnumerable.call(error, "name")).toBe(false);
+    expect(typeof error.status).toBe("number");
+    expect(error.status).toBe(413);
+    expect(error.statusCode).toBe(413);
+    expect(error.statusText).toBe("Content Too Large");
+    expect(error.toJSON()).toStrictEqual({
+      status: 413,
+      statusText: "Content Too Large",
+      message: error.message,
+    });
+    expect(JSON.parse(JSON.stringify(error))).not.toHaveProperty("code");
+  });
+
+  test("returns a new instance on every call", () => {
+    expect(createBodyTooLargeError(8)).not.toBe(createBodyTooLargeError(8));
   });
 });
 

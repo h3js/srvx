@@ -7,7 +7,9 @@ export const errorPlugin: ServerPlugin = (server) => {
   server.options.middleware.unshift((_req, next) => {
     try {
       const res = next();
-      return res instanceof Promise ? res.catch((error) => errorHandler(error)) : res;
+      return typeof (res as Promise<Response>)?.then === "function"
+        ? (res as Promise<Response>).then(undefined, (error) => errorHandler(error))
+        : res;
     } catch (error) {
       return errorHandler(error);
     }

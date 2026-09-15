@@ -34,9 +34,9 @@ export function toNodeHandler(
       trustProxy: options?.trustProxy,
     });
     const res = handler(request);
-    return res instanceof Promise
-      ? res.then((resolvedRes) => send(nodeRes, resolvedRes))
-      : send(nodeRes, res);
+    return typeof (res as Promise<Response>)?.then === "function"
+      ? (res as Promise<Response>).then((resolvedRes) => send(nodeRes, resolvedRes))
+      : send(nodeRes, res as Response);
   }
 
   (convertedNodeHandler as AdapterMeta).__fetchHandler = handler;

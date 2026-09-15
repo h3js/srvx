@@ -204,17 +204,30 @@ const bodyReadMethods = /* @__PURE__ */ new Set([
  * The canonical error thrown when a request body exceeds `maxRequestBodySize`.
  *
  * It carries a stable, documented shape so any layer can map it to an HTTP
- * `413 Payload Too Large` response without string matching.
+ * `413 Content Too Large` response without string matching.
  *
  * @see https://srvx.h3.dev/guide/body-limit
  */
-export interface BodyTooLargeError extends Error {
+export class BodyTooLargeError extends Error {
   /** Stable machine-readable code. */
-  code: "ERR_BODY_TOO_LARGE";
+  code = "ERR_BODY_TOO_LARGE" as const;
   /** HTTP status to respond with. */
-  statusCode: 413;
+  statusCode = 413 as const;
   /** Alias of {@link statusCode}. */
-  status: 413;
+  status = 413 as const;
+  /** HTTP status text to respond with. */
+  statusText = "Content Too Large" as const;
+
+  /** Always `"HTTPError"`, so h3 handles it as an HTTP error. */
+  // Prototype getter (not a class field) so `name` isn't an own enumerable property.
+  override get name(): "HTTPError" {
+    return "HTTPError";
+  }
+
+  /** Client-safe JSON body (omits `code`). */
+  toJSON(): { status: 413; statusText: "Content Too Large"; message: string } {
+    return { status: this.status, statusText: this.statusText, message: this.message };
+  }
 }
 
 /**
@@ -238,15 +251,15 @@ export interface BodyLimitOptions {
 }
 
 /**
- * Creates the canonical {@link BodyTooLargeError | `413 Payload Too Large` error}
+ * Creates the canonical {@link BodyTooLargeError | `413 Content Too Large` error}
  * used across srvx when a request body exceeds the configured `maxRequestBodySize`.
  *
  * @see https://srvx.h3.dev/guide/body-limit
  */
 export function createBodyTooLargeError(maxRequestBodySize: number): BodyTooLargeError {
-  return Object.assign(
-    new Error(`Request body exceeds the maximum allowed size of ${maxRequestBodySize} bytes.`),
-    { code: "ERR_BODY_TOO_LARGE", statusCode: 413, status: 413 } as const,
+  // Always a fresh instance: errors carry a stack and can be mutated by consumers.
+  return new BodyTooLargeError(
+    `Request body exceeds the maximum allowed size of ${maxRequestBodySize} bytes.`,
   );
 }
 
