@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 import { describe, beforeAll, afterAll, expect, test } from "vitest";
 import { fetch, Agent } from "undici";
@@ -138,6 +140,30 @@ describe.skipIf(isDeno || isBun)(`${runtime} (absolute-form over TLS)`, () => {
     expect(response).toMatch(/^HTTP\/1\.1 200 /);
     expect(response).toContain("https://evil.example.com/x");
     expect(response).not.toContain("http://evil.example.com/x");
+  });
+});
+
+describe.skipIf(isDeno || isBun)(`${runtime} (node.path)`, () => {
+  const name = `srvx-test-${process.pid}`;
+  const path =
+    process.platform === "win32" ? `\\\\.\\pipe\\${name}` : join(tmpdir(), `${name}.sock`);
+  let server: ReturnType<typeof serve> | undefined;
+
+  beforeAll(async () => {
+    server = serve({ node: { path }, fetch: () => new Response("ok") });
+    await server!.ready();
+  });
+
+  afterAll(async () => {
+    await server!.close(true);
+  });
+
+  test("listens on a unix socket or named pipe", async () => {
+    expect(server!.url).toBe(path);
+    const agent = new Agent({ connect: { socketPath: path } });
+    const res = await fetch("http://localhost/", { dispatcher: agent });
+    expect(await res.text()).toBe("ok");
+    await agent.close();
   });
 });
 
