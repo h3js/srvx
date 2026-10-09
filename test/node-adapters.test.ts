@@ -651,7 +651,7 @@ describe("adapters", () => {
       res.writeHead(201, { "content-type": "text/plain" });
       res.end("middleware ok");
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(201);
     expect(await res.text()).toBe("middleware ok");
@@ -667,7 +667,7 @@ describe("adapters", () => {
       // No downstream handler: finalize with the current response state.
       next();
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const settled = await Promise.race([
       Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
         status: r.status,
@@ -689,7 +689,7 @@ describe("adapters", () => {
     ) => {
       next(error);
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     // Silence the expected error log from fetchNodeHandler's catch.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
@@ -704,7 +704,7 @@ describe("adapters", () => {
       _res: NodeServerResponse,
       _next: (error?: Error) => void,
     ) => Promise.reject(new Error("async boom"));
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(500);

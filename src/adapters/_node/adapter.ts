@@ -1,6 +1,7 @@
 import type {
   FetchHandler,
   NodeHttpHandler,
+  NodeHTTPMiddleware,
   NodeServerRequest,
   NodeServerResponse,
   ServerRequest,
@@ -62,13 +63,15 @@ function send(nodeRes: NodeServerResponse, webRes: Response): Promise<void> {
  *
  * @experimental Behavior might be unstable and won't work in Bun and Deno currently (tracker: https://github.com/h3js/srvx/issues/132)
  */
-export function toFetchHandler(handler: NodeHttpHandler & AdapterMeta): FetchHandler & AdapterMeta {
+export function toFetchHandler(
+  handler: (NodeHttpHandler | NodeHTTPMiddleware) & AdapterMeta,
+): FetchHandler & AdapterMeta {
   if (handler.__fetchHandler) {
     return handler.__fetchHandler;
   }
 
   function convertedNodeHandler(req: ServerRequest): Promise<Response> {
-    return fetchNodeHandler(handler as NodeHttpHandler, req);
+    return fetchNodeHandler(handler, req);
   }
 
   (convertedNodeHandler as AdapterMeta).__nodeHandler = handler as NodeHttpHandler;
