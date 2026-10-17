@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.0.6
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.5...v1.0.6)
+
+### 🩹 Fixes
+
+- **node:** Omit default `port`/`host` when `node.path` is set ([19b33f9](https://github.com/h3js/srvx/commit/19b33f9))
+- **generic:** Keep an existing `request.waitUntil` ([#309](https://github.com/h3js/srvx/pull/309))
+- **node:** Read a pre-set `rawBody` from every body method ([#312](https://github.com/h3js/srvx/pull/312))
+
+### 🏡 Chore
+
+- Update dependencies ([7872d26](https://github.com/h3js/srvx/commit/7872d26))
+
+### 🤖 CI
+
+- Update github actions ([3cf7b25](https://github.com/h3js/srvx/commit/3cf7b25))
+- Restore workflow formatting ([e59e62a](https://github.com/h3js/srvx/commit/e59e62a))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Nitedani
+- Kaan Çelebi
+
 ## v1.0.5
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.4...v1.0.5)
