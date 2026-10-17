@@ -116,6 +116,12 @@ beforeAll(async () => {
   await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
+  await writeFile(join(dir, "release#1.txt"), "HASH_NAME");
+  await writeFile(join(dir, "Q&A.txt"), "AMPERSAND_NAME");
+  await writeFile(join(dir, "release%231.txt"), "LITERAL_HASH_ESCAPE");
+  if (sep !== "\\") {
+    await writeFile(join(dir, "question?.txt"), "QUESTION_NAME");
+  }
 
   // Every unreserved punctuation character (RFC 3986 §2.3), in one name.
   await writeFile(join(dir, "a-b_c~d.txt"), "UNRESERVED_NAME");
@@ -1135,10 +1141,19 @@ describe("staticMiddleware", () => {
       ["/hello%20world.txt", "SPACE_NAME"],
       ["/caf%C3%A9.txt", "UNICODE_NAME"],
       ["/50%25.txt", "PERCENT_NAME"],
+      ["/release%231.txt", "HASH_NAME"],
+      ["/Q%26A.txt", "AMPERSAND_NAME"],
+      ["/release%25231.txt", "LITERAL_HASH_ESCAPE"],
     ])("decodes %s exactly once for the lookup", async (path, contents) => {
       const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
+    });
+
+    test.skipIf(sep === "\\")("decodes a question mark in a filename", async () => {
+      const res = await fetchStatic("/question%3f.txt?download=true");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("QUESTION_NAME");
     });
 
     test("serves unreserved characters at their unencoded URL", async () => {
