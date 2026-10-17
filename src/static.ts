@@ -383,7 +383,8 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       if (!identityStat) {
         continue;
       }
-      const contentType = COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream";
+      const contentType =
+        COMMON_MIME_TYPES[extname(filePath).toLowerCase()] || "application/octet-stream";
       // Keyed off the resolved type so `.htm` renders like `.html`.
       const renderHTML = contentType === "text/html" ? options.renderHTML : undefined;
       // Already-compressed types gain nothing from either path. `renderHTML`
