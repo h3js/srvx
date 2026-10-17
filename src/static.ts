@@ -131,6 +131,8 @@ const COMMON_MIME_TYPES: Record<string, string> = {
   ".mjs": "text/javascript",
   ".json": "application/json",
   ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".markdown": "text/markdown",
   ".xml": "application/xml",
   ".wasm": "application/wasm",
   ".gif": "image/gif",
