@@ -1,4 +1,7 @@
 import { connect as tlsConnect } from "node:tls";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, beforeAll, afterAll, expect, test } from "vitest";
 import { fetch, Agent } from "undici";
 import { addTests } from "./_tests.ts";
@@ -138,6 +141,30 @@ describe.skipIf(isDeno || isBun)(`${runtime} (absolute-form over TLS)`, () => {
     expect(response).toMatch(/^HTTP\/1\.1 200 /);
     expect(response).toContain("https://evil.example.com/x");
     expect(response).not.toContain("http://evil.example.com/x");
+  });
+});
+
+// `node.path` must win over the default `port` (https://github.com/h3js/srvx/issues/315)
+describe.skipIf(isDeno || isBun || process.platform === "win32")(`${runtime} (unix socket)`, () => {
+  test("listens on node.path instead of the default port", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "srvx-"));
+    const path = join(dir, "app.sock");
+    const server = serve({
+      node: { path },
+      fetch: () => new Response("ok"),
+    });
+    try {
+      await server.ready();
+      expect(server.url).toBe(path);
+      expect(server.node!.server!.address()).toBe(path);
+      const body = await fetch("http://localhost/", {
+        dispatcher: new Agent({ connect: { socketPath: path } }),
+      }).then((r) => r.text());
+      expect(body).toBe("ok");
+    } finally {
+      await server.close(true);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

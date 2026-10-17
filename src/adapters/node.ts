@@ -126,10 +126,20 @@ class NodeServer implements Server {
     this.waitUntil = this.#wait.waitUntil;
 
     const tls = resolveTLSOptions(this.options);
-    const { port, hostname: host } = resolvePortAndHost(this.options);
+    // `node.path` (unix socket / named pipe), `handle` or `fd` pick the listen
+    // target themselves. Node prefers `port` over `path` when both are given,
+    // so leave the `port`/`host` keys out entirely (`port: undefined` still
+    // means a random port to Node).
+    const nodeListen = this.options.node as { path?: string; handle?: unknown; fd?: number };
+    const hasListenTarget =
+      nodeListen?.path != null || nodeListen?.handle != null || nodeListen?.fd != null;
+    let portAndHost: { port: number; host: string | undefined } | undefined;
+    if (!hasListenTarget) {
+      const { port, hostname: host } = resolvePortAndHost(this.options);
+      portAndHost = { port, host };
+    }
     this.serveOptions = {
-      port,
-      host,
+      ...portAndHost,
       exclusive: !this.options.reusePort,
       // Enable SO_REUSEPORT for cross-process port sharing (Node >= 22.12).
       // Older Node versions ignore this option; unsupported platforms throw.
