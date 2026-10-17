@@ -830,6 +830,55 @@ describe("request signal", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  // "12345678" reads the same as text, JSON and a form's only key.
+  const rawBodyReaders = {
+    "text()": (req: Request) => req.text(),
+    "json()": (req: Request) => req.json().then(String),
+    "arrayBuffer()": (req: Request) => req.arrayBuffer().then((b) => new TextDecoder().decode(b)),
+    "bytes()": (req: Request) => req.bytes().then((b) => new TextDecoder().decode(b)),
+    "blob()": (req: Request) => req.blob().then((b) => b.text()),
+    "formData()": (req: Request) => req.formData().then((f) => [...f.keys()].join()),
+    body: (req: Request) => new Response(req.body).text(),
+  } as const;
+
+  for (const [name, read] of Object.entries(rawBodyReaders)) {
+    test(`should read a pre-drained rawBody via ${name} within maxRequestBodySize`, async () => {
+      const handler = toNodeHandler(
+        async (request) => {
+          try {
+            return new Response(await read(request));
+          } catch (error: any) {
+            return new Response(error.code ?? error.message, { status: error.statusCode ?? 500 });
+          }
+        },
+        { maxRequestBodySize: 8 },
+      );
+
+      const server = createServer(async (req: any, res) => {
+        const chunks: Buffer[] = [];
+        for await (const c of req) {
+          chunks.push(c);
+        }
+        req.rawBody = Buffer.concat(chunks);
+        handler(req, res as any);
+      });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+      const headers = { "content-type": "application/x-www-form-urlencoded" };
+
+      const res = await fetch(url, { method: "POST", headers, body: "12345678" });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("12345678");
+
+      const tooLarge = await fetch(url, { method: "POST", headers, body: "123456789" });
+      expect(tooLarge.status).toBe(413);
+      expect(await tooLarge.text()).toBe("ERR_BODY_TOO_LARGE");
+
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+  }
+
   // `IncomingMessage` is `autoDestroy`, so a fully read body leaves `req`
   // destroyed while the response is still open. Touching `signal` only *after*
   // the read is the order that catches a disconnect check keying off
