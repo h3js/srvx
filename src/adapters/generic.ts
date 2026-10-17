@@ -1,4 +1,4 @@
-import type { Server, ServerHandler, ServerOptions } from "../types.ts";
+import type { Server, ServerHandler, ServerOptions, ServerRequest } from "../types.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin } from "../_plugins.ts";
 import { createWaitUntil } from "../_utils.ts";
@@ -30,9 +30,12 @@ class GenericServer implements Server {
     const fetchHandler = wrapFetch(this as unknown as Server);
 
     this.fetch = (request: Request) => {
-      Object.defineProperties(request, {
-        waitUntil: { value: this.#wait.waitUntil },
-      });
+      // Keep the `waitUntil` of the platform (or an outer server) if the request already has one
+      if (typeof (request as ServerRequest).waitUntil !== "function") {
+        Object.defineProperties(request, {
+          waitUntil: { value: this.#wait.waitUntil },
+        });
+      }
       return Promise.resolve(fetchHandler(request));
     };
   }
