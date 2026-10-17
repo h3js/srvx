@@ -114,7 +114,14 @@ beforeAll(async () => {
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
 
   // Extensions whose MIME mapping is pinned below; the contents never matter.
-  for (const name of ["mod.wasm", "pic.avif", "song.mp3", "bundle.gz"]) {
+  for (const name of [
+    "mod.wasm",
+    "pic.avif",
+    "song.mp3",
+    "bundle.gz",
+    "readme.md",
+    "readme.markdown",
+  ]) {
     await writeFile(join(dir, name), "X");
   }
 
@@ -734,6 +741,8 @@ describe("staticMiddleware", () => {
       ["/index.html", "text/html; charset=utf-8"],
       ["/sub/inside.txt", "text/plain; charset=utf-8"],
       ["/app.js", "text/javascript; charset=utf-8"],
+      ["/readme.md", "text/markdown; charset=utf-8"],
+      ["/readme.markdown", "text/markdown; charset=utf-8"],
       // ...while non-text bytes have none to declare.
       ["/logo.png", "image/png"],
       ["/LICENSE", "application/octet-stream"],
