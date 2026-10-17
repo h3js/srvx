@@ -328,14 +328,11 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       path = path.replace(/\/+$/, "");
     }
     if (path.includes("%")) {
-      // Decode the wire encoding exactly once, or names a client must encode
-      // (`café.txt`) are unreachable. `decodeURI` (not `decodeURIComponent`)
-      // keeps `%2F`/`%3F`/`%23` encoded, so an encoded separator never becomes
-      // a separator. Containment does not rely on the pathname arriving
-      // normalized: `join()` + `startsWith(dir)` below re-check whatever
-      // reaches them, including dot segments that decoding surfaces.
+      // The query and fragment are already separated from this pathname.
+      // Preserve encoded slashes while decoding filename characters once.
+      // Containment and dotfile checks below also apply to decoded names.
       try {
-        path = decodeURI(path);
+        path = decodeURIComponent(path.replace(/%(2f)/gi, "%25$1"));
       } catch {
         // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static.
         return new FastResponse("Bad Request", { status: 400 });
