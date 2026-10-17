@@ -75,6 +75,41 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(request.headers.get("Authorization")).toBe("Bearer token123");
     });
 
+    test("should merge API Gateway v1 multi-value request headers", () => {
+      const v1Event: APIGatewayProxyEvent = {
+        httpMethod: "GET",
+        path: "/",
+        headers: {
+          Host: "example.com",
+          accept: "application/json",
+          "x-forwarded-for": "10.0.0.2",
+          cookie: "theme=dark",
+        },
+        multiValueHeaders: {
+          host: ["example.com"],
+          accept: ["text/html", "application/json", "text/html"],
+          "x-forwarded-for": ["10.0.0.1", "10.0.0.2"],
+          cookie: ["session=abc", "theme=dark"],
+        },
+        queryStringParameters: null,
+        multiValueQueryStringParameters: null,
+        body: null,
+        isBase64Encoded: false,
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.2" } } as any,
+        resource: "/",
+      };
+
+      const request = awsRequest(v1Event, createMockContext(), true);
+
+      expect(request.headers.get("host")).toBe("example.com");
+      expect(request.headers.get("accept")).toBe("text/html, application/json, text/html");
+      expect(request.headers.get("x-forwarded-for")).toBe("10.0.0.1, 10.0.0.2");
+      expect(request.headers.get("cookie")).toBe("session=abc; theme=dark");
+      expect(request.ip).toBe("10.0.0.1");
+    });
+
     test("should convert API Gateway v2 event to Request", () => {
       const v2Event: APIGatewayProxyEventV2 = {
         version: "2.0",
