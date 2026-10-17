@@ -4,7 +4,7 @@ import { lazyInherit } from "../../_inherit.ts";
 import type { ResponseBody } from "../../types.ts";
 
 // prettier-ignore
-export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null
+export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null;
 
 export interface PreparedNodeResponse {
   status: number;

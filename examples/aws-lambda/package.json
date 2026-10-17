@@ -7,7 +7,7 @@
   },
   "devDependencies": {
     "serverless": "^4",
-    "serverless-offline": "^14.4.0",
+    "serverless-offline": "^14.8.3",
     "srvx": "latest"
   }
 }

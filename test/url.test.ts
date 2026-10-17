@@ -15,7 +15,7 @@ const urlSettersTests = await import("./wpt/url_setters_tests.json", {
 // prettier-ignore
 type URLPropName =
 "pathname" | "search" | "origin" | "protocol" | "username" |
-"password" | "host" | "hostname" | "port" | "hash" | "href"
+"password" | "host" | "hostname" | "port" | "hash" | "href";
 
 // prettier-ignore
 const urlProps = [
