@@ -749,10 +749,13 @@ describe("adapters", () => {
     errorSpy.mockRestore();
     await new Promise<void>((resolve) => server.close(() => resolve()));
 
+    const errorHandler = (err: Error, req: any, res: any, next: any) =>
+      res.status(418).send(err.message);
     const app = express()
       .use(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler)
       .get("/next", (req, res) => res.send("next route"))
-      .use((err: Error, req: any, res: any, next: any) => res.status(418).send(err.message));
+      // The types reject an error handler, but untyped code that converts every middleware passes one.
+      .use(toNodeHandler(toFetchHandler(errorHandler as any)) as NodeHttp1Handler);
     const appServer = createServer(app);
     await new Promise<void>((resolve) => appServer.listen(0, resolve));
     const appUrl = `http://localhost:${(appServer.address() as AddressInfo).port}`;

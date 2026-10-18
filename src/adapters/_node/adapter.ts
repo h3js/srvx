@@ -76,7 +76,7 @@ export function toFetchHandler(
 
   // `node:http` calls a handler without `next`: answer the way `serve()` answers this middleware.
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
-    handler.length > 2
+    handler.length === 3
       ? (
           nodeReq: NodeServerRequest,
           nodeRes: NodeServerResponse,
