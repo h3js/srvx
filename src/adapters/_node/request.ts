@@ -280,7 +280,10 @@ export const NodeRequest: {
         // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
         let stream: ReadableStream | null = null;
         if (this.#hasBody() && !this.#bodyUsed) {
-          // A source with nothing left to give must not be wrapped: what a read
+          // A body already buffered on `req.rawBody` (e.g. by Google Cloud
+          // Functions, which drains the stream first) is served from it, as
+          // `#readBuffered()` does.
+          // Otherwise, a source with nothing left to give must not be wrapped: what a read
           // of the resulting stream does is entirely up to the Node version.
           // Node <= 25 handed back an already-cancelled (and therefore disturbed)
           // stream, so `new Request()` threw undici's "Response body object should
@@ -290,7 +293,11 @@ export const NodeRequest: {
           // zero-byte request — a silently truncated body, which is worse.
           // Serve a stream carrying the abort reason instead, so every read
           // (including through the native Request) rejects with it.
-          if (isBodySourceFinished(this.#req)) {
+          if ("rawBody" in this.#req && Buffer.isBuffer(this.#req.rawBody)) {
+            stream = Readable.toWeb(
+              Readable.from([this.#req.rawBody]),
+            ) as unknown as ReadableStream;
+          } else if (isBodySourceFinished(this.#req)) {
             stream = erroredStream(this.#bodyError());
           } else {
             stream = Readable.toWeb(

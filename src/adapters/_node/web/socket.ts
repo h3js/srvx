@@ -28,6 +28,7 @@ export class WebRequestSocket extends Duplex implements NodeSocket {
   connecting: boolean = false;
   pending: boolean = false;
   readyState: SocketReadyState = "open";
+  readonly server = null;
 
   remoteAddress: string = "";
   remoteFamily: string = "";

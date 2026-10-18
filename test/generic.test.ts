@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { serve } from "../src/adapters/generic.ts";
+import type { ServerRequest } from "../src/types.ts";
 
 describe("generic adapter", () => {
   test("serves a basic response via server.fetch", async () => {
@@ -28,6 +29,34 @@ describe("generic adapter", () => {
     });
     await server.fetch(new Request("http://localhost/"));
     expect(hadWaitUntil).toBe(true);
+  });
+
+  test("keeps an existing request.waitUntil", async () => {
+    const platformPromises: Promise<unknown>[] = [];
+    const platformWaitUntil = (promise: Promise<unknown>) => {
+      platformPromises.push(promise);
+    };
+    let seen: unknown;
+    const server = serve({
+      fetch: (req) => {
+        seen = req.waitUntil;
+        req.waitUntil!(Promise.resolve());
+        return new Response("ok");
+      },
+    });
+    const req = new Request("http://localhost/") as ServerRequest;
+    req.waitUntil = platformWaitUntil;
+    await server.fetch(req);
+    expect(seen).toBe(platformWaitUntil);
+    expect(req.waitUntil).toBe(platformWaitUntil);
+    expect(platformPromises).toHaveLength(1);
+  });
+
+  test("passes a request through nested generic servers", async () => {
+    const inner = serve({ fetch: () => new Response("inner") });
+    const outer = serve({ fetch: (req) => inner.fetch(req) });
+    const res = await outer.fetch(new Request("http://localhost/"));
+    expect(await res.text()).toBe("inner");
   });
 
   test("runs middleware", async () => {
