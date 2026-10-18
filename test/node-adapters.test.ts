@@ -713,7 +713,8 @@ describe("adapters", () => {
   });
 
   // `node:http` calls the round-tripped middleware without `next`, so it gets the
-  // `next` that `serve({ fetch: toFetchHandler(middleware) })` would give it.
+  // `next` that `serve({ fetch: toFetchHandler(middleware) })` would give it;
+  // Express passes its own `next`, which must reach the next route.
   test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
     const middleware = (
       req: NodeServerRequest,
@@ -747,6 +748,24 @@ describe("adapters", () => {
 
     errorSpy.mockRestore();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    const app = express()
+      .use(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler)
+      .get("/next", (req, res) => res.send("next route"))
+      .use((err: Error, req: any, res: any, next: any) => res.status(418).send(err.message));
+    const appServer = createServer(app);
+    await new Promise<void>((resolve) => appServer.listen(0, resolve));
+    const appUrl = `http://localhost:${(appServer.address() as AddressInfo).port}`;
+
+    const appNext = await fetch(`${appUrl}/next`);
+    expect(appNext.headers.get("x-mw")).toBe("1");
+    expect(await appNext.text()).toBe("next route");
+
+    const appError = await fetch(`${appUrl}/error`);
+    expect(appError.status).toBe(418);
+    expect(await appError.text()).toBe("boom");
+
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
   });
 });
 

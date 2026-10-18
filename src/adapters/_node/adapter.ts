@@ -74,17 +74,26 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // Node calls a handler without `next`: answer the way `serve()` answers this middleware.
+  // `node:http` calls a handler without `next`: answer the way `serve()` answers this middleware.
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
     handler.length > 2
-      ? (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
-          (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
-            if (error) {
-              sendErrorResponse(nodeRes, error);
-            } else {
-              nodeRes.end();
-            }
-          });
+      ? (
+          nodeReq: NodeServerRequest,
+          nodeRes: NodeServerResponse,
+          next?: (error?: Error) => void,
+        ) => {
+          (handler as NodeHTTPMiddleware)(
+            nodeReq as any,
+            nodeRes as any,
+            next ||
+              ((error) => {
+                if (error) {
+                  sendErrorResponse(nodeRes, error);
+                } else {
+                  nodeRes.end();
+                }
+              }),
+          );
         }
       : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
