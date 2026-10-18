@@ -729,6 +729,7 @@ describe("adapters", () => {
       res.setHeader("x-mw", "1");
       next(req.url === "/error" ? new Error("boom") : undefined);
     };
+    expect(toNodeHandler(toFetchHandler(middleware)).name).toBe(middleware.name);
     const server = createServer(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     const url = `http://localhost:${(server.address() as AddressInfo).port}`;

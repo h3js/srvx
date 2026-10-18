@@ -93,6 +93,7 @@ export function toFetchHandler(
         }),
     ) as void | Promise<void>;
   }
+  assignFnName(nodeMiddleware, handler, "");
 
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
     handler.length === 3 ? nodeMiddleware : (handler as NodeHttpHandler);
