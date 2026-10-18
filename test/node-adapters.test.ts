@@ -713,8 +713,9 @@ describe("adapters", () => {
   });
 
   // `node:http` calls the round-tripped middleware without `next`, so it gets one
-  // that answers `next()` with a 404, as at the end of a connect or Express stack;
-  // Express passes its own `next`, which must reach the next route.
+  // that ends the stack as connect's and Express's final handler do: `next()` answers
+  // 404 and `next(err)` the error's status; Express passes its own `next`, which must
+  // reach the next route.
   test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
     const middleware = (
       req: NodeServerRequest,
@@ -751,16 +752,27 @@ describe("adapters", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
 
     // An Express app is a 3-argument middleware too.
-    const helloApp = express().get("/hello", (req, res) => res.send("hello"));
+    const helloApp = express()
+      .get("/hello", (req, res) => res.send("hello"))
+      .get("/forbidden", () => {
+        throw Object.assign(new Error("forbidden"), { status: 403 });
+      })
+      .get("/throw", () => {
+        throw new Error("boom");
+      });
     const helloServer = createServer(toNodeHandler(toFetchHandler(helloApp)) as NodeHttp1Handler);
     await new Promise<void>((resolve) => helloServer.listen(0, resolve));
     const helloUrl = `http://localhost:${(helloServer.address() as AddressInfo).port}`;
+    const helloErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const hello = await fetch(`${helloUrl}/hello`);
     expect(hello.status).toBe(200);
     expect(await hello.text()).toBe("hello");
     expect((await fetch(`${helloUrl}/missing`)).status).toBe(404);
+    expect((await fetch(`${helloUrl}/forbidden`)).status).toBe(403);
+    expect((await fetch(`${helloUrl}/throw`)).status).toBe(500);
 
+    helloErrorSpy.mockRestore();
     await new Promise<void>((resolve) => helloServer.close(() => resolve()));
 
     const errorHandler = (err: Error, req: any, res: any, next: any) =>

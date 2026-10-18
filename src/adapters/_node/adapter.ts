@@ -9,7 +9,7 @@ import type {
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
-import { handleSendError, sendErrorResponse, sendNodeResponse } from "./send.ts";
+import { handleSendError, sendNextErrorResponse, sendNodeResponse } from "./send.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -74,7 +74,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // Without a caller's `next`, middleware gets one that answers `next()` with a 404, as connect does at the end of its stack, and `next(err)` with a 500; what it throws reaches the caller.
+  // Without a caller's `next`, middleware gets one that ends the stack as connect's and Express's final handler do (`next()` answers 404, `next(err)` the error's 4xx or 5xx status, else 500); what it throws reaches the caller.
   function nodeMiddleware(
     nodeReq: NodeServerRequest,
     nodeRes: NodeServerResponse,
@@ -86,7 +86,7 @@ export function toFetchHandler(
       next ||
         ((error) => {
           if (error) {
-            sendErrorResponse(nodeRes, error);
+            sendNextErrorResponse(nodeRes, error);
           } else {
             if (!nodeRes.headersSent) {
               nodeRes.statusCode = 404;
