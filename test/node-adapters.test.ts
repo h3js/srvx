@@ -711,6 +711,43 @@ describe("adapters", () => {
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
+
+  // `node:http` calls the round-tripped middleware without `next`, so it gets the
+  // `next` that `serve({ fetch: toFetchHandler(middleware) })` would give it.
+  test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
+    const middleware = (
+      req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      if (req.url === "/self") {
+        // @ts-expect-error http1/http2 union
+        res.writeHead(201, { "content-type": "text/plain" });
+        return res.end("middleware ok");
+      }
+      res.setHeader("x-mw", "1");
+      next(req.url === "/error" ? new Error("boom") : undefined);
+    };
+    const server = createServer(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const self = await fetch(`${url}/self`);
+    expect(self.status).toBe(201);
+    expect(await self.text()).toBe("middleware ok");
+
+    const next = await fetch(`${url}/next`);
+    expect(next.status).toBe(200);
+    expect(next.headers.get("x-mw")).toBe("1");
+
+    const error = await fetch(`${url}/error`);
+    expect(error.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
 });
 
 describe("request signal", () => {

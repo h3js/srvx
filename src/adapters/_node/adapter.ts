@@ -9,7 +9,7 @@ import type {
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
-import { handleSendError, sendNodeResponse } from "./send.ts";
+import { handleSendError, sendErrorResponse, sendNodeResponse } from "./send.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -74,7 +74,19 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  (convertedNodeHandler as AdapterMeta).__nodeHandler = handler as NodeHttpHandler;
+  // Node calls a handler without `next`: answer the way `serve()` answers this middleware.
+  (convertedNodeHandler as AdapterMeta).__nodeHandler =
+    handler.length > 2
+      ? (nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) => {
+          (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
+            if (error) {
+              sendErrorResponse(nodeRes, error);
+            } else {
+              nodeRes.end();
+            }
+          });
+        }
+      : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
 
   return convertedNodeHandler;
