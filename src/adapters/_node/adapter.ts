@@ -75,27 +75,27 @@ export function toFetchHandler(
   }
 
   // Without a caller's `next`, middleware gets one that answers `next()` and `next(err)` like `serve()`; what it throws reaches the caller.
+  function nodeMiddleware(
+    nodeReq: NodeServerRequest,
+    nodeRes: NodeServerResponse,
+    next?: (error?: Error) => void,
+  ) {
+    return (handler as NodeHTTPMiddleware)(
+      nodeReq as any,
+      nodeRes as any,
+      next ||
+        ((error) => {
+          if (error) {
+            sendErrorResponse(nodeRes, error);
+          } else {
+            nodeRes.end();
+          }
+        }),
+    ) as void | Promise<void>;
+  }
+
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
-    handler.length === 3
-      ? (
-          nodeReq: NodeServerRequest,
-          nodeRes: NodeServerResponse,
-          next?: (error?: Error) => void,
-        ) => {
-          return (handler as NodeHTTPMiddleware)(
-            nodeReq as any,
-            nodeRes as any,
-            next ||
-              ((error) => {
-                if (error) {
-                  sendErrorResponse(nodeRes, error);
-                } else {
-                  nodeRes.end();
-                }
-              }),
-          ) as void | Promise<void>;
-        }
-      : (handler as NodeHttpHandler);
+    handler.length === 3 ? nodeMiddleware : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
 
   return convertedNodeHandler;
