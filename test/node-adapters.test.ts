@@ -766,6 +766,28 @@ describe("adapters", () => {
     expect(await appError.text()).toBe("boom");
 
     await new Promise<void>((resolve) => appServer.close(() => resolve()));
+
+    // Express 5 sends a rejected promise from a handler to its error handler.
+    const asyncMiddleware = async (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      throw new Error("async boom");
+    };
+    const asyncApp = express()
+      .use(toNodeHandler(toFetchHandler(asyncMiddleware)) as NodeHttp1Handler)
+      .use((err: Error, req: any, res: any, next: any) => res.status(418).send(err.message));
+    const asyncServer = createServer(asyncApp);
+    await new Promise<void>((resolve) => asyncServer.listen(0, resolve));
+    const asyncRes = await fetch(
+      `http://localhost:${(asyncServer.address() as AddressInfo).port}/`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    expect(asyncRes.status).toBe(418);
+    expect(await asyncRes.text()).toBe("async boom");
+
+    await new Promise<void>((resolve) => asyncServer.close(() => resolve()));
   });
 });
 

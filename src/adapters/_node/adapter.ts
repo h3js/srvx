@@ -82,7 +82,7 @@ export function toFetchHandler(
           nodeRes: NodeServerResponse,
           next?: (error?: Error) => void,
         ) => {
-          (handler as NodeHTTPMiddleware)(
+          return (handler as NodeHTTPMiddleware)(
             nodeReq as any,
             nodeRes as any,
             next ||
@@ -93,7 +93,7 @@ export function toFetchHandler(
                   nodeRes.end();
                 }
               }),
-          );
+          ) as void | Promise<void>;
         }
       : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
