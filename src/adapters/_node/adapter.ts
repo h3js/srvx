@@ -74,7 +74,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // `node:http` calls a handler without `next`: answer the way `serve()` answers this middleware.
+  // Without a caller's `next`, middleware gets one that answers `next()` and `next(err)` like `serve()`; what it throws reaches the caller.
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
     handler.length === 3
       ? (
