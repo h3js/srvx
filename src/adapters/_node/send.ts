@@ -92,27 +92,7 @@ export function sendErrorResponse(
   failResponse(nodeRes);
 }
 
-/**
- * Answers `next(error)` at the end of a connect-style stack as connect's and
- * Express's final handler do: with the error's `status`, else its `statusCode`,
- * when that is a 4xx or 5xx code, else 500.
- *
- * @internal
- */
-export function sendNextErrorResponse(nodeRes: NodeServerResponse, error: unknown): void {
-  console.error("[srvx] Unhandled error in fetch handler:", error);
-  const { status, statusCode } = error as { status?: unknown; statusCode?: unknown };
-  failResponse(
-    nodeRes,
-    isErrorStatus(status) ? status : isErrorStatus(statusCode) ? statusCode : 500,
-  );
-}
-
-function isErrorStatus(status: unknown): status is number {
-  return typeof status === "number" && status >= 400 && status < 600;
-}
-
-function failResponse(nodeRes: NodeServerResponse, status = 500): void {
+function failResponse(nodeRes: NodeServerResponse): void {
   if (nodeRes.writableEnded) {
     // Response already complete (e.g. the handler wrote directly to
     // `req.runtime.node.res` and then failed) — nothing left to answer with.
@@ -122,7 +102,7 @@ function failResponse(nodeRes: NodeServerResponse, status = 500): void {
     // Status line already committed — the only recovery is to tear down the socket.
     nodeRes.destroy();
   } else {
-    nodeRes.statusCode = status;
+    nodeRes.statusCode = 500;
     // `writeHead` assigns `statusMessage` *before* validating it, so a throw from
     // an invalid reason phrase leaves the bad value behind on the response.
     // `end()` re-enters `writeHead` via `_implicitHeader()`, so without this reset

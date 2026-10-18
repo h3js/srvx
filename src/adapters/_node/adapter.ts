@@ -9,7 +9,7 @@ import type {
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
-import { handleSendError, sendNextErrorResponse, sendNodeResponse } from "./send.ts";
+import { handleSendError, sendErrorResponse, sendNodeResponse } from "./send.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -74,7 +74,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // Without a caller's `next`, middleware gets one that ends the stack as connect's and Express's final handler do (`next()` answers 404, `next(err)` the error's 4xx or 5xx status, else 500); what it throws reaches the caller.
+  // A connect or Express app (`app.handle`) comes back as is, since its own final handler ends the stack; other middleware gets the caller's `next`, else one where `next()` answers 404 and `next(err)` 500.
   function nodeMiddleware(
     nodeReq: NodeServerRequest,
     nodeRes: NodeServerResponse,
@@ -86,7 +86,7 @@ export function toFetchHandler(
       next ||
         ((error) => {
           if (error) {
-            sendNextErrorResponse(nodeRes, error);
+            sendErrorResponse(nodeRes, error);
           } else {
             if (!nodeRes.headersSent) {
               nodeRes.statusCode = 404;
@@ -99,7 +99,9 @@ export function toFetchHandler(
   assignFnName(nodeMiddleware, handler, "");
 
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
-    handler.length === 3 ? nodeMiddleware : (handler as NodeHttpHandler);
+    handler.length === 3 && typeof (handler as { handle?: unknown }).handle !== "function"
+      ? nodeMiddleware
+      : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
 
   return convertedNodeHandler;
