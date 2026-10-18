@@ -74,7 +74,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // Without a caller's `next`, middleware gets one that answers `next()` and `next(err)` like `serve()`; what it throws reaches the caller.
+  // Without a caller's `next`, middleware gets one that answers `next()` with a 404, as connect does at the end of its stack, and `next(err)` with a 500; what it throws reaches the caller.
   function nodeMiddleware(
     nodeReq: NodeServerRequest,
     nodeRes: NodeServerResponse,
@@ -88,6 +88,9 @@ export function toFetchHandler(
           if (error) {
             sendErrorResponse(nodeRes, error);
           } else {
+            if (!nodeRes.headersSent) {
+              nodeRes.statusCode = 404;
+            }
             nodeRes.end();
           }
         }),

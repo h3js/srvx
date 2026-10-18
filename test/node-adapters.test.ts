@@ -712,8 +712,8 @@ describe("adapters", () => {
     errorSpy.mockRestore();
   });
 
-  // `node:http` calls the round-tripped middleware without `next`, so it gets the
-  // `next` that `serve({ fetch: toFetchHandler(middleware) })` would give it;
+  // `node:http` calls the round-tripped middleware without `next`, so it gets one
+  // that answers `next()` with a 404, as at the end of a connect or Express stack;
   // Express passes its own `next`, which must reach the next route.
   test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
     const middleware = (
@@ -740,7 +740,7 @@ describe("adapters", () => {
     expect(await self.text()).toBe("middleware ok");
 
     const next = await fetch(`${url}/next`);
-    expect(next.status).toBe(200);
+    expect(next.status).toBe(404);
     expect(next.headers.get("x-mw")).toBe("1");
 
     const error = await fetch(`${url}/error`);
@@ -749,6 +749,19 @@ describe("adapters", () => {
 
     errorSpy.mockRestore();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    // An Express app is a 3-argument middleware too.
+    const helloApp = express().get("/hello", (req, res) => res.send("hello"));
+    const helloServer = createServer(toNodeHandler(toFetchHandler(helloApp)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => helloServer.listen(0, resolve));
+    const helloUrl = `http://localhost:${(helloServer.address() as AddressInfo).port}`;
+
+    const hello = await fetch(`${helloUrl}/hello`);
+    expect(hello.status).toBe(200);
+    expect(await hello.text()).toBe("hello");
+    expect((await fetch(`${helloUrl}/missing`)).status).toBe(404);
+
+    await new Promise<void>((resolve) => helloServer.close(() => resolve()));
 
     const errorHandler = (err: Error, req: any, res: any, next: any) =>
       res.status(418).send(err.message);
