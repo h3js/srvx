@@ -78,7 +78,7 @@ class BunServer implements Server<BunFetchHandler> {
 
     const tls = resolveTLSOptions(this.options);
     this.serveOptions = {
-      ...resolvePortAndHost(this.options),
+      ...(this.options.unix ? { unix: this.options.unix } : resolvePortAndHost(this.options)),
       reusePort: this.options.reusePort,
       error: this.options.error,
       // Forward `maxRequestBodySize` to Bun's native serve option (Bun enforces it,
@@ -119,8 +119,12 @@ class BunServer implements Server<BunFetchHandler> {
       return;
     }
     // Prefer address since server.url hostname is not reliable
-    const address = (server as { address?: { address: string; family: string; port: number } })
-      .address;
+    const address = (
+      server as { address?: string | { address: string; family: string; port: number } }
+    ).address;
+    if (typeof address === "string") {
+      return address; // unix socket (same as node)
+    }
     if (address) {
       return fmtURL(address.address, address.port, (server as any).protocol === "https");
     }

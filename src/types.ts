@@ -100,6 +100,13 @@ export interface ServerOptions {
   hostname?: string;
 
   /**
+   * Unix domain socket path to listen on instead of `port`/`hostname`.
+   *
+   * See https://srvx.h3.dev/guide/options#unix
+   */
+  unix?: string;
+
+  /**
    * Enabling this option allows multiple processes to bind to the same port, which is useful for load balancing.
    *
    * **Note:** Despite Node.js built-in behavior that has `exclusive` flag (opposite of `reusePort`) enabled by default, srvx uses non-exclusive mode for consistency.

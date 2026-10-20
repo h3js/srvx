@@ -22,6 +22,8 @@ export function serve(options: ServerOptions): DenoServer {
 
 // https://docs.deno.com/api/deno/~/Deno.serve
 
+type DenoListenInfo = { hostname: string; port: number; path?: string };
+
 class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
   readonly options: Server["options"];
@@ -31,7 +33,8 @@ class DenoServer implements Server<DenoFetchHandler> {
   readonly waitUntil?: Server["waitUntil"];
 
   #listeningPromise?: Promise<void>;
-  #listeningInfo?: { hostname: string; port: number };
+  // Deno passes `{ transport: "unix", path }` instead when listening on a unix socket.
+  #listeningInfo?: DenoListenInfo;
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
 
@@ -59,7 +62,13 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.waitUntil = this.#wait.waitUntil;
 
     const maxRequestBodySize = this.options.maxRequestBodySize;
+    const isUnix = !!(this.options.deno?.path ?? this.options.unix);
     this.fetch = (request, info) => {
+      // On a unix socket Deno builds `http+unix://` request URLs (a non-special
+      // scheme, so `origin` is "null"); normalize to `http:` like Node and Bun.
+      if (isUnix && request.url.startsWith("http+unix:")) {
+        request = new Request(`http:${request.url.slice(10)}`, request);
+      }
       // Deno.serve has no native body-size option, so enforce it here by
       // rebuilding the request with a size-limited body stream (no-op when unset
       // or bodyless, keeping the default hot path allocation-free).
@@ -89,12 +98,19 @@ class DenoServer implements Server<DenoFetchHandler> {
 
     const tls = resolveTLSOptions(this.options);
     this.serveOptions = {
-      ...resolvePortAndHost(this.options),
+      ...(this.options.unix
+        ? { path: this.options.unix, transport: "unix" as const }
+        : resolvePortAndHost(this.options)),
       reusePort: this.options.reusePort,
       onError: this.options.error,
       ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
       ...this.options.deno,
     };
+    // Deno.serve silently ignores `cert`/`key` on a unix socket and serves
+    // plaintext; refuse instead of downgrading.
+    if (this.serveOptions.path && this.serveOptions.cert) {
+      throw new TypeError("TLS is not supported on unix sockets in Deno.");
+    }
 
     if (!options.manual) {
       this.serve();
@@ -109,8 +125,11 @@ class DenoServer implements Server<DenoFetchHandler> {
     this.#listeningPromise = onListenPromise.promise;
     this.deno!.server = Deno.serve(
       {
-        ...this.serveOptions,
-        onListen: (info: { hostname: string; port: number }) => {
+        // `DenoServeOptions` is the open shape srvx accepts (see
+        // `src/types/README.md`); `Deno.serve` overloads on mutually exclusive
+        // tcp/unix variants that no single object type satisfies.
+        ...(this.serveOptions as Deno.ServeTcpOptions),
+        onListen: (info: DenoListenInfo) => {
           this.#listeningInfo = info;
           if (this.options.deno?.onListen) {
             this.options.deno.onListen(info);
@@ -125,6 +144,9 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   get url(): string | undefined {
+    if (this.#listeningInfo?.path) {
+      return this.#listeningInfo.path; // unix socket (same as node)
+    }
     return this.#listeningInfo
       ? fmtURL(
           this.#listeningInfo.hostname,

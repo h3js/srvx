@@ -133,13 +133,17 @@ class NodeServer implements Server {
     const nodeListen = this.options.node as { path?: string; handle?: unknown; fd?: number };
     const hasListenTarget =
       nodeListen?.path != null || nodeListen?.handle != null || nodeListen?.fd != null;
-    let portAndHost: { port: number; host: string | undefined } | undefined;
+    let listenTarget: { path: string } | { port: number; host: string | undefined } | undefined;
     if (!hasListenTarget) {
-      const { port, hostname: host } = resolvePortAndHost(this.options);
-      portAndHost = { port, host };
+      if (this.options.unix) {
+        listenTarget = { path: this.options.unix };
+      } else {
+        const { port, hostname: host } = resolvePortAndHost(this.options);
+        listenTarget = { port, host };
+      }
     }
     this.serveOptions = {
-      ...portAndHost,
+      ...listenTarget,
       exclusive: !this.options.reusePort,
       // Enable SO_REUSEPORT for cross-process port sharing (Node >= 22.12).
       // Older Node versions ignore this option; unsupported platforms throw.
