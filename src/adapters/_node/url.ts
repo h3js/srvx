@@ -26,7 +26,8 @@ export class NodeRequestURL extends FastURL {
     if (host && !HOST_RE.test(host)) {
       host = "_invalid_";
     } else if (!host) {
-      if (req.socket) {
+      // Unix sockets have no local address.
+      if (req.socket?.localAddress) {
         host = `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
       } else {
         host = "localhost";
