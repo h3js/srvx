@@ -65,9 +65,20 @@ class DenoServer implements Server<DenoFetchHandler> {
     const isUnix = !!(this.options.deno?.path ?? this.options.unix);
     this.fetch = (request, info) => {
       // On a unix socket Deno builds `http+unix://` request URLs (a non-special
-      // scheme, so `origin` is "null"); normalize to `http:` like Node and Bun.
+      // scheme, so `origin` is "null"), and without a `Host` header it uses the
+      // percent-encoded socket path as the host. Normalize to `http://<host>`
+      // (or `localhost`, like Node). Overriding the property instead of
+      // rebuilding the request avoids a copy and Deno's `request.signal`
+      // legacy-behavior warning.
       if (isUnix && request.url.startsWith("http+unix:")) {
-        request = new Request(`http:${request.url.slice(10)}`, request);
+        const url = new URL(request.url);
+        const host = request.headers.get("host") ? url.host : "localhost";
+        Object.defineProperty(request, "url", {
+          enumerable: true,
+          // Configurable so the trustProxy plugin can override it.
+          configurable: true,
+          value: `http://${host}${url.pathname}${url.search}`,
+        });
       }
       // Deno.serve has no native body-size option, so enforce it here by
       // rebuilding the request with a size-limited body stream (no-op when unset

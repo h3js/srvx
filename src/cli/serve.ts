@@ -103,12 +103,28 @@ export async function cliServe(cliOpts: CLIOptions): Promise<void> {
         ? ({ ...nested?.node, ...serverOptions.node } as ServerOptions["node"])
         : undefined;
 
+    // A module `unix` socket yields to explicit `--port` / `--host` flags.
+    const cliHost = cliOpts.hostname ?? cliOpts.host;
+    const unix = cliOpts.port || cliHost ? undefined : serverOptions.unix;
+
+    // Without graceful shutdown (dev mode), a signal would kill the process
+    // before the socket file is removed and the `--watch` restart would fail
+    // with EADDRINUSE. Close the server first.
+    if (unix && !cliOpts.prod) {
+      for (const sig of ["SIGINT", "SIGTERM"] as const) {
+        process.once(sig, () => {
+          server?.close(true).finally(() => process.exit(0));
+        });
+      }
+    }
+
     printInfo(cliOpts, loaded);
     server = srvxServe({
       ...serverOptions,
       gracefulShutdown: !!cliOpts.prod,
       port: cliOpts.port ?? serverOptions.port,
-      hostname: cliOpts.hostname ?? cliOpts.host ?? serverOptions.hostname,
+      hostname: cliHost ?? serverOptions.hostname,
+      unix,
       tls,
       protocol,
       node: nodeOptions,

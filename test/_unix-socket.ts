@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -10,11 +11,21 @@ import { getTLSCert } from "./_utils.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
 
+function rawRequest(path: string, head: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(path, () => socket.end(head));
+    let out = "";
+    socket.on("data", (chunk) => (out += chunk.toString()));
+    socket.on("end", () => resolve(out));
+    socket.on("error", reject);
+  });
+}
+
 /**
  * Spawns `fixtures/unix-socket-server.ts` under the given runtime command and
  * asserts the `unix` option is mapped to the runtime's native unix socket listener.
  */
-export function unixSocketTests(cmd: string, opts: { tls: boolean }): void {
+export function unixSocketTests(cmd: string, opts: { tls: boolean; hostless: boolean }): void {
   let dir: string;
   let path: string;
   let childProc: ExecaRes | undefined;
@@ -63,12 +74,21 @@ export function unixSocketTests(cmd: string, opts: { tls: boolean }): void {
       body: "hi",
       dispatcher: new Agent({ connect: { socketPath: path } }),
     });
-    expect(await res.text()).toBe("ok http://localhost/foo hi");
+    expect(await res.text()).toBe("ok http://localhost/foo http://localhost hi");
+
+    if (opts.hostless) {
+      // Without a `Host` header the URL falls back to `localhost`.
+      expect(await rawRequest(path, "GET /bar?x=1 HTTP/1.0\r\n\r\n")).toMatch(
+        /^HTTP\/1\.[01] 200 [\s\S]*\r\n\r\nok http:\/\/localhost\/bar\?x=1 http:\/\/localhost$/,
+      );
+    }
 
     const closed = waitForLine(proc, "closed");
     proc.stdin!.write("close\n");
     await closed;
     expect(existsSync(path)).toBe(false);
+    // e.g. Deno's `request.signal` legacy-behavior warning
+    expect((await proc).stderr).toBe("");
   });
 
   if (opts.tls) {
@@ -80,7 +100,7 @@ export function unixSocketTests(cmd: string, opts: { tls: boolean }): void {
       const res = await fetch("https://localhost/", {
         dispatcher: new Agent({ connect: { socketPath: path, ca: tls.ca } }),
       });
-      expect(await res.text()).toBe("ok https://localhost/");
+      expect(await res.text()).toBe("ok https://localhost/ https://localhost");
     });
   } else {
     test("refuses TLS instead of serving plaintext", async () => {

@@ -11,7 +11,8 @@ const env = globalThis.process.env;
 const server = serve({
   unix: env.SOCKET_PATH,
   tls: env.TLS_CERT ? { cert: env.TLS_CERT, key: env.TLS_KEY } : undefined,
-  fetch: async (req) => new Response(`ok ${req.url} ${await req.text()}`.trim()),
+  fetch: async (req) =>
+    new Response(`ok ${req.url} ${new URL(req.url).origin} ${await req.text()}`.trim()),
 });
 
 await server.ready();
