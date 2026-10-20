@@ -42,24 +42,35 @@ export function resolveUnixSocket(opts: ServerOptions): string | undefined {
  * fails with "address in use". After such a failed listen, remove the file if
  * nothing accepts connections on it, so the caller can retry once.
  *
- * Returns `undefined` (caller rethrows `error`) when there is no socket file to
- * remove: no path, a Linux abstract socket (`\0`), a Windows named pipe, or a
- * missing path / regular file / directory, which are never touched. The promise
- * rejects with `error` when the socket may still be in use.
+ * Returns `undefined` (caller rethrows `error`) when the error is not "address
+ * in use" or there is no socket file to remove: no path, a Linux abstract socket
+ * (`\0`), a Windows named pipe, or a missing path / regular file / directory,
+ * which are never touched. The promise rejects with `error` when the socket may
+ * still be in use.
+ *
+ * Note: a live server whose accept backlog is full can also refuse connections
+ * (on Bun and macOS), and would then lose its socket path.
  */
 export function removeStaleSocket(
   path: string | undefined,
   error: unknown,
 ): Promise<void> | undefined {
-  if (!path || path[0] === "\0" || path.startsWith("\\\\")) {
+  if (
+    (error as { code?: string })?.code !== "EADDRINUSE" ||
+    !path ||
+    path[0] === "\0" ||
+    path.startsWith("\\\\")
+  ) {
     return;
   }
   const { lstatSync, unlinkSync } = process.getBuiltinModule("node:fs");
+  let stat: ReturnType<typeof lstatSync>;
   try {
-    if (!lstatSync(path).isSocket()) {
-      return;
-    }
+    stat = lstatSync(path);
   } catch {
+    return;
+  }
+  if (!stat.isSocket()) {
     return;
   }
   const { connect } = process.getBuiltinModule("node:net");
@@ -75,6 +86,11 @@ export function removeStaleSocket(
         return reject(error);
       }
       try {
+        // Another process may have replaced the stale file meanwhile.
+        const current = lstatSync(path);
+        if (current.ino !== stat.ino || current.dev !== stat.dev) {
+          return reject(error);
+        }
         unlinkSync(path);
         resolve();
       } catch {

@@ -24,7 +24,7 @@ export function serve(options: ServerOptions): DenoServer {
 
 // https://docs.deno.com/api/deno/~/Deno.serve
 
-type DenoListenInfo = { hostname: string; port: number; path?: string };
+type DenoListenInfo = { hostname: string; port: number; transport?: string; path?: string | null };
 
 class DenoServer implements Server<DenoFetchHandler> {
   readonly runtime = "deno";
@@ -169,8 +169,10 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   get url(): string | undefined {
-    if (this.#listeningInfo?.path) {
-      return this.#listeningInfo.path; // unix socket (same as node)
+    if (this.#listeningInfo?.transport === "unix") {
+      // unix socket (same as node). Deno < 2.9 reports `path: null` for
+      // abstract sockets, so fall back to the configured one.
+      return this.#listeningInfo.path || this.serveOptions?.path;
     }
     return this.#listeningInfo
       ? fmtURL(
