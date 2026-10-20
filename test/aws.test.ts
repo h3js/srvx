@@ -862,6 +862,34 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(awsRequest(event, createMockContext(), ["10.0.0.2"]).ip).toBe("1.2.3.4");
       });
 
+      test("drops the client port appended by the load balancer", () => {
+        const v4 = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "203.0.113.7:8080" },
+        });
+        expect(awsRequest(v4, createMockContext()).ip).toBe("203.0.113.7");
+        const v6 = albRequestEvent({
+          headers: {
+            host: "lb.elb.amazonaws.com",
+            "x-forwarded-for": "1.2.3.4, [2001:db8:85a3:8d3:1319:8a2e:370:7348]:8080",
+          },
+        });
+        expect(awsRequest(v6, createMockContext()).ip).toBe("2001:db8:85a3:8d3:1319:8a2e:370:7348");
+        const trusted = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "1.2.3.4, 10.0.0.2:443" },
+        });
+        expect(awsRequest(trusted, createMockContext(), ["10.0.0.2"]).ip).toBe("1.2.3.4");
+      });
+
+      test("keeps a bare IPv6 peer address intact", () => {
+        const event = albRequestEvent({
+          headers: {
+            host: "lb.elb.amazonaws.com",
+            "x-forwarded-for": "2001:db8::21f:5bff:febf:ce22:8a2e",
+          },
+        });
+        expect(awsRequest(event, createMockContext()).ip).toBe("2001:db8::21f:5bff:febf:ce22:8a2e");
+      });
+
       test("leaves request.ip undefined without X-Forwarded-For", () => {
         expect(awsRequest(albRequestEvent({}), createMockContext()).ip).toBeUndefined();
       });

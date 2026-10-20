@@ -46,9 +46,11 @@ export function awsRequest(
   // ALB events carry no `sourceIp`: the load balancer appends the address of the
   // client it accepted the connection from to `X-Forwarded-For` instead, so that
   // last entry is the gateway-verified peer and the rest is the forwarded chain.
+  // This relies on the ALB's default `append` mode for `X-Forwarded-For`; with
+  // `preserve` the header reaches the target unmodified (client-supplied).
   if (!sourceIp && isALBEvent(event) && forwardedFor) {
     const list = forwardedFor.split(",");
-    sourceIp = list.pop()!.trim() || undefined;
+    sourceIp = stripALBClientPort(list.pop()!.trim()) || undefined;
     forwardedFor = list.length > 0 ? list.join(",") : undefined;
   }
   const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
@@ -130,6 +132,18 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   const protocol = forwardedProto === "http" ? "http" : "https";
 
   return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
+}
+
+// With client port preservation (`routing.http.xff_client_port.enabled`) the ALB
+// appends `ip:port`, or `[ipv6]:port` for IPv6.
+function stripALBClientPort(entry: string): string {
+  if (entry.startsWith("[")) {
+    const end = entry.indexOf("]");
+    return end === -1 ? entry : entry.slice(1, end);
+  }
+  const colon = entry.indexOf(":");
+  // A single colon is `ipv4:port`; a bare IPv6 address has several
+  return colon !== -1 && colon === entry.lastIndexOf(":") ? entry.slice(0, colon) : entry;
 }
 
 function isALBEvent(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): boolean {
