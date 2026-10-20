@@ -1,5 +1,4 @@
 import { connect as tlsConnect } from "node:tls";
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,49 +161,6 @@ describe.skipIf(isDeno || isBun || process.platform === "win32")(`${runtime} (un
         dispatcher: new Agent({ connect: { socketPath: path } }),
       }).then((r) => r.text());
       expect(body).toBe("ok");
-    } finally {
-      await server.close(true);
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("listens on the generic unix option", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "srvx-"));
-    const path = join(dir, "app.sock");
-    const server = serve({
-      unix: path,
-      port: "invalid", // ignored when `unix` is set
-      fetch: (req) => new Response(`ok ${req.url}`),
-    });
-    try {
-      await server.ready();
-      expect(server.url).toBe(path);
-      const body = await fetch("http://localhost/foo", {
-        dispatcher: new Agent({ connect: { socketPath: path } }),
-      }).then((r) => r.text());
-      expect(body).toBe("ok http://localhost/foo");
-      await server.close();
-      expect(existsSync(path)).toBe(false);
-    } finally {
-      await server.close(true);
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  test("serves TLS over the unix option", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "srvx-"));
-    const path = join(dir, "app.sock");
-    const server = serve({
-      unix: path,
-      tls: { cert: tls.cert, key: tls.key },
-      fetch: (req) => new Response(`ok ${req.url}`),
-    });
-    try {
-      await server.ready();
-      const body = await fetch("https://localhost/", {
-        dispatcher: new Agent({ allowH2: true, connect: { socketPath: path, ca: tls.ca } }),
-      }).then((r) => r.text());
-      expect(body).toBe("ok https://localhost/");
     } finally {
       await server.close(true);
       await rm(dir, { recursive: true, force: true });

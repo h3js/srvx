@@ -7,6 +7,8 @@ import {
   resolvePortAndHost,
   resolveTLSOptions,
   toNativeResponse,
+  removeStaleSocket,
+  resolveUnixSocket,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
@@ -32,7 +34,7 @@ class DenoServer implements Server<DenoFetchHandler> {
   readonly fetch: DenoFetchHandler;
   readonly waitUntil?: Server["waitUntil"];
 
-  #listeningPromise?: Promise<void>;
+  #listeningPromise?: Promise<this>;
   // Deno passes `{ transport: "unix", path }` instead when listening on a unix socket.
   #listeningInfo?: DenoListenInfo;
 
@@ -108,10 +110,9 @@ class DenoServer implements Server<DenoFetchHandler> {
     };
 
     const tls = resolveTLSOptions(this.options);
+    const unix = resolveUnixSocket(this.options);
     this.serveOptions = {
-      ...(this.options.unix
-        ? { path: this.options.unix, transport: "unix" as const }
-        : resolvePortAndHost(this.options)),
+      ...(unix ? { path: unix, transport: "unix" as const } : resolvePortAndHost(this.options)),
       reusePort: this.options.reusePort,
       onError: this.options.error,
       ...(tls ? { key: tls.key, cert: tls.cert, passphrase: tls.passphrase } : {}),
@@ -129,11 +130,24 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   serve(): Promise<this> {
-    if (this.deno?.server) {
-      return Promise.resolve(this.#listeningPromise).then(() => this);
+    if (this.#listeningPromise) {
+      return this.#listeningPromise;
     }
-    const onListenPromise = Promise.withResolvers<void>();
-    this.#listeningPromise = onListenPromise.promise;
+    try {
+      this.#listeningPromise = this.#listen();
+    } catch (error) {
+      // A crashed process may have left the unix socket file behind.
+      const stale = removeStaleSocket(this.serveOptions?.path, error);
+      if (!stale) {
+        throw error;
+      }
+      this.#listeningPromise = stale.then(() => this.#listen());
+    }
+    return this.#listeningPromise;
+  }
+
+  #listen(): Promise<this> {
+    const onListenPromise = Promise.withResolvers<this>();
     this.deno!.server = Deno.serve(
       {
         // `DenoServeOptions` is the open shape srvx accepts (see
@@ -146,12 +160,12 @@ class DenoServer implements Server<DenoFetchHandler> {
             this.options.deno.onListen(info);
           }
           printListening(this.options, this.url);
-          onListenPromise.resolve();
+          onListenPromise.resolve(this);
         },
       },
       this.fetch,
     );
-    return Promise.resolve(this.#listeningPromise).then(() => this);
+    return onListenPromise.promise;
   }
 
   get url(): string | undefined {
@@ -168,7 +182,7 @@ class DenoServer implements Server<DenoFetchHandler> {
   }
 
   ready(): Promise<Server> {
-    return Promise.resolve(this.#listeningPromise).then(() => this);
+    return this.#listeningPromise ?? Promise.resolve(this);
   }
 
   async close(): Promise<void> {

@@ -100,11 +100,11 @@ export interface ServerOptions {
   hostname?: string;
 
   /**
-   * Unix domain socket path to listen on instead of `port`/`hostname`.
+   * Unix domain socket path to listen on instead of `port`/`hostname` (`true` for a random one).
    *
    * See https://srvx.h3.dev/guide/options#unix
    */
-  unix?: string;
+  unix?: string | boolean;
 
   /**
    * Enabling this option allows multiple processes to bind to the same port, which is useful for load balancing.

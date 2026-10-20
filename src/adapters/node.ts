@@ -7,6 +7,8 @@ import {
   printListening,
   resolvePortAndHost,
   createWaitUntil,
+  removeStaleSocket,
+  resolveUnixSocket,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { errorPlugin, gracefulShutdownPlugin } from "../_plugins.ts";
@@ -135,8 +137,9 @@ class NodeServer implements Server {
       nodeListen?.path != null || nodeListen?.handle != null || nodeListen?.fd != null;
     let listenTarget: { path: string } | { port: number; host: string | undefined } | undefined;
     if (!hasListenTarget) {
-      if (this.options.unix) {
-        listenTarget = { path: this.options.unix };
+      const unix = resolveUnixSocket(this.options);
+      if (unix) {
+        listenTarget = { path: unix };
       } else {
         const { port, hostname: host } = resolvePortAndHost(this.options);
         listenTarget = { port, host };
@@ -219,11 +222,26 @@ class NodeServer implements Server {
 
     this.#listenError = undefined;
     this.#listeningPromise = new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        server.off("listening", onListening);
+      let retried = false;
+
+      const fail = (error: Error) => {
         this.#listenError = error;
         this.#listeningPromise = undefined;
         reject(error);
+      };
+
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        // A crashed process may have left the unix socket file behind.
+        const stale = retried
+          ? undefined
+          : removeStaleSocket((this.serveOptions as { path?: string }).path, error);
+        if (stale) {
+          retried = true;
+          stale.then(listen, fail);
+          return;
+        }
+        fail(error);
       };
 
       const onListening = () => {
@@ -232,9 +250,13 @@ class NodeServer implements Server {
         resolve();
       };
 
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(this.serveOptions);
+      const listen = () => {
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(this.serveOptions);
+      };
+
+      listen();
     });
 
     return this.#listeningPromise.then(() => this);

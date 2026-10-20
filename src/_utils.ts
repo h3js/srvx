@@ -16,6 +16,74 @@ export function resolvePortAndHost(opts: ServerOptions): {
   return { port, hostname };
 }
 
+/**
+ * Resolve the `unix` option to a socket address. `true` picks a random one,
+ * like `port: 0`: a named pipe on Windows, an abstract socket on Linux (no file
+ * to clean up or go stale) and a file in the temp dir elsewhere.
+ */
+export function resolveUnixSocket(opts: ServerOptions): string | undefined {
+  if (opts.unix !== true) {
+    return opts.unix || undefined;
+  }
+  const name = `srvx-${process.pid}-${Math.random().toString(36).slice(2, 8)}.sock`;
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\${name}`;
+  }
+  if (process.platform === "linux") {
+    return `\0${name}`;
+  }
+  const { tmpdir } = process.getBuiltinModule("node:os");
+  return `${tmpdir()}/${name}`;
+}
+
+/**
+ * A unix socket file outlives a process that dies without closing its server
+ * (SIGKILL, OOM, a signal without graceful shutdown), and the next listen on it
+ * fails with "address in use". After such a failed listen, remove the file if
+ * nothing accepts connections on it, so the caller can retry once.
+ *
+ * Returns `undefined` (caller rethrows `error`) when there is no socket file to
+ * remove: no path, a Linux abstract socket (`\0`), a Windows named pipe, or a
+ * missing path / regular file / directory, which are never touched. The promise
+ * rejects with `error` when the socket may still be in use.
+ */
+export function removeStaleSocket(
+  path: string | undefined,
+  error: unknown,
+): Promise<void> | undefined {
+  if (!path || path[0] === "\0" || path.startsWith("\\\\")) {
+    return;
+  }
+  const { lstatSync, unlinkSync } = process.getBuiltinModule("node:fs");
+  try {
+    if (!lstatSync(path).isSocket()) {
+      return;
+    }
+  } catch {
+    return;
+  }
+  const { connect } = process.getBuiltinModule("node:net");
+  return new Promise<void>((resolve, reject) => {
+    const socket = connect(path);
+    socket.once("connect", () => {
+      socket.destroy();
+      reject(error);
+    });
+    socket.once("error", (connectError: Error & { code?: string }) => {
+      // Anything but "refused" (e.g. EACCES) may be a live socket: keep it.
+      if (connectError.code !== "ECONNREFUSED") {
+        return reject(error);
+      }
+      try {
+        unlinkSync(path);
+        resolve();
+      } catch {
+        reject(error);
+      }
+    });
+  });
+}
+
 export function fmtURL(
   host: string | undefined,
   port: number | undefined,
@@ -33,6 +101,11 @@ export function fmtURL(
 export function printListening(opts: ServerOptions, url: string | undefined): void {
   if (!url || (opts.silent ?? globalThis.process?.env?.TEST)) {
     return;
+  }
+
+  // Linux abstract unix socket: print as `@name` (like `ss`) instead of a NUL byte.
+  if (url[0] === "\0") {
+    url = `@${url.slice(1)}`;
   }
 
   let additionalInfo = "";
