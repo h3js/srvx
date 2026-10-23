@@ -3,6 +3,8 @@ import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from 
 import { lazyInherit } from "../../_inherit.ts";
 import type { ResponseBody } from "../../types.ts";
 
+const kNativeResponse = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
+
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null;
 
@@ -31,9 +33,11 @@ export const NodeResponse: {
     init?: ResponseInit,
   ): globalThis.Response & { _toNodeResponse: () => PreparedNodeResponse };
 } = /* @__PURE__ */ (() => {
-  const NativeResponse = globalThis.Response;
+  const NativeResponse = getNativeResponse();
 
   class NodeResponse implements Partial<Response> {
+    static _srvx = true;
+
     #body?: ResponseBody | null;
     #init?: ResponseInit;
     #headers?: Headers;
@@ -45,7 +49,13 @@ export const NodeResponse: {
     }
 
     static [Symbol.hasInstance](val: unknown) {
-      return val instanceof NativeResponse;
+      // Only widen the check for `NodeResponse` itself. Subclasses inherit this
+      // static, and when `NodeResponse` is installed as `globalThis.Response`,
+      // `class X extends Response {}` must not match every response.
+      if (this === NodeResponse) {
+        return val instanceof NativeResponse;
+      }
+      return Object.prototype.isPrototypeOf.call(this.prototype, val as object);
     }
 
     static json(data: unknown, init?: ResponseInit) {
@@ -247,3 +257,20 @@ export const NodeResponse: {
 })();
 
 export type NodeResponse = InstanceType<typeof NodeResponse>;
+
+/**
+ * Resolve the genuine native `Response` and cache it globally.
+ *
+ * Frameworks may install `NodeResponse` as `globalThis.Response`. If srvx is
+ * evaluated again after that (Vite module runner reload, a second srvx copy),
+ * capturing the global would wrap the previous `NodeResponse` instead of the
+ * native class, stacking a layer per reload. Reading the shared cache (and
+ * unwrapping any srvx class) keeps us on the real native Response.
+ */
+function getNativeResponse(): typeof globalThis.Response {
+  let R: any = (globalThis as any)[kNativeResponse] || globalThis.Response;
+  while (R?._srvx) {
+    R = Object.getPrototypeOf(R);
+  }
+  return ((globalThis as any)[kNativeResponse] ??= R);
+}
