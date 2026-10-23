@@ -10,12 +10,16 @@
  * receiver) and nests a layer per re-evaluation. Native `Request`, `Response`
  * and `Headers` are base classes in Node, Bun and Deno, so walking up to the
  * class whose parent is `Function.prototype` finds the native one regardless
- * of patch order.
+ * of patch order. (Polyfills with their own base class, e.g. node-fetch's
+ * `Body`, are not supported.)
  */
 export function getNativeClass<T>(key: symbol, current: T): T {
   let C: any = (globalThis as any)[key] || current;
   let P = Object.getPrototypeOf(C);
-  while (typeof P === "function" && P !== Function.prototype) {
+  // Checks `.prototype` rather than `P !== Function.prototype`: globals copied
+  // from another realm (vitest `vmThreads`, Jest's node environment) inherit
+  // from that realm's `Function.prototype`, which has no `.prototype`.
+  while (typeof P === "function" && P.prototype) {
     C = P;
     P = Object.getPrototypeOf(C);
   }

@@ -1,4 +1,15 @@
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { getNativeClass } from "../src/_inherit.ts";
+
+describe("getNativeClass", () => {
+  test("stops at a base class from another realm", () => {
+    const Foreign = runInNewContext("(class Response {})");
+    class Sub extends Foreign {}
+    expect(getNativeClass(Symbol(), Foreign)).toBe(Foreign);
+    expect(getNativeClass(Symbol(), Sub)).toBe(Foreign);
+  });
+});
 
 // Frameworks (e.g. Nitro) install `FastResponse` as `globalThis.Response` on Node.
 describe("FastResponse as global Response", () => {
