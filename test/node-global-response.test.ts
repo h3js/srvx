@@ -60,3 +60,50 @@ describe("FastResponse as global Response", () => {
     expect(Object.getPrototypeOf((new F2("x") as any)._response)).toBe(Native.prototype);
   });
 });
+
+// `@hono/node-server` replaces `globalThis.Request`/`Response` with lightweight
+// subclasses that lack some native members. srvx evaluated after that must still
+// wrap the native classes.
+describe("globals patched by @hono/node-server", () => {
+  const NativeRequest = globalThis.Request;
+  const NativeResponse = globalThis.Response;
+  const kNativeRequest = Symbol.for("srvx.nativeRequest");
+  const kNativeResponse = Symbol.for("srvx.nativeResponse");
+
+  afterEach(() => {
+    globalThis.Request = NativeRequest;
+    globalThis.Response = NativeResponse;
+    vi.resetModules();
+  });
+
+  test("srvx loaded after Hono wraps the native classes", async () => {
+    const { getRequestListener } = await import("@hono/node-server");
+    getRequestListener(() => new Response());
+    expect(globalThis.Request).not.toBe(NativeRequest);
+    expect(globalThis.Response).not.toBe(NativeResponse);
+
+    delete (globalThis as any)[kNativeRequest];
+    delete (globalThis as any)[kNativeResponse];
+    vi.resetModules();
+    const { serve, FastResponse } = await import("../src/adapters/node.ts");
+
+    expect(Object.getPrototypeOf(FastResponse)).toBe(NativeResponse);
+    expect(await new FastResponse("hi").bytes()).toEqual(new TextEncoder().encode("hi"));
+
+    const server = serve({
+      port: 0,
+      silent: true,
+      fetch: async (req) => {
+        const clone = req.clone();
+        return new FastResponse(`${req.cache}|${req.mode}|${await clone.text()}`);
+      },
+    });
+    try {
+      await server.ready();
+      const res = await fetch(server.url!, { method: "POST", body: "body" });
+      expect(await res.text()).toBe("default|cors|body");
+    } finally {
+      await server.close(true);
+    }
+  });
+});
