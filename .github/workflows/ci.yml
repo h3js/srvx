@@ -46,7 +46,7 @@ jobs:
       # - uses: denoland/setup-deno@v2
       - run: mkdir -p "$HOME/.deno/bin" && curl -fsSL https://github.com/denoland/deno/releases/download/v2.7.12/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip && unzip -q /tmp/deno.zip -d "$HOME/.deno/bin" && echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
       - run: pnpm install
-      - run: pnpm vitest run --coverage test/deno.test.ts test/deno-max-body-size.test.ts test/url.test.ts
+      - run: pnpm vitest run --coverage test/deno.test.ts test/deno-max-body-size.test.ts test/url.test.ts test/cluster.test.ts
       - run: pnpm add -D undici@^7.25.0
       - run: deno run test:node-compat:deno
   tests_deno_node_adapters:
@@ -69,7 +69,7 @@ jobs:
         with: { node-version: lts/*, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
       - run: pnpm install
-      - run: pnpm vitest run --coverage test/bun.test.ts test/bun-max-body-size.test.ts test/url.test.ts
+      - run: pnpm vitest run --coverage test/bun.test.ts test/bun-max-body-size.test.ts test/url.test.ts test/cluster.test.ts
       - run: bun run test:node-compat:bun
       - run: bun run test:node-adapters:bun
   publish:
