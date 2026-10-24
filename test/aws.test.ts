@@ -798,6 +798,108 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(urlOf(v1QueryEvent(null))).toBe("/x");
       });
     });
+
+    // ALB does not decode query parameters and has no `sourceIp`, see #314.
+    describe("ALB request (`requestContext.elb`)", () => {
+      const albRequestEvent = (fields: Record<string, unknown>) =>
+        ({
+          httpMethod: "GET",
+          path: "/x",
+          headers: { host: "lb.elb.amazonaws.com" },
+          body: null,
+          isBase64Encoded: false,
+          requestContext: {
+            elb: { targetGroupArn: "arn:aws:elasticloadbalancing:us-east-1:0:targetgroup/tg/1" },
+          },
+          ...fields,
+        }) as unknown as APIGatewayProxyEvent;
+
+      const urlOf = (event: APIGatewayProxyEvent) =>
+        awsRequest(event, createMockContext()).url.replace("https://lb.elb.amazonaws.com", "");
+
+      test("does not encode query parameters a second time", () => {
+        const request = awsRequest(
+          albRequestEvent({ queryStringParameters: { q: "a%20b", "x%26y": "1%3D2" } }),
+          createMockContext(),
+        );
+        expect(request.url).toBe("https://lb.elb.amazonaws.com/x?q=a%20b&x%26y=1%3D2");
+        const params = new URL(request.url).searchParams;
+        expect(params.get("q")).toBe("a b");
+        expect(params.get("x&y")).toBe("1=2");
+      });
+
+      test("does not encode multi-value query parameters a second time", () => {
+        expect(
+          urlOf(albRequestEvent({ multiValueQueryStringParameters: { tag: ["a%2Bb", "", "c"] } })),
+        ).toBe("/x?tag=a%2Bb&tag&tag=c");
+      });
+
+      test("escapes a raw `#` instead of starting a fragment", () => {
+        expect(urlOf(albRequestEvent({ queryStringParameters: { a: "1#2", b: "3" } }))).toBe(
+          "/x?a=1%232&b=3",
+        );
+      });
+
+      test("keeps valueless and empty-named params like v1 events", () => {
+        expect(urlOf(albRequestEvent({ queryStringParameters: { foo: "", "": "" } }))).toBe(
+          "/x?foo&=",
+        );
+        expect(urlOf(albRequestEvent({ queryStringParameters: {} }))).toBe("/x");
+      });
+
+      test("uses the X-Forwarded-For entry appended by the load balancer as request.ip", () => {
+        const event = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "6.6.6.6, 203.0.113.7" },
+        });
+        // The leftmost entry is client-supplied and must not be trusted by default.
+        expect(awsRequest(event, createMockContext()).ip).toBe("203.0.113.7");
+      });
+
+      test("walks the rest of the X-Forwarded-For chain when the peer is trusted", () => {
+        const event = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "1.2.3.4, 10.0.0.2" },
+        });
+        expect(awsRequest(event, createMockContext(), ["10.0.0.2"]).ip).toBe("1.2.3.4");
+      });
+
+      test("drops the client port appended by the load balancer", () => {
+        const v4 = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "203.0.113.7:8080" },
+        });
+        expect(awsRequest(v4, createMockContext()).ip).toBe("203.0.113.7");
+        const v6 = albRequestEvent({
+          headers: {
+            host: "lb.elb.amazonaws.com",
+            "x-forwarded-for": "1.2.3.4, [2001:db8:85a3:8d3:1319:8a2e:370:7348]:8080",
+          },
+        });
+        expect(awsRequest(v6, createMockContext()).ip).toBe("2001:db8:85a3:8d3:1319:8a2e:370:7348");
+        const trusted = albRequestEvent({
+          headers: { host: "lb.elb.amazonaws.com", "x-forwarded-for": "1.2.3.4, 10.0.0.2:443" },
+        });
+        expect(awsRequest(trusted, createMockContext(), ["10.0.0.2"]).ip).toBe("1.2.3.4");
+      });
+
+      test("keeps a bare IPv6 peer address intact", () => {
+        const event = albRequestEvent({
+          headers: {
+            host: "lb.elb.amazonaws.com",
+            "x-forwarded-for": "2001:db8::21f:5bff:febf:ce22:8a2e",
+          },
+        });
+        expect(awsRequest(event, createMockContext()).ip).toBe("2001:db8::21f:5bff:febf:ce22:8a2e");
+      });
+
+      test("leaves request.ip undefined without X-Forwarded-For", () => {
+        expect(awsRequest(albRequestEvent({}), createMockContext()).ip).toBeUndefined();
+      });
+
+      test("still encodes parsed query parameters of API Gateway v1 events", () => {
+        const event = albRequestEvent({ queryStringParameters: { q: "a b" } });
+        delete (event.requestContext as any).elb;
+        expect(urlOf(event)).toBe("/x?q=a+b");
+      });
+    });
   });
 
   describe("awsResponseHeaders", () => {
