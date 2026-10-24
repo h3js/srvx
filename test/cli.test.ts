@@ -2,10 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { execa, type Options as ExecaOptions } from "execa";
-import { getRandomPort, waitForPort } from "get-port-please";
+import { getRandomPort } from "get-port-please";
 import { fetch as undiciFetch, Agent } from "undici";
 import { getTLSCert } from "./_utils.ts";
 
@@ -38,6 +40,49 @@ function runCli(
   } as ExecaOptions);
 }
 
+function canConnect(port: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: "localhost", signal });
+    const finish = (connected: boolean) => {
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(100);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function waitForCli(port: number, child: ReturnType<typeof runCli>): Promise<void> {
+  const controller = new AbortController();
+  const exited = child.then(({ exitCode, signal }) => {
+    throw new Error(
+      `CLI exited with ${signal ? `signal ${signal}` : `code ${exitCode}`} before listening on port ${port}`,
+    );
+  });
+  const listening = async () => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      controller.signal.throwIfAborted();
+      if (await canConnect(port, controller.signal)) {
+        return;
+      }
+      await delay(50, undefined, { signal: controller.signal });
+    }
+    throw new Error(`Timeout waiting for CLI on port ${port}`);
+  };
+  try {
+    await Promise.race([listening(), exited]);
+  } catch (error) {
+    child.kill("SIGTERM");
+    const { stderr, stdout } = await child;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}\n${stderr}\n${stdout}`, { cause: error });
+  } finally {
+    controller.abort();
+  }
+}
+
 // Start the CLI on a free port, run `fn`, then always tear the child down.
 async function withServedCli(
   args: string[],
@@ -47,7 +92,7 @@ async function withServedCli(
   const port = await getRandomPort("localhost");
   const child = runCli([...args, "--port", String(port)], opts);
   try {
-    await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+    await waitForCli(port, child);
     await fn(port);
   } finally {
     child.kill("SIGTERM");
@@ -164,11 +209,19 @@ describe("cli", () => {
   });
 
   describe("serve mode", () => {
+    it("reports the exit code and stderr when the CLI exits before listening", async () => {
+      await expect(
+        withServedCli(["--nope"], {}, async () => {
+          throw new Error("The callback must not run before the CLI is listening");
+        }),
+      ).rejects.toThrow(/CLI exited with code 1[\s\S]*--nope/);
+    });
+
     it("serves a fixture entry and responds to requests", async () => {
       const port = await getRandomPort("localhost");
       const child = runCli(["--prod", "--entry", entryFile, "--port", String(port)]);
       try {
-        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        await waitForCli(port, child);
         const res = await fetch(`http://localhost:${port}/`);
         expect(res.status).toBe(200);
         expect(await res.text()).toBe("ok");
@@ -214,7 +267,7 @@ describe("cli", () => {
       });
       let result: any;
       try {
-        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        await waitForCli(port, child);
         const res = await fetch(`http://localhost:${port}/boom`);
         expect(res.status).toBe(500);
         const body = await res.text();
@@ -233,7 +286,7 @@ describe("cli", () => {
       const port = await getRandomPort("localhost");
       const child = runCli(["--prod", "--entry", entryFile, "--port", String(port)]);
       try {
-        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        await waitForCli(port, child);
         const res = await fetch(`http://localhost:${port}/boom`);
         expect(res.status).toBe(500);
         const body = await res.text();
@@ -252,7 +305,7 @@ describe("cli", () => {
         env: { NODE_ENV: "development" },
       });
       try {
-        await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+        await waitForCli(port, child);
         const res = await fetch(`http://localhost:${port}/boom`);
         expect(res.status).toBe(500);
         const body = await res.text();
