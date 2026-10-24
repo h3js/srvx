@@ -393,6 +393,13 @@ export interface ServerRequest extends Request {
    * Tell the runtime about an ongoing operation that shouldn't close until the promise resolves.
    */
   waitUntil?: (promise: Promise<unknown>) => void | Promise<void>;
+
+  /**
+   * Resolves once the response was sent or the client went away. Never rejects.
+   *
+   * See https://srvx.h3.dev/guide/handler#requestcompleted
+   */
+  readonly completed?: Promise<void>;
 }
 
 // ----------------------------------------------------------------------------
