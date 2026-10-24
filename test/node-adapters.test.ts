@@ -1278,20 +1278,40 @@ describe("FastResponse header dedup", () => {
 describe("FastResponse keeps derived content-length once materialized", () => {
   const view = new DataView(new Uint8Array([0, 1, 2, 3, 4, 5]).buffer, 1, 3);
   const cases: [string, () => BodyInit, string, string | null][] = [
-    ["string", () => "héllo", "6", "text/plain; charset=UTF-8"],
-    ["empty string", () => "", "0", "text/plain; charset=UTF-8"],
+    ["string", () => "héllo", "6", "text/plain;charset=UTF-8"],
+    ["empty string", () => "", "0", "text/plain;charset=UTF-8"],
     ["ArrayBuffer", () => new ArrayBuffer(4), "4", null],
     ["Uint8Array", () => new Uint8Array(7), "7", null],
     ["DataView", () => view, "3", null],
     ["Blob", () => new Blob(["abc"], { type: "text/css" }), "3", "text/css"],
   ];
 
-  test.skipIf(noBunCompat).each(cases)("%s body", (_, body, length, type) => {
-    const res = new FastResponse(body());
-    void res.body;
-    expect(res.headers.get("content-length")).toBe(length);
-    expect(res.headers.get("content-type")).toBe(type);
-  });
+  test.skipIf(noBunCompat).each(cases)(
+    "%s body is sent content-length framed after reading .body",
+    async (_, body, length, type) => {
+      const server = serve({
+        port: 0,
+        fetch() {
+          const res = new FastResponse(body());
+          void res.body;
+          return res;
+        },
+      });
+      await server.ready();
+      try {
+        const res = await fetch(server.url!);
+        expect(res.headers.get("content-length")).toBe(length);
+        expect(res.headers.get("content-type")).toBe(type);
+        expect(res.headers.get("transfer-encoding")).toBeNull();
+        expect((await res.arrayBuffer()).byteLength).toBe(Number(length));
+
+        const headRes = await fetch(server.url!, { method: "HEAD" });
+        expect(headRes.headers.get("content-length")).toBe(length);
+      } finally {
+        await server.close(true);
+      }
+    },
+  );
 
   test.skipIf(noBunCompat)("user headers take precedence", () => {
     const res = new FastResponse("hello", {
@@ -1307,7 +1327,6 @@ describe("FastResponse keeps derived content-length once materialized", () => {
     res.headers.set("x-custom", "1");
     void res.body;
     expect(res.headers.get("x-custom")).toBe("1");
-    expect(res.headers.get("content-length")).toBe("5");
   });
 
   test.skipIf(noBunCompat)("does not mutate a shared Headers init", () => {
@@ -1322,24 +1341,77 @@ describe("FastResponse keeps derived content-length once materialized", () => {
     expect(res.headers.get("content-length")).toBeNull();
   });
 
-  test("is sent content-length framed after reading .body", async () => {
+  test.skipIf(noBunCompat)(
+    "a consumed body is sent without the derived content-length",
+    async () => {
+      const server = serve({
+        port: 0,
+        async fetch() {
+          const res = new FastResponse("hello");
+          const reader = res.body!.getReader();
+          while (!(await reader.read()).done);
+          reader.releaseLock();
+          return res;
+        },
+      });
+      await server.ready();
+      try {
+        const res = await fetch(server.url!, { signal: AbortSignal.timeout(2000) });
+        expect(res.headers.get("content-length")).toBeNull();
+        expect(await res.text()).toBe("");
+      } finally {
+        await server.close(true);
+      }
+    },
+  );
+});
+
+describe("FastResponse headers match native Response after reading the body", () => {
+  const NativeResponse = globalThis.Response;
+  const bodies: [string, () => BodyInit][] = [
+    ["string", () => "héllo"],
+    ["empty string", () => ""],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["Uint8Array", () => new Uint8Array(7)],
+    ["DataView", () => new DataView(new ArrayBuffer(6), 1, 3)],
+    ["Blob", () => new Blob(["abc"], { type: "text/css" })],
+    ["untyped Blob", () => new Blob(["abc"])],
+    ["ReadableStream", () => new Blob(["abc"]).stream()],
+  ];
+  const reads: [string, (res: Response) => unknown][] = [
+    ["text()", (res) => res.text()],
+    ["arrayBuffer()", (res) => res.arrayBuffer()],
+    ["clone()", (res) => res.clone()],
+    [".body", (res) => res.body],
+  ];
+
+  describe.each(reads)("%s", (_, read) => {
+    test.each(bodies)("%s body", async (_, body) => {
+      const init = { headers: { "x-custom": "1" } };
+      const native = new NativeResponse(body(), init);
+      const fast = new FastResponse(body(), init);
+      await read(native);
+      await read(fast);
+      expect([...fast.headers]).toEqual([...native.headers]);
+    });
+  });
+
+  test("a response rebuilt from read headers is sent with its own length", async () => {
     const server = serve({
       port: 0,
-      fetch() {
-        const res = new FastResponse("hello");
-        void res.body;
-        return res;
+      async fetch() {
+        const res = new FastResponse("<html>abc</html>", {
+          headers: { "content-type": "text/html" },
+        });
+        const html = await res.text();
+        return new FastResponse(html + "<!-- overlay -->", { headers: res.headers });
       },
     });
     await server.ready();
     try {
       const res = await fetch(server.url!);
-      expect(res.headers.get("content-length")).toBe("5");
-      expect(res.headers.get("transfer-encoding")).toBeNull();
-      expect(await res.text()).toBe("hello");
-
-      const headRes = await fetch(server.url!, { method: "HEAD" });
-      expect(headRes.headers.get("content-length")).toBe("5");
+      expect(res.headers.get("content-length")).toBe("32");
+      expect(await res.text()).toBe("<html>abc</html><!-- overlay -->");
     } finally {
       await server.close(true);
     }

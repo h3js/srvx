@@ -40,6 +40,7 @@ export const NodeResponse: {
     #init?: ResponseInit;
     #headers?: Headers;
     #response?: globalThis.Response;
+    #contentLength?: number;
 
     constructor(body?: ResponseBody | null, init?: ResponseInit) {
       this.#body = body;
@@ -132,36 +133,23 @@ export const NodeResponse: {
         body = stream as unknown as ResponseBody;
       }
 
-      // Carry the content-type / content-length that `_toNodeResponse()` would
-      // derive, so materializing (reading `.body`, `.clone()`, wrapping the
-      // body in a proxy layer, …) doesn't silently switch to chunked framing.
-      let contentType: string | undefined;
-      let contentLength: number | undefined;
+      // Derived length for `_toNodeResponse()`, kept out of `headers` to match native `Response`.
       if (typeof body === "string") {
-        contentType = "text/plain; charset=UTF-8";
-        contentLength = Buffer.byteLength(body);
+        this.#contentLength = Buffer.byteLength(body);
       } else if (
         body instanceof ArrayBuffer ||
         body instanceof Uint8Array ||
         body instanceof DataView
       ) {
-        contentLength = body.byteLength;
+        this.#contentLength = body.byteLength;
       } else if (body instanceof Blob) {
-        contentType = body.type;
-        contentLength = body.size;
-      }
-      let headers = this.#headers;
-      if (contentLength !== undefined) {
-        headers ??= new Headers(this.#init?.headers);
-        if (contentType && !headers.has("content-type")) {
-          headers.set("content-type", contentType);
-        }
-        if (!headers.has("content-length")) {
-          headers.set("content-length", String(contentLength));
-        }
+        this.#contentLength = body.size;
       }
 
-      this.#response = new NativeResponse(body, headers ? { ...this.#init, headers } : this.#init);
+      this.#response = new NativeResponse(
+        body,
+        this.#headers ? { ...this.#init, headers: this.#headers } : this.#init,
+      );
       this.#init = undefined;
       this.#headers = undefined;
       this.#body = undefined;
@@ -180,6 +168,9 @@ export const NodeResponse: {
       let contentLength: string | number | undefined | null;
       if (this.#response) {
         body = this.#response.body;
+        if (!this.#response.bodyUsed) {
+          contentLength = this.#contentLength;
+        }
       } else if (this.#body != null) {
         // `!= null` (not a truthy check): an empty-string body is falsy but must
         // still receive the implicit `text/plain` content-type and a
@@ -261,6 +252,7 @@ export const NodeResponse: {
       this.#init = undefined;
       this.#headers = undefined;
       this.#response = undefined;
+      this.#contentLength = undefined;
       this.#body = undefined;
 
       return {
