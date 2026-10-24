@@ -21,7 +21,7 @@ import { WebServerResponse } from "./response.ts";
  * @experimental Behavior might be unstable.
  */
 export async function fetchNodeHandler(
-  handler: NodeHttpHandler,
+  handler: NodeHttpHandler | NodeHTTPMiddleware,
   req: ServerRequest,
 ): Promise<Response> {
   // Direct pass through if coming from a Node server handler
@@ -61,7 +61,7 @@ export async function fetchNodeHandler(
         ).catch((error) => reject(error));
       });
     } else {
-      await handler(nodeReq as any, nodeRes as any);
+      await (handler as NodeHttpHandler)(nodeReq as any, nodeRes as any);
     }
     return await nodeRes.toWebResponse();
   } catch (error: any) {
