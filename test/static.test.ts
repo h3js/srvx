@@ -112,6 +112,13 @@ beforeAll(async () => {
   await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
+  await writeFile(join(dir, "release#1.txt"), "HASH_NAME");
+  await writeFile(join(dir, "Q&A.txt"), "AMPERSAND_NAME");
+  await writeFile(join(dir, "release%231.txt"), "LITERAL_HASH_ESCAPE");
+  await writeFile(join(dir, "literal%2Fname.txt"), "LITERAL_SLASH_ESCAPE");
+  if (sep !== "\\") {
+    await writeFile(join(dir, "question?.txt"), "QUESTION_NAME");
+  }
 
   // Extensions whose MIME mapping is pinned below; the contents never matter.
   for (const name of ["mod.wasm", "pic.avif", "song.mp3", "bundle.gz"]) {
@@ -1099,21 +1106,36 @@ describe("staticMiddleware", () => {
       ["/hello%20world.txt", "SPACE_NAME"],
       ["/caf%C3%A9.txt", "UNICODE_NAME"],
       ["/50%25.txt", "PERCENT_NAME"],
+      ["/release%231.txt", "HASH_NAME"],
+      ["/Q%26A.txt", "AMPERSAND_NAME"],
+      ["/release%25231.txt", "LITERAL_HASH_ESCAPE"],
+      ["/literal%252Fname.txt", "LITERAL_SLASH_ESCAPE"],
     ])("decodes %s exactly once for the lookup", async (path, contents) => {
       const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
     });
 
+    test.skipIf(sep === "\\")("decodes a question mark in a filename", async () => {
+      const res = await fetchStatic("/question%3f.txt?download=true");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("QUESTION_NAME");
+    });
+
     test.each([
       // The decoded lookup is for a file literally named `sub%2Finside.txt`.
       "/sub%2Finside.txt",
-      // `%2f` survives `decodeURI`, so this stays a single literal filename
+      // `%2f` stays encoded, so this stays a single literal filename
       // rather than traversing. Reaches the middleware verbatim: `new Request()`
       // only collapses real separators.
       "/%2e%2e%2foutside%2fsecret.txt",
+      "/sub%252Finside.txt",
     ])("keeps the encoded separator in %s encoded", async (path) => {
       await expectNext(await fetchStatic(path), path);
+    });
+
+    test("rejects traversal through encoded backslashes", async () => {
+      await expectNext(await fetchStatic("/%2e%2e%5coutside%5csecret.txt"));
     });
 
     test("applies the dotfile policy to the decoded name", async () => {
@@ -1137,9 +1159,12 @@ describe("staticMiddleware", () => {
       await expectNext(await fetchStatic("/%252e%252e/outside/secret.txt"));
     });
 
-    test.each(["/foo%", "/%ZZ"])("rejects the malformed encoding %s with 400", async (path) => {
-      expect((await fetchStatic(path)).status, path).toBe(400);
-    });
+    test.each(["/foo%", "/%ZZ", "/%C3%28", "/%E0%A4"])(
+      "rejects the malformed encoding %s with 400",
+      async (path) => {
+        expect((await fetchStatic(path)).status, path).toBe(400);
+      },
+    );
   });
 
   describe("byte ranges", () => {
