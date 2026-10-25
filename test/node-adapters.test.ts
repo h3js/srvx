@@ -1274,6 +1274,78 @@ describe("FastResponse header dedup", () => {
   });
 });
 
+// https://github.com/h3js/srvx/issues/332
+describe("FastResponse keeps derived content-length once materialized", () => {
+  const view = new DataView(new Uint8Array([0, 1, 2, 3, 4, 5]).buffer, 1, 3);
+  const cases: [string, () => BodyInit, string, string | null][] = [
+    ["string", () => "héllo", "6", "text/plain; charset=UTF-8"],
+    ["empty string", () => "", "0", "text/plain; charset=UTF-8"],
+    ["ArrayBuffer", () => new ArrayBuffer(4), "4", null],
+    ["Uint8Array", () => new Uint8Array(7), "7", null],
+    ["DataView", () => view, "3", null],
+    ["Blob", () => new Blob(["abc"], { type: "text/css" }), "3", "text/css"],
+  ];
+
+  test.skipIf(noBunCompat).each(cases)("%s body", (_, body, length, type) => {
+    const res = new FastResponse(body());
+    void res.body;
+    expect(res.headers.get("content-length")).toBe(length);
+    expect(res.headers.get("content-type")).toBe(type);
+  });
+
+  test.skipIf(noBunCompat)("user headers take precedence", () => {
+    const res = new FastResponse("hello", {
+      headers: { "Content-Type": "text/html", "Content-Length": "999" },
+    });
+    void res.body;
+    expect(res.headers.get("content-type")).toBe("text/html");
+    expect(res.headers.get("content-length")).toBe("999");
+  });
+
+  test.skipIf(noBunCompat)("keeps headers mutated before materializing", () => {
+    const res = new FastResponse("hello");
+    res.headers.set("x-custom", "1");
+    void res.body;
+    expect(res.headers.get("x-custom")).toBe("1");
+    expect(res.headers.get("content-length")).toBe("5");
+  });
+
+  test.skipIf(noBunCompat)("does not mutate a shared Headers init", () => {
+    const shared = new Headers({ a: "1" });
+    void new FastResponse("hello", { headers: shared }).body;
+    expect([...shared]).toEqual([["a", "1"]]);
+  });
+
+  test.skipIf(noBunCompat)("streams get no content-length", () => {
+    const res = new FastResponse(new ReadableStream());
+    void res.body;
+    expect(res.headers.get("content-length")).toBeNull();
+  });
+
+  test("is sent content-length framed after reading .body", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        const res = new FastResponse("hello");
+        void res.body;
+        return res;
+      },
+    });
+    await server.ready();
+    try {
+      const res = await fetch(server.url!);
+      expect(res.headers.get("content-length")).toBe("5");
+      expect(res.headers.get("transfer-encoding")).toBeNull();
+      expect(await res.text()).toBe("hello");
+
+      const headRes = await fetch(server.url!, { method: "HEAD" });
+      expect(headRes.headers.get("content-length")).toBe("5");
+    } finally {
+      await server.close(true);
+    }
+  });
+});
+
 // https://github.com/h3js/srvx/issues/250
 describe("FastResponse copies init Headers", () => {
   const headerPairs = (headers: string[]) => {

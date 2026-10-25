@@ -1,7 +1,9 @@
 import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
-import { lazyInherit } from "../../_inherit.ts";
+import { getNativeClass, lazyInherit } from "../../_inherit.ts";
 import type { ResponseBody } from "../../types.ts";
+
+const kNativeResponse = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
 
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null;
@@ -31,7 +33,7 @@ export const NodeResponse: {
     init?: ResponseInit,
   ): globalThis.Response & { _toNodeResponse: () => PreparedNodeResponse };
 } = /* @__PURE__ */ (() => {
-  const NativeResponse = globalThis.Response;
+  const NativeResponse = getNativeClass(kNativeResponse, globalThis.Response);
 
   class NodeResponse implements Partial<Response> {
     #body?: ResponseBody | null;
@@ -45,7 +47,13 @@ export const NodeResponse: {
     }
 
     static [Symbol.hasInstance](val: unknown) {
-      return val instanceof NativeResponse;
+      // Only widen the check for `NodeResponse` itself. Subclasses inherit this
+      // static, and when `NodeResponse` is installed as `globalThis.Response`,
+      // `class X extends Response {}` must not match every response.
+      if (this === NodeResponse) {
+        return val instanceof NativeResponse;
+      }
+      return Object.prototype.isPrototypeOf.call(this.prototype, val as object);
     }
 
     static json(data: unknown, init?: ResponseInit) {
@@ -124,10 +132,36 @@ export const NodeResponse: {
         body = stream as unknown as ResponseBody;
       }
 
-      this.#response = new NativeResponse(
-        body,
-        this.#headers ? { ...this.#init, headers: this.#headers } : this.#init,
-      );
+      // Carry the content-type / content-length that `_toNodeResponse()` would
+      // derive, so materializing (reading `.body`, `.clone()`, wrapping the
+      // body in a proxy layer, …) doesn't silently switch to chunked framing.
+      let contentType: string | undefined;
+      let contentLength: number | undefined;
+      if (typeof body === "string") {
+        contentType = "text/plain; charset=UTF-8";
+        contentLength = Buffer.byteLength(body);
+      } else if (
+        body instanceof ArrayBuffer ||
+        body instanceof Uint8Array ||
+        body instanceof DataView
+      ) {
+        contentLength = body.byteLength;
+      } else if (body instanceof Blob) {
+        contentType = body.type;
+        contentLength = body.size;
+      }
+      let headers = this.#headers;
+      if (contentLength !== undefined) {
+        headers ??= new Headers(this.#init?.headers);
+        if (contentType && !headers.has("content-type")) {
+          headers.set("content-type", contentType);
+        }
+        if (!headers.has("content-length")) {
+          headers.set("content-length", String(contentLength));
+        }
+      }
+
+      this.#response = new NativeResponse(body, headers ? { ...this.#init, headers } : this.#init);
       this.#init = undefined;
       this.#headers = undefined;
       this.#body = undefined;
