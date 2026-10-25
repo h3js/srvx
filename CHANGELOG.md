@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.6...v1.0.7)
+
+### 🩹 Fixes
+
+- **node:** Scope `FastResponse` subclass `instanceof` and avoid nesting as global `Response` ([#330](https://github.com/h3js/srvx/pull/330))
+- **node:** Keep derived `content-length` when `FastResponse` materializes ([#335](https://github.com/h3js/srvx/pull/335))
+- **node:** Resolve native `Request`/`Response` by base class to support globals patched by other servers ([#331](https://github.com/h3js/srvx/pull/331))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+
 ## v1.0.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.5...v1.0.6)
