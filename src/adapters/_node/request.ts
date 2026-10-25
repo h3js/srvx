@@ -3,7 +3,7 @@ import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { resolveClientIP, trustedHops } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
-import { lazyInherit } from "../../_inherit.ts";
+import { getNativeClass, lazyInherit } from "../../_inherit.ts";
 import { createBodyTooLargeError, limitBodyStream } from "../../body-limit.ts";
 import { Readable } from "node:stream";
 
@@ -90,7 +90,7 @@ function isBodySourceFinished(req: NodeServerRequest): boolean {
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
-  const NativeRequest = getNativeRequest();
+  const NativeRequest = getNativeClass(kNativeRequest, globalThis.Request);
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
@@ -522,7 +522,7 @@ export function patchGlobalRequest(): typeof Request {
     return globalThis.Request as unknown as typeof Request;
   }
 
-  const NativeRequest = getNativeRequest();
+  const NativeRequest = getNativeClass(kNativeRequest, globalThis.Request);
 
   const PatchedRequest = class Request extends NativeRequest {
     static _srvx = true;
@@ -616,24 +616,4 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
     };
     req.on("data", onData).once("end", onEnd).once("error", onError).once("close", onClose);
   });
-}
-
-/**
- * Resolve the genuine native `Request` and cache it globally.
- *
- * `patchGlobalRequest()` replaces `globalThis.Request` with a srvx subclass
- * (its prototype has no own body methods). If that patched global is captured
- * as the "native" Request — e.g. when a second srvx instance evaluates after
- * the global was patched, as happens in a bundled build — then `lazyInherit`
- * copies no body methods and `formData()`/`blob()`/`arrayBuffer()`/`bytes()`
- * fall through to undici with the wrong receiver and throw. Reading the shared
- * cache (and unwrapping any srvx-patched subclass) keeps us on the real native
- * Request regardless of patch ordering.
- */
-function getNativeRequest(): typeof globalThis.Request {
-  let R: any = (globalThis as any)[kNativeRequest] || globalThis.Request;
-  while (R?._srvx) {
-    R = Object.getPrototypeOf(R);
-  }
-  return ((globalThis as any)[kNativeRequest] ??= R);
 }
