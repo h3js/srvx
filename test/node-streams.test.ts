@@ -261,6 +261,92 @@ describe("node response stream error handling", () => {
     await server.close(true);
   });
 
+  test("FastResponse: empty IncomingMessage sends the head", async () => {
+    const upstream = createServer((_req, res) => {
+      res.writeHead(400);
+      res.end();
+    });
+    await new Promise<void>((r) => upstream.listen(0, r));
+
+    let stream!: Readable;
+    const server = serve({
+      port: 0,
+      fetch() {
+        return new Promise<Response>((resolve) => {
+          request({ port: (upstream.address() as AddressInfo).port }, (incoming) => {
+            stream = incoming;
+            resolve(
+              new FastResponse(incoming as unknown as BodyInit, {
+                status: 400,
+                statusText: "Custom Bad Request",
+                headers: { "x-custom": "test" },
+              }),
+            );
+          }).end();
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(400);
+    expect(res.statusText).toBe("Custom Bad Request");
+    expect(res.headers.get("x-custom")).toBe("test");
+    expect(await res.text()).toBe("");
+    expect(stream.listenerCount("readable")).toBe(0);
+    await server.close(true);
+    await new Promise<void>((r) => upstream.close(() => r()));
+  });
+
+  test("FastResponse: already ended node stream sends the head", async () => {
+    const stream = new Readable({ read() {} });
+    stream.push(null);
+    stream.resume();
+    await new Promise((r) => stream.once("end", r));
+
+    const server = serve({
+      port: 0,
+      fetch() {
+        return new FastResponse(stream as unknown as BodyInit, {
+          status: 400,
+          statusText: "Custom Bad Request",
+          headers: { "x-custom": "test" },
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(400);
+    expect(res.statusText).toBe("Custom Bad Request");
+    expect(res.headers.get("x-custom")).toBe("test");
+    expect(await res.text()).toBe("");
+    await server.close(true);
+  });
+
+  test("FastResponse: empty node stream that ends later sends the head", async () => {
+    const server = serve({
+      port: 0,
+      fetch() {
+        const stream = new Readable({ read() {} });
+        setTimeout(() => stream.push(null), 50);
+        return new FastResponse(stream as unknown as BodyInit, {
+          status: 400,
+          statusText: "Custom Bad Request",
+          headers: { "x-custom": "test" },
+        });
+      },
+    });
+    await server.ready();
+
+    const res = await fetch(server.url!);
+    expect(res.status).toBe(400);
+    expect(res.statusText).toBe("Custom Bad Request");
+    expect(res.headers.get("x-custom")).toBe("test");
+    expect(await res.text()).toBe("");
+    await server.close(true);
+  });
+
   test("FastResponse: node stream mid-stream error terminates response", async () => {
     let chunkCount = 0;
 
