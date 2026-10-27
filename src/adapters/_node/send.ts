@@ -251,8 +251,9 @@ function pipeBody(
   // if the stream errors before producing any data we can respond with 500
   // instead of committing to the original status code.
 
-  // Stream already ended: no further events would fire.
-  if (stream.readableEnded) {
+  // Stream already ended: no further events would fire. An error after the end
+  // still answers 500 below.
+  if (stream.readableEnded && !stream.errored) {
     writeHead(nodeRes, status, statusText, headers);
     return endNodeResponse(nodeRes);
   }
