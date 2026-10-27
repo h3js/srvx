@@ -247,9 +247,16 @@ function pipeBody(
   }
 
   // Real Node.js streams support pipeline() for proper error/abort propagation.
-  // Wait for the first event (readable or error) before writing headers so that
+  // Wait for the first event (readable, end or error) before writing headers so that
   // if the stream errors before producing any data we can respond with 500
   // instead of committing to the original status code.
+
+  // Stream already ended: no further events would fire. An error after the end
+  // still answers 500 below.
+  if (stream.readableEnded && !stream.errored) {
+    writeHead(nodeRes, status, statusText, headers);
+    return endNodeResponse(nodeRes);
+  }
 
   // Stream already destroyed/errored — neither 'readable' nor 'error' would fire.
   if (stream.destroyed) {
@@ -258,10 +265,11 @@ function pipeBody(
   }
 
   return new Promise<void>((resolve) => {
-    // All three outcomes are terminal: whichever fires first detaches the others.
+    // All outcomes are terminal: whichever fires first detaches the others.
     function cleanup() {
       stream.off("error", onEarlyError);
       stream.off("readable", onReadable);
+      stream.off("end", onEnd);
       nodeRes.off("close", onResClose);
     }
     function onEarlyError() {
@@ -281,6 +289,15 @@ function pipeBody(
         .catch(() => {})
         .then(() => resolve());
     }
+    // An ended stream with nothing buffered emits 'end' without 'readable'.
+    function onEnd() {
+      cleanup();
+      if (nodeRes.destroyed) {
+        return resolve();
+      }
+      writeHead(nodeRes, status, statusText, headers);
+      (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
+    }
     // The client can vanish before the stream produces its first byte. Nothing
     // else observes that here (`pipeline()` has not started yet), so the source
     // — and whatever fd/socket backs it — would stay open forever.
@@ -291,6 +308,7 @@ function pipeBody(
     }
     stream.once("error", onEarlyError);
     stream.once("readable", onReadable);
+    stream.once("end", onEnd);
     nodeRes.once("close", onResClose);
   });
 }
