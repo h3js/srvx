@@ -478,6 +478,8 @@ describe("staticMiddleware", () => {
         body: "PLAIN_JS",
       },
       { why: "honors q=0 as a refusal", accept: "br;q=0, gzip", enc: "gzip", body: "GZIP_JS" },
+      { why: "honors Q=0 as a refusal", accept: "br;Q=0, gzip", enc: "gzip", body: "GZIP_JS" },
+      { why: "refuses gzip with Q=0", accept: "gzip;Q=0", enc: null, body: "PLAIN_JS" },
       { why: "honors an explicit q ranking", accept: "br;q=1.0", enc: "br", body: "BROTLI_JS" },
       { why: "treats a malformed q as a refusal", accept: "br;q=abc", enc: null, body: "PLAIN_JS" },
       { why: "supports the * wildcard", accept: "*", enc: "br", body: "BROTLI_JS" },
@@ -587,9 +589,15 @@ describe("staticMiddleware", () => {
       expect(res.headers.get("content-encoding")).toBe("br");
     });
 
-    test("honors q=0 as a refusal", async () => {
-      const res = await fetchEncoded("/big.js", "br;q=0, gzip");
+    test.each(["q", "Q"])("honors %s=0 as a refusal", async (quality) => {
+      const res = await fetchEncoded("/big.js", `br;${quality}=0, gzip`);
       expect(res.headers.get("content-encoding")).toBe("gzip");
+    });
+
+    test("refuses gzip with Q=0", async () => {
+      const res = await fetchEncoded("/big.js", "gzip;Q=0");
+      expect(res.headers.get("content-encoding")).toBe(null);
+      await expect(res.text()).resolves.toBe(BIG_JS);
     });
 
     test("omits Content-Length, unknown until the bytes are encoded", async () => {

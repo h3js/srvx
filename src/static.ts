@@ -786,7 +786,7 @@ function parseAcceptEncoding(header: string | null, served: EncodingSpec[]): Enc
     let q = 1;
     for (const param of params) {
       const trimmed = param.trim();
-      if (trimmed.startsWith("q=")) {
+      if (/^q=/i.test(trimmed)) {
         // A malformed q (`q=abc`) parses to NaN: treat it as refused.
         q = Number.parseFloat(trimmed.slice(2)) || 0;
       }
