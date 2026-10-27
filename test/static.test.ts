@@ -108,6 +108,10 @@ beforeAll(async () => {
   // `.htm` maps to `text/html` just as `.html` does.
   await writeFile(join(dir, "page.htm"), "<h1>htm</h1>");
 
+  await writeFile(join(dir, "upper.HTML"), "<h1>upper</h1>");
+  await writeFile(join(dir, "mixed.Js"), "MIXED_JS");
+  await writeFile(join(dir, "upper.PNG"), "PNG_BYTES");
+
   // Names that only appear percent-encoded on the wire.
   await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
@@ -715,8 +719,8 @@ describe("staticMiddleware", () => {
       renderHTML: ({ html }: { html: string }) => new Response(`${html}<!--rendered-->`),
     };
 
-    test.each(["/index.html", "/page.htm"])("renders %s", async (path) => {
-      // Both map to `text/html`, so both render: an extension the MIME table
+    test.each(["/index.html", "/page.htm", "/upper.HTML"])("renders %s", async (path) => {
+      // These map to `text/html`, so all render: an extension the MIME table
       // treats as HTML must not be served as raw markup.
       const res = await fetchStatic(path, opts);
       await expect(res.text()).resolves.toContain("<!--rendered-->");
@@ -742,6 +746,9 @@ describe("staticMiddleware", () => {
       ["/pic.avif", "image/avif"],
       ["/song.mp3", "audio/mpeg"],
       ["/bundle.gz", "application/gzip"],
+      ["/upper.HTML", "text/html; charset=utf-8"],
+      ["/mixed.Js", "text/javascript; charset=utf-8"],
+      ["/upper.PNG", "image/png"],
     ])("declares %s as %s", async (path, type) => {
       expect((await fetchStatic(path!)).headers.get("content-type")).toBe(type);
     });
