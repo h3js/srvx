@@ -651,7 +651,7 @@ describe("adapters", () => {
       res.writeHead(201, { "content-type": "text/plain" });
       res.end("middleware ok");
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(201);
     expect(await res.text()).toBe("middleware ok");
@@ -667,7 +667,7 @@ describe("adapters", () => {
       // No downstream handler: finalize with the current response state.
       next();
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const settled = await Promise.race([
       Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
         status: r.status,
@@ -689,7 +689,7 @@ describe("adapters", () => {
     ) => {
       next(error);
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     // Silence the expected error log from fetchNodeHandler's catch.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
@@ -704,12 +704,114 @@ describe("adapters", () => {
       _res: NodeServerResponse,
       _next: (error?: Error) => void,
     ) => Promise.reject(new Error("async boom"));
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(500);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  // `node:http` calls the round-tripped middleware without `next`, so it gets one
+  // where `next()` answers 404 and `next(err)` 500, while an Express app comes back
+  // as is and answers with its own final handler; Express passes its own `next`,
+  // which must reach the next route.
+  test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
+    const middleware = (
+      req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      if (req.url === "/self") {
+        // @ts-expect-error http1/http2 union
+        res.writeHead(201, { "content-type": "text/plain" });
+        return res.end("middleware ok");
+      }
+      res.setHeader("x-mw", "1");
+      next(req.url === "/error" ? new Error("boom") : undefined);
+    };
+    expect(toNodeHandler(toFetchHandler(middleware)).name).toBe(middleware.name);
+    const server = createServer(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const self = await fetch(`${url}/self`);
+    expect(self.status).toBe(201);
+    expect(await self.text()).toBe("middleware ok");
+
+    const next = await fetch(`${url}/next`);
+    expect(next.status).toBe(404);
+    expect(next.headers.get("x-mw")).toBe("1");
+
+    const error = await fetch(`${url}/error`);
+    expect(error.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    const helloApp = express()
+      .get("/hello", (req, res) => res.send("hello"))
+      .get("/invalid", (req, res) => {
+        res.status(400);
+        throw new Error("invalid");
+      });
+    expect(toNodeHandler(toFetchHandler(helloApp))).toBe(helloApp);
+    const helloServer = createServer(toNodeHandler(toFetchHandler(helloApp)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => helloServer.listen(0, resolve));
+    const helloUrl = `http://localhost:${(helloServer.address() as AddressInfo).port}`;
+
+    const hello = await fetch(`${helloUrl}/hello`);
+    expect(hello.status).toBe(200);
+    expect(await hello.text()).toBe("hello");
+    expect((await fetch(`${helloUrl}/invalid`)).status).toBe(400);
+    expect((await fetch(`${helloUrl}/missing`)).status).toBe(404);
+
+    await new Promise<void>((resolve) => helloServer.close(() => resolve()));
+
+    const errorHandler = (err: Error, req: any, res: any, next: any) =>
+      res.status(418).send(err.message);
+    const app = express()
+      .use(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler)
+      .get("/next", (req, res) => res.send("next route"))
+      // The types reject an error handler, but untyped code that converts every middleware passes one.
+      .use(toNodeHandler(toFetchHandler(errorHandler as any)) as NodeHttp1Handler);
+    const appServer = createServer(app);
+    await new Promise<void>((resolve) => appServer.listen(0, resolve));
+    const appUrl = `http://localhost:${(appServer.address() as AddressInfo).port}`;
+
+    const appNext = await fetch(`${appUrl}/next`);
+    expect(appNext.headers.get("x-mw")).toBe("1");
+    expect(await appNext.text()).toBe("next route");
+
+    const appError = await fetch(`${appUrl}/error`);
+    expect(appError.status).toBe(418);
+    expect(await appError.text()).toBe("boom");
+
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
+
+    // Express 5 sends a rejected promise from a handler to its error handler.
+    const asyncMiddleware = async (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      throw new Error("async boom");
+    };
+    const asyncApp = express()
+      .use(toNodeHandler(toFetchHandler(asyncMiddleware)) as NodeHttp1Handler)
+      .use((err: Error, req: any, res: any, next: any) => res.status(418).send(err.message));
+    const asyncServer = createServer(asyncApp);
+    await new Promise<void>((resolve) => asyncServer.listen(0, resolve));
+    const asyncRes = await fetch(
+      `http://localhost:${(asyncServer.address() as AddressInfo).port}/`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    expect(asyncRes.status).toBe(418);
+    expect(await asyncRes.text()).toBe("async boom");
+
+    await new Promise<void>((resolve) => asyncServer.close(() => resolve()));
   });
 });
 

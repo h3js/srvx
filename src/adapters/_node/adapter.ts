@@ -1,6 +1,7 @@
 import type {
   FetchHandler,
   NodeHttpHandler,
+  NodeHTTPMiddleware,
   NodeServerRequest,
   NodeServerResponse,
   ServerRequest,
@@ -8,7 +9,7 @@ import type {
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
-import { handleSendError, sendNodeResponse } from "./send.ts";
+import { handleSendError, sendErrorResponse, sendNodeResponse } from "./send.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -62,16 +63,45 @@ function send(nodeRes: NodeServerResponse, webRes: Response): Promise<void> {
  *
  * @experimental Behavior might be unstable and won't work in Bun and Deno currently (tracker: https://github.com/h3js/srvx/issues/132)
  */
-export function toFetchHandler(handler: NodeHttpHandler & AdapterMeta): FetchHandler & AdapterMeta {
+export function toFetchHandler(
+  handler: (NodeHttpHandler | NodeHTTPMiddleware) & AdapterMeta,
+): FetchHandler & AdapterMeta {
   if (handler.__fetchHandler) {
     return handler.__fetchHandler;
   }
 
   function convertedNodeHandler(req: ServerRequest): Promise<Response> {
-    return fetchNodeHandler(handler as NodeHttpHandler, req);
+    return fetchNodeHandler(handler, req);
   }
 
-  (convertedNodeHandler as AdapterMeta).__nodeHandler = handler as NodeHttpHandler;
+  // A connect or Express app (`app.handle`) comes back as is, since its own final handler ends the stack; other middleware gets the caller's `next`, else one where `next()` answers 404 and `next(err)` 500.
+  function nodeMiddleware(
+    nodeReq: NodeServerRequest,
+    nodeRes: NodeServerResponse,
+    next?: (error?: Error) => void,
+  ) {
+    return (handler as NodeHTTPMiddleware)(
+      nodeReq as any,
+      nodeRes as any,
+      next ||
+        ((error) => {
+          if (error) {
+            sendErrorResponse(nodeRes, error);
+          } else {
+            if (!nodeRes.headersSent) {
+              nodeRes.statusCode = 404;
+            }
+            nodeRes.end();
+          }
+        }),
+    ) as void | Promise<void>;
+  }
+  assignFnName(nodeMiddleware, handler, "");
+
+  (convertedNodeHandler as AdapterMeta).__nodeHandler =
+    handler.length === 3 && typeof (handler as { handle?: unknown }).handle !== "function"
+      ? nodeMiddleware
+      : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");
 
   return convertedNodeHandler;
