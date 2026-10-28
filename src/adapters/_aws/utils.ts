@@ -41,8 +41,18 @@ export function awsRequest(
   // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
   // count once (walking `X-Forwarded-For` right-to-left from it) and pass it
   // down; both the URL and the client IP derivation are hop-aware.
-  const sourceIp = awsEventIP(event);
-  const forwardedFor = awsForwardedFor(event);
+  let sourceIp = awsEventIP(event);
+  let forwardedFor = awsForwardedFor(event);
+  // ALB events carry no `sourceIp`: the load balancer appends the address of the
+  // client it accepted the connection from to `X-Forwarded-For` instead, so that
+  // last entry is the gateway-verified peer and the rest is the forwarded chain.
+  // This relies on the ALB's default `append` mode for `X-Forwarded-For`; with
+  // `preserve` the header reaches the target unmodified (client-supplied).
+  if (!sourceIp && isALBEvent(event) && forwardedFor) {
+    const list = forwardedFor.split(",");
+    sourceIp = stripALBClientPort(list.pop()!.trim()) || undefined;
+    forwardedFor = list.length > 0 ? list.join(",") : undefined;
+  }
   const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
   const req = new Request(awsEventURL(event, hops), {
@@ -124,6 +134,22 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
 }
 
+// With client port preservation (`routing.http.xff_client_port.enabled`) the ALB
+// appends `ip:port`, or `[ipv6]:port` for IPv6.
+function stripALBClientPort(entry: string): string {
+  if (entry.startsWith("[")) {
+    const end = entry.indexOf("]");
+    return end === -1 ? entry : entry.slice(1, end);
+  }
+  const colon = entry.indexOf(":");
+  // A single colon is `ipv4:port`; a bare IPv6 address has several
+  return colon !== -1 && colon === entry.lastIndexOf(":") ? entry.slice(0, colon) : entry;
+}
+
+function isALBEvent(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): boolean {
+  return !!(event as AWSLambdaProxyEvent).requestContext?.elb;
+}
+
 function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
   if (typeof (event as AWSLambdaProxyEventV2).rawQueryString === "string") {
     return (event as AWSLambdaProxyEventV2).rawQueryString;
@@ -132,7 +158,9 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
     ...event.queryStringParameters,
     ...(event as AWSLambdaProxyEvent).multiValueQueryStringParameters,
   };
-  return stringifyQuery(queryObj);
+  // ALB passes query parameters as the client sent them (not decoded), so they
+  // must not be encoded a second time.
+  return stringifyQuery(queryObj, isALBEvent(event));
 }
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
@@ -412,10 +440,16 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
 // is invisible to anything re-parsing the query but not to route rules, cache
 // keys, canonical URLs or a signature computed over `request.url`, so a bare key
 // is emitted for empty values instead.
-function stringifyQuery(obj: Record<string, unknown>) {
+function stringifyQuery(obj: Record<string, unknown>, encoded?: boolean) {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
     for (const item of Array.isArray(value) ? value : [value]) {
+      if (encoded) {
+        // A raw `#` would otherwise start the URL fragment and cut the query short.
+        const bare = (item == null || item === "") && key !== "";
+        parts.push((bare ? key : `${key}=${item ?? ""}`).replaceAll("#", "%23"));
+        continue;
+      }
       // Encode through `URLSearchParams` to keep escaping identical, then drop
       // the trailing `=` it always appends for an empty value.
       const pair = new URLSearchParams([[key, item == null ? "" : String(item)]]).toString();
