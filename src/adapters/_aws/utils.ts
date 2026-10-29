@@ -62,7 +62,7 @@ export function awsRequest(
 }
 
 function awsForwardedFor(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
-  return event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"];
+  return awsEventHeader(event, "x-forwarded-for");
 }
 
 function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string {
@@ -98,10 +98,7 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   // Only honor client-supplied `X-Forwarded-*` headers when the peer is trusted
   // (`hops > 0`); otherwise any client could spoof the host or protocol. `hops`
   // selects the outermost trusted proxy's entry from a comma-joined chain.
-  const forwardedHost = forwardedHopValue(
-    event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"],
-    hops,
-  );
+  const forwardedHost = forwardedHopValue(awsEventHeader(event, "x-forwarded-host"), hops);
 
   // A malformed host must neither inject an authority/path into the URL built
   // below nor throw out of `awsRequest` (which runs before the error
@@ -109,16 +106,12 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   // `_invalid_` sentinel as the Node adapter.
   const host =
     (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
-    event.headers.host ||
-    event.headers.Host ||
+    awsEventHeader(event, "host") ||
     event.requestContext?.domainName;
   const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = forwardedHopValue(
-    event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"],
-    hops,
-  );
+  const forwardedProto = forwardedHopValue(awsEventHeader(event, "x-forwarded-proto"), hops);
   const protocol = forwardedProto === "http" ? "http" : "https";
 
   return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
@@ -137,9 +130,20 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
-  for (const [key, value] of Object.entries(event.headers)) {
-    if (value) {
-      headers.set(key, value);
+  const names = new Set(
+    [
+      ...Object.keys(event.headers ?? {}),
+      ...Object.keys((event as AWSLambdaProxyEvent).multiValueHeaders ?? {}),
+    ].map((name) => name.toLowerCase()),
+  );
+  for (const name of names) {
+    const values = awsEventHeaderValues(event, name);
+    if (name === "cookie") {
+      if (values.length) headers.set(name, values.join("; "));
+    } else {
+      for (const value of values) {
+        headers.append(name, value);
+      }
     }
   }
   // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
@@ -154,6 +158,32 @@ function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): He
     }
   }
   return headers;
+}
+
+function awsEventHeader(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, name: string) {
+  const values = awsEventHeaderValues(event, name);
+  return values.length ? values.join(", ") : undefined;
+}
+
+function awsEventHeaderValues(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, name: string) {
+  const normalizedName = name.toLowerCase();
+  const multiValues: string[] = [];
+  for (const [key, entries] of Object.entries(
+    (event as AWSLambdaProxyEvent).multiValueHeaders ?? {},
+  )) {
+    if (key.toLowerCase() === normalizedName && entries) {
+      for (const value of entries) {
+        if (value) multiValues.push(value);
+      }
+    }
+  }
+  const values = [...multiValues];
+  for (const [key, value] of Object.entries(event.headers ?? {})) {
+    if (key.toLowerCase() === normalizedName && value && !multiValues.includes(value)) {
+      values.push(value);
+    }
+  }
+  return values;
 }
 
 export function awsEventBody(
