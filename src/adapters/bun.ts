@@ -7,6 +7,8 @@ import {
   resolveTLSOptions,
   createWaitUntil,
   toNativeResponse,
+  removeStaleSocket,
+  resolveUnixSocket,
 } from "../_utils.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
@@ -30,6 +32,8 @@ class BunServer implements Server<BunFetchHandler> {
   readonly waitUntil?: Server["waitUntil"];
 
   #wait: ReturnType<typeof createWaitUntil> | undefined;
+  // Only set while (re)listening after removing a stale unix socket.
+  #listening?: Promise<this>;
 
   constructor(options: ServerOptions) {
     this.options = { ...options, middleware: [...(options.middleware || [])] };
@@ -77,8 +81,9 @@ class BunServer implements Server<BunFetchHandler> {
     };
 
     const tls = resolveTLSOptions(this.options);
+    const unix = resolveUnixSocket(this.options);
     this.serveOptions = {
-      ...resolvePortAndHost(this.options),
+      ...(unix ? { unix } : resolvePortAndHost(this.options)),
       reusePort: this.options.reusePort,
       error: this.options.error,
       // Forward `maxRequestBodySize` to Bun's native serve option (Bun enforces it,
@@ -103,14 +108,34 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   serve(): Promise<this> {
+    if (this.#listening) {
+      return this.#listening;
+    }
     if (!this.bun!.server) {
-      // `BunServeOptions` is the open shape srvx accepts (see
-      // `src/types/README.md`); `Bun.serve` overloads on mutually exclusive
-      // tcp/unix variants that no single object type satisfies.
-      this.bun!.server = Bun.serve(this.serveOptions as Bun.Serve.Options<any>);
+      try {
+        this.#listen();
+      } catch (error) {
+        // A crashed process may have left the unix socket file behind.
+        const stale = removeStaleSocket(this.serveOptions?.unix, error);
+        if (!stale) {
+          throw error;
+        }
+        return (this.#listening = stale.then(() => {
+          this.#listen();
+          printListening(this.options, this.url);
+          return this;
+        }));
+      }
     }
     printListening(this.options, this.url);
     return Promise.resolve(this);
+  }
+
+  #listen(): void {
+    // `BunServeOptions` is the open shape srvx accepts (see
+    // `src/types/README.md`); `Bun.serve` overloads on mutually exclusive
+    // tcp/unix variants that no single object type satisfies.
+    this.bun!.server = Bun.serve(this.serveOptions as Bun.Serve.Options<any>);
   }
 
   get url(): string | undefined {
@@ -119,8 +144,12 @@ class BunServer implements Server<BunFetchHandler> {
       return;
     }
     // Prefer address since server.url hostname is not reliable
-    const address = (server as { address?: { address: string; family: string; port: number } })
-      .address;
+    const address = (
+      server as { address?: string | { address: string; family: string; port: number } }
+    ).address;
+    if (typeof address === "string") {
+      return address; // unix socket (same as node)
+    }
     if (address) {
       return fmtURL(address.address, address.port, (server as any).protocol === "https");
     }
@@ -128,7 +157,7 @@ class BunServer implements Server<BunFetchHandler> {
   }
 
   ready(): Promise<this> {
-    return Promise.resolve(this);
+    return this.#listening ?? Promise.resolve(this);
   }
 
   async close(closeAll?: boolean): Promise<void> {

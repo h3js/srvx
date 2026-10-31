@@ -8,6 +8,8 @@
 export interface DenoServeOptions {
   port?: number;
   hostname?: string;
+  path?: string;
+  transport?: "tcp" | "unix";
   reusePort?: boolean;
   signal?: AbortSignal;
   key?: string;
