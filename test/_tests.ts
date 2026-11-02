@@ -186,8 +186,7 @@ export function addTests(opts: {
     });
   });
 
-  // TODO: Investigate writing test for HTTP2/TLS (https://github.com/h3js/srvx/issues/235)
-  test.skipIf(opts.http2)("response stream error", async () => {
+  test("response stream error", async () => {
     const res = await fetch(url("/response/stream-error"));
     expect(res.status).toBe(200);
     const reader = res.body?.getReader();
