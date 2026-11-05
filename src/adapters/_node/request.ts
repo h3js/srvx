@@ -114,6 +114,7 @@ export const NodeRequest: {
     #request?: globalThis.Request;
     #headers?: NodeRequestHeaders;
     #abortController?: AbortController;
+    #completed?: Promise<void>;
     #maxRequestBodySize?: number;
     #trustProxy?: TrustProxyOption;
     #ip?: string;
@@ -261,6 +262,26 @@ export const NodeRequest: {
 
     get signal() {
       return this.#request ? this.#request.signal : this._abortController.signal;
+    }
+
+    // `res` emits `close` exactly once, after the response was flushed or the
+    // connection went away. Created lazily, so check whether it already did:
+    // `closed` is HTTP/1-only, HTTP/2 tracks it on the underlying stream.
+    get completed(): Promise<void> | undefined {
+      const res = this.runtime!.node!.res;
+      if (!this.#completed && res) {
+        this.#completed = new Promise<void>((resolve) => {
+          const closed =
+            (res as { closed?: boolean }).closed ??
+            (res as { stream?: { closed?: boolean } }).stream?.closed;
+          if (closed) {
+            resolve();
+          } else {
+            res.once("close", () => resolve());
+          }
+        });
+      }
+      return this.#completed;
     }
 
     // Per the fetch spec, GET/HEAD requests always have a null body regardless of

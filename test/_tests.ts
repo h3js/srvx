@@ -442,4 +442,50 @@ export function addTests(opts: {
     expect(res.statusCode).toBe(200);
     expect(body).toBe("ok");
   });
+
+  // Kept after "total aborts": the abort case below adds a request abort.
+  describe("request.completed", () => {
+    let nextId = 0;
+    const completedLog = (): Promise<string[]> =>
+      fetch(url("/completed-log")).then((res) => res.json());
+    const waitCompleted = async (id: string) => {
+      for (let i = 0; i < 50; i++) {
+        if ((await completedLog()).includes(id)) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(`request.completed did not settle for ${id}`);
+    };
+
+    test("resolves after a buffered response", async () => {
+      const id = `buffered-${nextId++}`;
+      const res = await fetch(url(`/completed?id=${id}`));
+      expect(await res.text()).toBe("ok");
+      await waitCompleted(id);
+    });
+
+    test("resolves after a streamed response, not before", async () => {
+      const id = `stream-${nextId++}`;
+      const res = await fetch(url(`/completed?id=${id}&chunks=3`));
+      const reader = res.body!.getReader();
+      await reader.read();
+      expect(await completedLog()).not.toContain(id);
+      let body = "";
+      for (let r = await reader.read(); !r.done; r = await reader.read()) {
+        body += new TextDecoder().decode(r.value);
+      }
+      expect(body).toContain("chunk2");
+      await waitCompleted(id);
+    });
+
+    test.skipIf(isBunNodeCompat)("resolves when the client goes away", async () => {
+      const id = `abort-${nextId++}`;
+      const controller = new AbortController();
+      const res = await fetch(url(`/completed?id=${id}&chunks=-1`), {
+        signal: controller.signal,
+      });
+      await res.body!.getReader().read();
+      controller.abort();
+      await waitCompleted(id);
+    });
+  });
 }
