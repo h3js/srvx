@@ -173,6 +173,53 @@ describe("node adapter malformed responses (#290)", () => {
   });
 });
 
+describe("node adapter already-ended response", () => {
+  const handler = (req: ServerRequest) => {
+    req.runtime!.node!.res!.end("hi");
+    return new FastResponse("ignored");
+  };
+
+  test("serve() does not write after end", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      fetch: handler,
+    });
+    await server.ready();
+    try {
+      const res = await fetch(server.url!, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(captured).toEqual([]);
+    } finally {
+      await server.close(true);
+    }
+  });
+
+  test("toNodeHandler() does not write after end", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+
+    const server = createServer(toNodeHandler(handler) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(captured).toEqual([]);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
 // The in-process tests above run inside vitest, which installs its own
 // process-level error handlers -- so they can prove no error escapes, but not
 // that an *unguarded* process survives one. Spawn the shared fixture to check

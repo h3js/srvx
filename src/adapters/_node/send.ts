@@ -123,6 +123,12 @@ function _sendNodeResponse(
   webRes: Response | NodeResponse,
   detached: boolean,
 ): Promise<void> | void {
+  // The handler already completed the response (e.g. by writing directly to
+  // `req.runtime.node.res`), so there is nothing left to send.
+  if (nodeRes.writableEnded) {
+    return;
+  }
+
   if (!webRes) {
     nodeRes.statusCode = 500;
     return endNodeResponse(nodeRes, detached);
