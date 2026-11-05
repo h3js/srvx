@@ -1,7 +1,7 @@
 import { parseArgs as parseNodeArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { fork } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import * as c from "./_utils.ts";
 import type { CLIOptions, MainOptions } from "./types.ts";
 import { cliServe, NO_ENTRY_ERROR } from "./serve.ts";
@@ -70,6 +70,15 @@ export async function main(mainOpts: MainOptions): Promise<void> {
     );
   }
 
+  if (
+    !cliOpts.prod &&
+    (cliOpts.cluster ||
+      process.env.SRVX_WORKERS ||
+      envFiles.some((f) => /^\s*SRVX_WORKERS\s*=/m.test(readFileSync(f, "utf8"))))
+  ) {
+    console.log(c.yellow("Cluster mode is only available in production mode (--prod), ignoring."));
+  }
+
   // In prod mode without --import, run directly in current process (no fork needed)
   if (cliOpts.prod && !cliOpts.import) {
     // Load env files manually since we're not forking with --env-file args
@@ -111,6 +120,7 @@ function parseArgs(args: string[]): CLIOptions {
     url: { type: "string" },
     // --- Serve mode ---
     prod: { type: "boolean" },
+    cluster: { type: "string" },
     port: { type: "string", short: "p" },
     static: { type: "string", short: "s" },
     import: { type: "string" },
@@ -124,7 +134,32 @@ function parseArgs(args: string[]): CLIOptions {
     data: { type: "string", short: "d" },
   } as const;
 
-  const { values, positionals } = parseNodeArgs({ args, allowPositionals: true, options });
+  // Support both `--cluster` (worker count = CPU cores) and `--cluster <value>` / `--cluster=<value>`
+  const parseInput = args.map((arg, i) =>
+    arg === "--cluster" && !/^(\d+|true|false)$/.test(args[i + 1] || "") ? "--cluster=true" : arg,
+  );
+
+  const parsed = parseNodeArgs({ args: parseInput, allowPositionals: true, options });
+  const { positionals } = parsed;
+
+  // Convert `--cluster` value: "true" enables with default size, a number sets
+  // the size, "false" disables cluster mode entirely (including SRVX_WORKERS)
+  const { cluster: clusterArg, ...values } = parsed.values;
+  let cluster: boolean | number | undefined;
+  if (clusterArg !== undefined) {
+    if (clusterArg === "true") {
+      cluster = true;
+    } else if (clusterArg === "false") {
+      cluster = false;
+    } else {
+      cluster = Number(clusterArg);
+      if (!Number.isInteger(cluster) || cluster <= 0) {
+        throw new Error(
+          `Invalid --cluster value: "${clusterArg}" (expected a positive integer, "true" or "false")`,
+        );
+      }
+    }
+  }
 
   // Detect mode from the first real positional (the subcommand), then drop it.
   let mode: "serve" | "fetch" = "serve";
@@ -168,7 +203,7 @@ function parseArgs(args: string[]): CLIOptions {
     }
   }
 
-  return { mode, ...values, prod };
+  return { mode, ...values, prod, cluster };
 }
 
 async function startServer(cliOpts: CLIOptions) {
