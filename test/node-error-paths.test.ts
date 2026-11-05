@@ -218,6 +218,39 @@ describe("node adapter already-ended response", () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test("a stream body that will not be sent is cancelled", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+    let cancelled = false;
+    const body = new ReadableStream({
+      start() {},
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      fetch: (req) => {
+        req.runtime!.node!.res!.end("hi");
+        return new Response(body);
+      },
+    });
+    await server.ready();
+    try {
+      const res = await fetch(server.url!, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(cancelled).toBe(true);
+      expect(captured).toEqual([]);
+    } finally {
+      await server.close(true);
+    }
+  });
 });
 
 // The in-process tests above run inside vitest, which installs its own

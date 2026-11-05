@@ -123,10 +123,8 @@ function _sendNodeResponse(
   webRes: Response | NodeResponse,
   detached: boolean,
 ): Promise<void> | void {
-  // The handler already completed the response (e.g. by writing directly to
-  // `req.runtime.node.res`), so there is nothing left to send.
   if (nodeRes.writableEnded) {
-    return;
+    return handleAlreadyEndedResponse(nodeRes, webRes, detached);
   }
 
   if (!webRes) {
@@ -162,6 +160,45 @@ function _sendNodeResponse(
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
   return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes, detached);
+}
+
+// The handler already ended the response, so there is nothing left to write.
+// Dispose of any unsent body, and for the non-detached path wait for the
+// response to finish flushing so the returned promise keeps its contract.
+function handleAlreadyEndedResponse(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse,
+  detached: boolean,
+): Promise<void> | void {
+  disposeResponseBody(webRes);
+  if (detached || nodeRes.writableFinished || nodeRes.destroyed) {
+    return;
+  }
+  return new Promise<void>((resolve) => {
+    nodeRes.once("finish", resolve);
+    nodeRes.once("close", resolve);
+  });
+}
+
+function disposeResponseBody(webRes: Response | NodeResponse | undefined): void {
+  if (!webRes) {
+    return;
+  }
+  const body = (webRes as NodeResponse)._toNodeResponse
+    ? (webRes as NodeResponse)._toNodeResponse().body
+    : (webRes as Response).body;
+  if (body instanceof ReadableStream) {
+    body.cancel().catch(() => {});
+    return;
+  }
+  if (!body) {
+    return;
+  }
+  if (typeof (body as NodeReadable).destroy === "function") {
+    (body as NodeReadable).destroy();
+  } else {
+    (body as { abort?: () => void }).abort?.();
+  }
 }
 
 function writeHead(
