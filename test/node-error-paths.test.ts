@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test } from "vitest";
-import { FastResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
-import type { NodeHttp1Handler, ServerRequest } from "../src/types.ts";
+import { FastResponse, sendNodeResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
+import type { NodeHttp1Handler, NodeServerResponse, ServerRequest } from "../src/types.ts";
 import { addExecUnhandledThrowTests } from "./_error-tests.ts";
 
 // Shared by the suites below: each captures process-level errors to assert that
@@ -250,6 +251,30 @@ describe("node adapter already-ended response", () => {
     } finally {
       await server.close(true);
     }
+  });
+
+  test("sendNodeResponse waits for finish when already ended", async () => {
+    const nodeRes = Object.assign(new EventEmitter(), {
+      writableEnded: true,
+      writableFinished: false,
+      destroyed: false,
+    });
+
+    let settled = false;
+    const sent = sendNodeResponse(
+      nodeRes as unknown as NodeServerResponse,
+      new FastResponse("ignored"),
+    );
+    void sent.then(() => {
+      settled = true;
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    nodeRes.emit("finish");
+    await sent;
+    expect(settled).toBe(true);
   });
 });
 
