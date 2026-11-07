@@ -17,6 +17,16 @@ export interface PreparedNodeResponse {
 }
 
 /**
+ * Replaces the headers of a response init.
+ *
+ * `init` may be a `Response` (e.g. `new Response(res.body, res)`), whose
+ * `status` and `statusText` are prototype getters that an object spread drops.
+ */
+function withHeaders(init: ResponseInit | undefined, headers: HeadersInit): ResponseInit {
+  return { ...init, status: init?.status, statusText: init?.statusText, headers };
+}
+
+/**
  * Fast Response for Node.js runtime
  *
  * It is faster because in most cases it doesn't create a full Response instance.
@@ -72,7 +82,7 @@ export const NodeResponse: {
         }
         headers = merged;
       }
-      return new NodeResponse(body, init ? { ...init, headers } : { headers });
+      return new NodeResponse(body, init ? withHeaders(init, headers) : { headers });
     }
 
     get status(): number {
@@ -148,7 +158,7 @@ export const NodeResponse: {
 
       this.#response = new NativeResponse(
         body,
-        this.#headers ? { ...this.#init, headers: this.#headers } : this.#init,
+        this.#headers ? withHeaders(this.#init, this.#headers) : this.#init,
       );
       this.#init = undefined;
       this.#headers = undefined;
