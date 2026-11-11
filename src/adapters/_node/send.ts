@@ -144,12 +144,10 @@ function _sendNodeResponse(
         return pipeBody(res.body as NodeReadable, nodeRes, res.status, res.statusText, res.headers);
       }
       writeHead(nodeRes, res.status, res.statusText, res.headers);
-      // Note: NodeHttp2ServerResponse.write() body type declared as string | Uint8Array
-      // We explicitly test other types in runtime.
-      (nodeRes as NodeHttp.ServerResponse).write(res.body);
-    } else {
-      writeHead(nodeRes, res.status, res.statusText, res.headers);
+      // Buffered body (string / Uint8Array / Buffer)
+      return endNodeResponse(nodeRes, detached, res.body as string | Uint8Array);
     }
+    writeHead(nodeRes, res.status, res.statusText, res.headers);
     return endNodeResponse(nodeRes, detached);
   }
 
@@ -241,12 +239,36 @@ function safeStatusText(statusText: string): string {
     : statusText;
 }
 
-function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
+// A buffered `body` goes through `end(body)` rather than `write(body); end()`:
+// a separate `write()` corks the socket until the next tick and costs an extra
+// internal write, while `end(body)` flushes headers and body in one go (Node
+// >= 22 also attaches the finish callback to that final write).
+function endNodeResponse(
+  nodeRes: NodeServerResponse,
+  detached?: boolean,
+  body?: string | Uint8Array,
+): Promise<void> | void {
+  // Cast: the HTTP/1 and HTTP/2 `end()` overloads don't unify, but both take
+  // `(chunk?, cb?)`.
+  const res = nodeRes as NodeHttp.ServerResponse;
   if (detached) {
-    nodeRes.end();
+    res.end(body);
     return;
   }
-  return new Promise<void>((resolve) => nodeRes.end(resolve));
+  return new Promise<void>((resolve) => {
+    // `end()`'s callback never fires once the client is gone (HTTP/1.1 socket
+    // closed before or while sending, HTTP/2 stream reset mid-body), so also
+    // settle on `close` -- or right away if the response is already destroyed
+    // and `close` may have been emitted.
+    if (nodeRes.destroyed) {
+      res.end(body);
+      return resolve();
+    }
+    // `on` (not `once`): skips the once-wrapper allocation on this per-response
+    // path; `close` fires at most once and a second `resolve()` is a no-op.
+    nodeRes.on("close", resolve);
+    res.end(body, resolve);
+  });
 }
 
 function pipeBody(
