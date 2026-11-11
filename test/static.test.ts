@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { staticMiddleware, type StaticMiddlewareOptions } from "../src/static.ts";
-import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
 
 let tmp: string;
@@ -245,13 +244,13 @@ const expectNext = async (res: Response, label?: string) => {
 
 // `new Request()` collapses dot segments in its constructor, so a request built
 // through it hands the middleware an already-resolved pathname and can never
-// exercise the containment check. `FastURL`'s origin-form fast path returns the
-// target verbatim (`_searchNeedsNormRE` in `_url.ts` does not deopt on `..`),
-// which is the one way an unresolved pathname reaches `static.ts` — so build
-// `_url` directly to test the check rather than the test harness.
+// exercise the containment check. `FastURL` resolves `..` and `\` like native
+// `URL` too, so only a hand-built `req._url` can carry an unresolved pathname
+// into `static.ts` — stub one (the middleware reads only `pathname`) to test
+// the check rather than the test harness.
 const rawReq = (path: string) => {
   const request = new Request("http://localhost/") as unknown as ServerRequest;
-  request._url = new FastURL(path);
+  request._url = { pathname: path } as unknown as URL;
   return request;
 };
 
@@ -1253,7 +1252,7 @@ describe("staticMiddleware", () => {
       // Its name needs `%5C`, which Windows would read as a separator: refused
       // on every platform, so a URL maps to the same file everywhere.
       await expectNext(await fetchStatic("/back%5Cslash.txt"));
-      // A raw `\` too, which only a hand-built origin-form `_url` keeps.
+      // A raw `\` too, which only a hand-built `_url` can carry.
       await expectNext(await fetchRaw("/back\\slash.txt"));
     });
 

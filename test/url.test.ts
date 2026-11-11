@@ -1,5 +1,5 @@
 import net from "node:net";
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { FastURL } from "../src/_url.ts";
 import { serve } from "../src/adapters/node.ts";
 import { NodeRequestURL } from "../src/adapters/_node/url.ts";
@@ -216,6 +216,79 @@ describe("FastURL", () => {
         expect(url.href, ".href").toBe(std.href);
       });
     }
+
+    // The origin-form string fast path must apply the same path checks as the
+    // `URLInit` path (dot segments, `\`, path percent-encode set), not just the
+    // query set, and must split off the query before matching dot segments.
+    const needsNorm = [
+      "/a/../b",
+      "/a/..",
+      "/a/.",
+      "/../../etc/passwd",
+      "/files/../../../secret.env",
+      "/a/%2e%2e/b",
+      "/a/.%2E/b",
+      "/a/..?x=1",
+      "/a/.?x=1",
+      "/a\\b",
+      "/a^b",
+      "/a{b}",
+      "/a`b",
+      "/a?b='x'",
+      '/a?b="x"',
+    ] as const;
+
+    for (const input of needsNorm) {
+      test(`FastURL ${JSON.stringify(input)} normalizes like native`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.href, ".href").toBe(std.href);
+      });
+    }
+
+    // Path-set chars and dot segments in the query stay verbatim there
+    // (native leaves them raw too), so they must not change `search`.
+    test("path-set chars and dot segments in the query match native", () => {
+      for (const input of ["/p?a=^", "/p?a={b}", "/p?a=`", "/p?a=\\b", "/p?a=..", "/p?a=/../"]) {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, `${input} .pathname`).toBe(std.pathname);
+        expect(url.search, `${input} .search`).toBe(std.search);
+        expect(url.href, `${input} .href`).toBe(std.href);
+      }
+    });
+
+    // Guard against over-deopting: canonical targets stay on the fast path,
+    // which never reads the native `pathname`/`search` getters.
+    test("canonical targets stay on the fast path", () => {
+      const pathname = vi.spyOn(URL.prototype, "pathname", "get");
+      const search = vi.spyOn(URL.prototype, "search", "get");
+      try {
+        for (const input of [
+          "/",
+          "/api/users/123?x=1",
+          "/a.b/c.d?x=1&y=2",
+          "/.well-known/x",
+          "/a/...",
+          "/a?",
+          "/path%20with%20space",
+        ]) {
+          const url = new FastURL(input);
+          void url.pathname;
+          void url.search;
+          expect(pathname, input).not.toHaveBeenCalled();
+          expect(search, input).not.toHaveBeenCalled();
+        }
+        // Sanity: a deopted target does hit the native getters.
+        void new FastURL("/a/../b").pathname;
+        expect(pathname).toHaveBeenCalled();
+      } finally {
+        pathname.mockRestore();
+        search.mockRestore();
+      }
+    });
   });
 
   describe("HTTP/2-reachable chars (control, space, DEL, non-ASCII)", () => {
