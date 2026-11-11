@@ -35,8 +35,9 @@ export type AWSLambdaResponseStream = NodeJS.WritableStream & {
 
 // -- Incoming/Outgoing types --
 
+// `headers` is absent only for ALB multi-value results (see `awsResponseHeaders`).
 export interface AWSResponseHeaders {
-  headers: Record<string, string>;
+  headers?: Record<string, string>;
   cookies?: string[];
   multiValueHeaders?: Record<string, string[]>;
 }
@@ -271,7 +272,7 @@ export function awsEventBody(event: AWSEvent): ResponseBody | undefined {
 // Outgoing (Web => AWS)
 
 export function awsResponseHeaders(response: Response, event?: AWSEvent): AWSResponseHeaders {
-  const headers = Object.create(null);
+  const headers: Record<string, string> = Object.create(null);
   for (const [key, value] of response.headers) {
     // `Headers` iteration yields one entry per `set-cookie`, so a flat record
     // can only keep the last one, while the full list is carried below by
@@ -288,6 +289,25 @@ export function awsResponseHeaders(response: Response, event?: AWSEvent): AWSRes
   }
 
   const cookies = response.headers.getSetCookie();
+
+  // ALB only reads `multiValueHeaders` when the target group has multi-value
+  // headers enabled ("You must use `multiValueHeaders` if you have enabled
+  // multi-value headers and `headers` otherwise"), so a flat record — and every
+  // header in it, `content-type` included — would be dropped. That same setting
+  // renames the *request* fields, so `multiValueHeaders` on the event is what
+  // tells the two configurations apart. Every header goes into the multi-value
+  // record and the flat one is left out entirely (as Mangum and Powertools do).
+  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
+  if (event && isALBEvent(event) && event.multiValueHeaders) {
+    const multiValueHeaders: Record<string, string[]> = Object.create(null);
+    for (const [key, value] of Object.entries(headers)) {
+      multiValueHeaders[key] = [value];
+    }
+    if (cookies.length > 0) {
+      multiValueHeaders["set-cookie"] = cookies;
+    }
+    return { multiValueHeaders };
+  }
 
   if (cookies.length === 0) {
     return { headers };
@@ -307,17 +327,12 @@ export function awsResponseHeaders(response: Response, event?: AWSEvent): AWSRes
     return { headers, cookies };
   }
 
-  // ALB only reads `multiValueHeaders` when the target group has multi-value
-  // headers enabled ("You must use `multiValueHeaders` if you have enabled
-  // multi-value headers and `headers` otherwise"). That same setting renames
-  // the *request* fields, so an ALB event without `multiValueHeaders` means the
-  // flat record is the only channel back and dropping `set-cookie` from it
+  // An ALB event without `multiValueHeaders` (multi-value handled above) means
+  // the flat record is the only channel back, and dropping `set-cookie` from it
   // would lose the cookie entirely. Only one fits, and the docs state the
   // last-wins rule for requests only, so the last cookie is sent on the same
   // principle — and because it is what this adapter sent before.
-  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
-  const albEvent = event as AWSLambdaProxyEvent | undefined;
-  if (albEvent?.requestContext?.elb && !albEvent.multiValueHeaders) {
+  if (event && isALBEvent(event)) {
     headers["set-cookie"] = cookies[cookies.length - 1];
     return { headers };
   }
@@ -361,8 +376,14 @@ export async function awsStreamResponse(
 
   let writer: NodeJS.WritableStream | undefined;
   const startWriter = (hasBody: boolean): NodeJS.WritableStream => {
-    if (hasBody && !isBodylessStatus(response.status) && !metadata.headers!["transfer-encoding"]) {
-      metadata.headers!["transfer-encoding"] = "chunked";
+    if (hasBody && !isBodylessStatus(response.status)) {
+      // ALB multi-value events yield `multiValueHeaders` only. ALB cannot
+      // stream, but a misrouted event should still not crash here.
+      if (metadata.headers) {
+        metadata.headers["transfer-encoding"] ||= "chunked";
+      } else if (metadata.multiValueHeaders) {
+        metadata.multiValueHeaders["transfer-encoding"] ||= ["chunked"];
+      }
     }
     // awslambda is a global provided by Lambda runtime
     writer = (globalThis as any).awslambda.HttpResponseStream.from(responseStream, metadata);

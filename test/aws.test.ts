@@ -1216,30 +1216,47 @@ describe("[AWS Lambda] Request Utils", () => {
         // `multiValueHeaders` would be ignored by this target group, so the flat
         // record is the only way the cookie reaches the client.
         expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
-        expect(awsResponse.headers["set-cookie"]).toBe("a=1; Path=/");
-        expect(awsResponse.headers["content-type"]).toBe("application/json");
+        expect(awsResponse.headers?.["set-cookie"]).toBe("a=1; Path=/");
+        expect(awsResponse.headers?.["content-type"]).toBe("application/json");
       });
 
       test("keeps the last cookie when multi-value is off, matching ALB's own last-wins rule", () => {
         const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(false));
 
-        expect(awsResponse.headers["set-cookie"]).toBe("b=2");
+        expect(awsResponse.headers?.["set-cookie"]).toBe("b=2");
         expect(awsResponse.cookies).toBeUndefined();
         expect(awsResponse.multiValueHeaders).toBeUndefined();
       });
 
-      test("uses multiValueHeaders when the event carries them", () => {
+      // A multi-value target group ignores the flat `headers` record, so every
+      // header (not only `set-cookie`) has to go into `multiValueHeaders`.
+      test("returns every header in multiValueHeaders when the event carries them", () => {
         const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(true));
 
-        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
-        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
-        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+        expect(Object.keys(awsResponse)).toEqual(["multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({
+          "content-type": ["application/json"],
+          "set-cookie": ["a=1", "b=2"],
+        });
       });
 
-      test("leaves cookie-less ALB responses untouched", () => {
+      test("returns multiValueHeaders for cookie-less multi-value responses too", () => {
+        const awsResponse = awsResponseHeaders(
+          new Response("{}", { headers: { "content-type": "application/json", "x-a": "1" } }),
+          albEvent(true),
+        );
+
+        expect(Object.keys(awsResponse)).toEqual(["multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({
+          "content-type": ["application/json"],
+          "x-a": ["1"],
+        });
+      });
+
+      test("leaves cookie-less single-value ALB responses untouched", () => {
         const awsResponse = awsResponseHeaders(new Response("{}"), albEvent(false));
 
-        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(awsResponse.headers?.["set-cookie"]).toBeUndefined();
         expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
       });
     });
@@ -1277,12 +1294,12 @@ describe("[AWS Lambda] Request Utils", () => {
       });
 
       const v1 = awsResponseHeaders(response);
-      expect(v1.headers["set-cookie"]).toBeUndefined();
-      expect(v1.headers["content-type"]).toBe("application/json");
+      expect(v1.headers?.["set-cookie"]).toBeUndefined();
+      expect(v1.headers?.["content-type"]).toBe("application/json");
       expect(v1.multiValueHeaders).toEqual({ "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"] });
 
       const v2 = awsResponseHeaders(response, { version: "2.0" } as APIGatewayProxyEventV2);
-      expect(v2.headers["set-cookie"]).toBeUndefined();
+      expect(v2.headers?.["set-cookie"]).toBeUndefined();
       expect(v2.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
       expect(v2.multiValueHeaders).toBeUndefined();
     });
@@ -1294,7 +1311,7 @@ describe("[AWS Lambda] Request Utils", () => {
         version: "2.0",
       } as APIGatewayProxyEventV2);
 
-      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+      expect(awsResponse.headers?.["set-cookie"]).toBeUndefined();
       expect(awsResponse.cookies).toEqual(["a=1"]);
     });
 
@@ -1311,7 +1328,7 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.headers.accept).toBe("application/json, text/html, text/plain");
+      expect(awsResponse.headers?.accept).toBe("application/json, text/html, text/plain");
     });
 
     test("should handle null/undefined header values", () => {
@@ -1328,9 +1345,9 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.headers["valid-header"]).toBe("valid-value");
-      expect(awsResponse.headers["null-header"]).toBe("null");
-      expect(awsResponse.headers["undefined-header"]).toBe("undefined");
+      expect(awsResponse.headers?.["valid-header"]).toBe("valid-value");
+      expect(awsResponse.headers?.["null-header"]).toBe("null");
+      expect(awsResponse.headers?.["undefined-header"]).toBe("undefined");
     });
 
     test("should throw error for invalid response", () => {
@@ -2075,6 +2092,36 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(getChunks().length).toBeGreaterThan(0);
       expect(isEndCalled()).toBe(true);
       expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    // ALB cannot stream, but a multi-value event (no flat `headers` in the
+    // metadata) handed here must not crash.
+    test("should not crash on an ALB multi-value event", async () => {
+      const { mockStream, getMetadata, isEndCalled } = createMockResponseStream();
+
+      const event = {
+        requestContext: { elb: { targetGroupArn: "arn:aws:elasticloadbalancing:::tg" } },
+        httpMethod: "GET",
+        path: "/",
+        multiValueHeaders: { host: ["lb.elb.amazonaws.com"] },
+        body: null,
+        isBase64Encoded: false,
+      } satisfies ALBEvent;
+
+      await awsStreamResponse(
+        new Response("hi", { headers: { "content-type": "text/plain" } }),
+        mockStream,
+        event,
+      );
+
+      expect(getMetadata()).toEqual({
+        statusCode: 200,
+        multiValueHeaders: {
+          "content-type": ["text/plain"],
+          "transfer-encoding": ["chunked"],
+        },
+      });
+      expect(isEndCalled()).toBe(true);
     });
 
     test("should handle empty response body", async () => {
