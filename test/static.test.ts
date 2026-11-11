@@ -113,6 +113,18 @@ beforeAll(async () => {
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
 
+  // Every unreserved punctuation character (RFC 3986 §2.3), in one name.
+  await writeFile(join(dir, "a-b_c~d.txt"), "UNRESERVED_NAME");
+
+  // A directory literally named `%2Fsub`: its one canonical URL is `/%252Fsub/`.
+  await mkdir(join(dir, "%2Fsub"), { recursive: true });
+  await writeFile(join(dir, "%2Fsub", "inside.txt"), "LITERAL_ESCAPED_SLASH");
+
+  // A backslash is an ordinary name character on POSIX (a separator on Windows).
+  if (sep !== "\\") {
+    await writeFile(join(dir, "back\\slash.txt"), "BACKSLASH_NAME");
+  }
+
   // Extensions whose MIME mapping is pinned below; the contents never matter.
   for (const name of ["mod.wasm", "pic.avif", "song.mp3", "bundle.gz"]) {
     await writeFile(join(dir, name), "X");
@@ -273,9 +285,9 @@ describe("staticMiddleware", () => {
       await expect(res.text()).resolves.toContain("sub index");
     });
 
-    test.each(["/sub/", "/sub//"])("serves <dir>/index.html for %s", async (path) => {
-      const res = await fetchStatic(path);
-      expect(res.status, path).toBe(200);
+    test("serves <dir>/index.html for /sub/", async () => {
+      const res = await fetchStatic("/sub/");
+      expect(res.status).toBe(200);
       await expect(res.text()).resolves.toContain("sub index");
     });
 
@@ -1105,31 +1117,86 @@ describe("staticMiddleware", () => {
       await expect(res.text()).resolves.toBe(contents);
     });
 
+    test("serves unreserved characters at their unencoded URL", async () => {
+      await expect(fetchStatic("/a-b_c~d.txt").then((r) => r.text())).resolves.toBe(
+        "UNRESERVED_NAME",
+      );
+    });
+
     test.each([
-      // The decoded lookup is for a file literally named `sub%2Finside.txt`.
+      // No file name can hold a `/`, so an encoded one never names a file.
       "/sub%2Finside.txt",
-      // `%2f` survives `decodeURI`, so this stays a single literal filename
-      // rather than traversing. Reaches the middleware verbatim: `new Request()`
-      // only collapses real separators.
+      // Never decoded into a separator, so this cannot traverse. Reaches the
+      // middleware verbatim: `new Request()` only collapses real separators.
       "/%2e%2e%2foutside%2fsecret.txt",
-    ])("keeps the encoded separator in %s encoded", async (path) => {
+    ])("serves nothing for the encoded separator in %s", async (path) => {
       await expectNext(await fetchStatic(path), path);
     });
 
-    test("applies the dotfile policy to the decoded name", async () => {
-      expect((await fetchStatic("/%2Eenv")).status).toBe(404);
-      await expect(fetchStatic("/%2Eenv", { dotfiles: true }).then((r) => r.text())).resolves.toBe(
+    test("serves a literal `%2F` in a name only at its `%252F` URL", async () => {
+      await expect(fetchStatic("/%252Fsub/inside.txt").then((r) => r.text())).resolves.toBe(
+        "LITERAL_ESCAPED_SLASH",
+      );
+      // `decodeURI` keeps `%2F`, so this would reach the same `%2Fsub` directory.
+      await expectNext(await fetchStatic("/%2Fsub/inside.txt"));
+      await expectNext(await fetchStatic("/%2fsub/inside.txt"));
+    });
+
+    test.each([
+      // Encoded unreserved characters (RFC 3986 §2.3), in either hex case: a
+      // URL differing only by these is the same URL, so each would mint a second
+      // one for a file — and an earlier `startsWith("/sub")` check misses it.
+      "/%73ub/inside.txt",
+      "/%73%75%62/inside.txt",
+      "/sub/%69nside.txt",
+      "/sub/inside%2Etxt",
+      "/sub/inside%2etxt",
+      "/%61bout",
+      "/abou%74",
+      "/%350%25.txt",
+      "/hello%20world%2Etxt",
+      "/caf%C3%A9%2Etxt",
+      "/a%2Db_c~d.txt",
+      "/a-b%5Fc~d.txt",
+      "/a-b_c%7Ed.txt",
+      "/a-b_c%7ed.txt",
+      // Empty segments, which `join()` would collapse onto `sub/inside.txt`.
+      "//sub/inside.txt",
+      "/sub//inside.txt",
+      "/sub//",
+      "//",
+      // An encoded backslash, a separator on Windows: `sub\inside.txt` there.
+      "/sub%5Cinside.txt",
+      "/sub%5cinside.txt",
+      // An encoded NUL never reaches the filesystem.
+      "/index.html%00",
+      "/index%00.html",
+    ])("serves nothing at the non-canonical %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
+    });
+
+    test.skipIf(sep === "\\")("serves no file named with a backslash", async () => {
+      // Its name needs `%5C`, which Windows would read as a separator: refused
+      // on every platform, so a URL maps to the same file everywhere.
+      await expectNext(await fetchStatic("/back%5Cslash.txt"));
+    });
+
+    test("never serves an encoded dot, whatever the dotfile policy", async () => {
+      // `%2E` is an encoded unreserved `.`, so `/.env` is the only URL a
+      // dotfile is served at — and the one the policy checks.
+      await expectNext(await fetchStatic("/%2Eenv"));
+      await expectNext(await fetchStatic("/%2Eenv", { dotfiles: true }));
+      await expect(fetchStatic("/.env", { dotfiles: true }).then((r) => r.text())).resolves.toBe(
         "DOTENV",
       );
     });
 
-    test("applies the dotfile allow-list to the decoded name", async () => {
-      // The allow-list is matched after decoding, so an encoded `.well-known`
-      // is neither denied as an unknown dot segment nor let through unchecked.
-      await expect(fetchStatic("/%2Ewell-known/security.txt").then((r) => r.text())).resolves.toBe(
+    test("never serves an encoded allow-listed dot segment", async () => {
+      await expectNext(await fetchStatic("/%2Ewell-known/security.txt"));
+      await expectNext(await fetchStatic("/%2Ewell-known/%2Eenv"));
+      await expect(fetchStatic("/.well-known/security.txt").then((r) => r.text())).resolves.toBe(
         "SECURITY_TXT",
       );
-      expect((await fetchStatic("/%2Ewell-known/%2Eenv")).status).toBe(404);
     });
 
     test("does not decode twice", async () => {
