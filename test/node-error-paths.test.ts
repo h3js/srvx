@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, test } from "vitest";
-import { FastResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
-import type { NodeHttp1Handler, ServerRequest } from "../src/types.ts";
+import { FastResponse, sendNodeResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
+import type { NodeHttp1Handler, NodeServerResponse, ServerRequest } from "../src/types.ts";
 import { addExecUnhandledThrowTests } from "./_error-tests.ts";
 
 // Shared by the suites below: each captures process-level errors to assert that
@@ -171,6 +173,149 @@ describe("node adapter malformed responses (#290)", () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+});
+
+describe("node adapter already-ended response", () => {
+  const handler = (req: ServerRequest) => {
+    req.runtime!.node!.res!.end("hi");
+    return new FastResponse("ignored");
+  };
+
+  test("serve() does not write after end", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      fetch: handler,
+    });
+    await server.ready();
+    try {
+      const res = await fetch(server.url!, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(captured).toEqual([]);
+    } finally {
+      await server.close(true);
+    }
+  });
+
+  test("toNodeHandler() does not write after end", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+
+    const server = createServer(toNodeHandler(handler) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(captured).toEqual([]);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test("a stream body that will not be sent is cancelled", async () => {
+    const captured = captureProcessErrors("uncaughtException");
+    let cancelled = false;
+    const body = new ReadableStream({
+      start() {},
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      fetch: (req) => {
+        req.runtime!.node!.res!.end("hi");
+        return new Response(body);
+      },
+    });
+    await server.ready();
+    try {
+      const res = await fetch(server.url!, { signal: AbortSignal.timeout(1000) });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hi");
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(cancelled).toBe(true);
+      expect(captured).toEqual([]);
+    } finally {
+      await server.close(true);
+    }
+  });
+
+  test("sendNodeResponse waits for finish when already ended", async () => {
+    const nodeRes = Object.assign(new EventEmitter(), {
+      writableEnded: true,
+      writableFinished: false,
+      destroyed: false,
+    });
+
+    let settled = false;
+    const sent = sendNodeResponse(
+      nodeRes as unknown as NodeServerResponse,
+      new FastResponse("ignored"),
+    );
+    void sent.then(() => {
+      settled = true;
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    nodeRes.emit("finish");
+    await sent;
+    expect(settled).toBe(true);
+  });
+});
+
+// A discarded Node stream body is destroyed with no other listener attached. A
+// `_destroy()` that fails still emits `error`, which must not escape as an
+// `uncaughtException`.
+describe("node adapter discarded stream body with a failing destroy", () => {
+  function failingBody() {
+    const body = new Readable({
+      read() {},
+      destroy(_error, callback) {
+        callback(new Error("cleanup failed"));
+      },
+    });
+    body.push("hello");
+    return body as unknown as BodyInit;
+  }
+
+  for (const [name, method, handler] of [
+    ["null-body status", "GET", () => new FastResponse(failingBody(), { status: 204 })],
+    ["HEAD request", "HEAD", () => new FastResponse(failingBody())],
+    [
+      "already-ended response",
+      "GET",
+      (req: ServerRequest) => {
+        req.runtime!.node!.res!.end("hi");
+        return new FastResponse(failingBody());
+      },
+    ],
+  ] as const) {
+    test(name, async () => {
+      const captured = captureProcessErrors("uncaughtException");
+      await withServer(handler, async (url) => {
+        const res = await fetch(url, { method, signal: AbortSignal.timeout(1000) });
+        await res.arrayBuffer();
+        await new Promise((r) => setTimeout(r, 50));
+        expect(captured).toEqual([]);
+      });
+    });
+  }
 });
 
 // The in-process tests above run inside vitest, which installs its own

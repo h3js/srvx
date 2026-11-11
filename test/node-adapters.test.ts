@@ -3,7 +3,8 @@ import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
 import http2 from "node:http2";
 import { describe, expect, test, vi } from "vitest";
-import { getTLSCert } from "./_utils.ts";
+import { getTLSCert, HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
+import { isValidHost } from "../src/_trust-proxy.ts";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import {
@@ -191,6 +192,50 @@ describe("adapters", () => {
 
   test("toNodeHandler(toFetchHandler())", async () => {
     expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(simpleNodeHandler);
+  });
+
+  // See `hasBackslashInPath`. Bun/Deno parse the request line themselves.
+  test.skipIf(isDeno || isBun)("toNodeHandler rejects a raw backslash in the path", async () => {
+    // Explicit content-length so the raw response body can be compared exactly.
+    const webHandler = (request: Request) => {
+      const { pathname } = new URL(request.url);
+      return new Response(pathname, { headers: { "content-length": String(pathname.length) } });
+    };
+    const nodeHandler = toNodeHandler(webHandler) as NodeHttp1Handler;
+    const plain = createServer(nodeHandler);
+    // Mounted under express: `/public/` matches the raw target and the mounted
+    // `req.url` becomes `/\..\admin/secret`, which resolves to `/admin/secret`.
+    const mounted = createServer(express().use("/public", nodeHandler));
+    const send = async (server: ReturnType<typeof createServer>, target: string) => {
+      const { port } = server.address() as AddressInfo;
+      const raw = await rawExchange(
+        port,
+        "127.0.0.1",
+        `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+      );
+      const text = raw.toString("latin1");
+      return { status: Number(text.split(" ")[1]), body: text.split("\r\n\r\n")[1] ?? "" };
+    };
+    try {
+      await Promise.all(
+        [plain, mounted].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))),
+      );
+      expect((await send(plain, String.raw`/public\..\admin/secret`)).status).toBe(400);
+      expect((await send(mounted, String.raw`/public/\..\admin/secret`)).status).toBe(400);
+      // Accepted: encoded `%5C`, `\` in the query, and a normal mounted path.
+      for (const [server, target, pathname] of [
+        [plain, "/a%5Cb", "/a%5Cb"],
+        [plain, String.raw`/x?q=\a`, "/x"],
+        [mounted, "/public/x", "/x"],
+      ] as const) {
+        const res = await send(server, target);
+        expect(res.status, target).toBe(200);
+        expect(res.body, target).toBe(pathname);
+      }
+    } finally {
+      plain.close();
+      mounted.close();
+    }
   });
 
   // https://github.com/h3js/srvx/issues/208
@@ -1278,20 +1323,40 @@ describe("FastResponse header dedup", () => {
 describe("FastResponse keeps derived content-length once materialized", () => {
   const view = new DataView(new Uint8Array([0, 1, 2, 3, 4, 5]).buffer, 1, 3);
   const cases: [string, () => BodyInit, string, string | null][] = [
-    ["string", () => "héllo", "6", "text/plain; charset=UTF-8"],
-    ["empty string", () => "", "0", "text/plain; charset=UTF-8"],
+    ["string", () => "héllo", "6", "text/plain;charset=UTF-8"],
+    ["empty string", () => "", "0", "text/plain;charset=UTF-8"],
     ["ArrayBuffer", () => new ArrayBuffer(4), "4", null],
     ["Uint8Array", () => new Uint8Array(7), "7", null],
     ["DataView", () => view, "3", null],
     ["Blob", () => new Blob(["abc"], { type: "text/css" }), "3", "text/css"],
   ];
 
-  test.skipIf(noBunCompat).each(cases)("%s body", (_, body, length, type) => {
-    const res = new FastResponse(body());
-    void res.body;
-    expect(res.headers.get("content-length")).toBe(length);
-    expect(res.headers.get("content-type")).toBe(type);
-  });
+  test.skipIf(noBunCompat).each(cases)(
+    "%s body is sent content-length framed after reading .body",
+    async (_, body, length, type) => {
+      const server = serve({
+        port: 0,
+        fetch() {
+          const res = new FastResponse(body());
+          void res.body;
+          return res;
+        },
+      });
+      await server.ready();
+      try {
+        const res = await fetch(server.url!);
+        expect(res.headers.get("content-length")).toBe(length);
+        expect(res.headers.get("content-type")).toBe(type);
+        expect(res.headers.get("transfer-encoding")).toBeNull();
+        expect((await res.arrayBuffer()).byteLength).toBe(Number(length));
+
+        const headRes = await fetch(server.url!, { method: "HEAD" });
+        expect(headRes.headers.get("content-length")).toBe(length);
+      } finally {
+        await server.close(true);
+      }
+    },
+  );
 
   test.skipIf(noBunCompat)("user headers take precedence", () => {
     const res = new FastResponse("hello", {
@@ -1307,7 +1372,6 @@ describe("FastResponse keeps derived content-length once materialized", () => {
     res.headers.set("x-custom", "1");
     void res.body;
     expect(res.headers.get("x-custom")).toBe("1");
-    expect(res.headers.get("content-length")).toBe("5");
   });
 
   test.skipIf(noBunCompat)("does not mutate a shared Headers init", () => {
@@ -1322,24 +1386,77 @@ describe("FastResponse keeps derived content-length once materialized", () => {
     expect(res.headers.get("content-length")).toBeNull();
   });
 
-  test("is sent content-length framed after reading .body", async () => {
+  test.skipIf(noBunCompat)(
+    "a consumed body is sent without the derived content-length",
+    async () => {
+      const server = serve({
+        port: 0,
+        async fetch() {
+          const res = new FastResponse("hello");
+          const reader = res.body!.getReader();
+          while (!(await reader.read()).done);
+          reader.releaseLock();
+          return res;
+        },
+      });
+      await server.ready();
+      try {
+        const res = await fetch(server.url!, { signal: AbortSignal.timeout(2000) });
+        expect(res.headers.get("content-length")).toBeNull();
+        expect(await res.text()).toBe("");
+      } finally {
+        await server.close(true);
+      }
+    },
+  );
+});
+
+describe("FastResponse headers match native Response after reading the body", () => {
+  const NativeResponse = globalThis.Response;
+  const bodies: [string, () => BodyInit][] = [
+    ["string", () => "héllo"],
+    ["empty string", () => ""],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["Uint8Array", () => new Uint8Array(7)],
+    ["DataView", () => new DataView(new ArrayBuffer(6), 1, 3)],
+    ["Blob", () => new Blob(["abc"], { type: "text/css" })],
+    ["untyped Blob", () => new Blob(["abc"])],
+    ["ReadableStream", () => new Blob(["abc"]).stream()],
+  ];
+  const reads: [string, (res: Response) => unknown][] = [
+    ["text()", (res) => res.text()],
+    ["arrayBuffer()", (res) => res.arrayBuffer()],
+    ["clone()", (res) => res.clone()],
+    [".body", (res) => res.body],
+  ];
+
+  describe.each(reads)("%s", (_, read) => {
+    test.each(bodies)("%s body", async (_, body) => {
+      const init = { headers: { "x-custom": "1" } };
+      const native = new NativeResponse(body(), init);
+      const fast = new FastResponse(body(), init);
+      await read(native);
+      await read(fast);
+      expect([...fast.headers]).toEqual([...native.headers]);
+    });
+  });
+
+  test("a response rebuilt from read headers is sent with its own length", async () => {
     const server = serve({
       port: 0,
-      fetch() {
-        const res = new FastResponse("hello");
-        void res.body;
-        return res;
+      async fetch() {
+        const res = new FastResponse("<html>abc</html>", {
+          headers: { "content-type": "text/html" },
+        });
+        const html = await res.text();
+        return new FastResponse(html + "<!-- overlay -->", { headers: res.headers });
       },
     });
     await server.ready();
     try {
       const res = await fetch(server.url!);
-      expect(res.headers.get("content-length")).toBe("5");
-      expect(res.headers.get("transfer-encoding")).toBeNull();
-      expect(await res.text()).toBe("hello");
-
-      const headRes = await fetch(server.url!, { method: "HEAD" });
-      expect(headRes.headers.get("content-length")).toBe("5");
+      expect(res.headers.get("content-length")).toBe("32");
+      expect(await res.text()).toBe("<html>abc</html><!-- overlay -->");
     } finally {
       await server.close(true);
     }
@@ -1405,6 +1522,225 @@ describe("FastResponse copies init Headers", () => {
     })._toNodeResponse();
 
     expect(headerPairs(headers)).toContainEqual(["a", "1"]);
+  });
+});
+
+// https://github.com/h3js/srvx/issues/343
+// A response passed as init exposes `status`/`statusText` as prototype getters,
+// so they must not be read by spreading it.
+describe("FastResponse keeps the status of a response used as init", () => {
+  const forbidden = () => new FastResponse("denied", { status: 403, statusText: "Forbidden" });
+
+  test("copy with mutated headers keeps its status once materialized", () => {
+    const copy = new FastResponse("denied", forbidden());
+    copy.headers.set("x-extra", "1");
+
+    const clone = copy.clone();
+    expect(clone.status).toBe(403);
+    expect(clone.statusText).toBe("Forbidden");
+    expect(clone.headers.get("x-extra")).toBe("1");
+    expect(copy.status).toBe(403);
+    expect(copy.statusText).toBe("Forbidden");
+  });
+
+  test("copy with mutated headers keeps its status on the wire", async () => {
+    const copy = new FastResponse("denied", forbidden());
+    copy.headers.set("x-extra", "1");
+    void copy.body; // materialize
+
+    const prepared = copy._toNodeResponse();
+    expect(prepared.status).toBe(403);
+    expect(prepared.statusText).toBe("Forbidden");
+    expect(prepared.headers).toContain("x-extra");
+  });
+
+  test("a native response works as init too", () => {
+    const copy = new FastResponse("denied", new Response(null, { status: 403 }));
+    copy.headers.set("x-extra", "1");
+
+    expect(copy.clone().status).toBe(403);
+  });
+
+  test("json() keeps the status of a response init", () => {
+    const res = FastResponse.json({ error: "denied" }, forbidden());
+
+    expect(res.status).toBe(403);
+    expect(res.statusText).toBe("Forbidden");
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.clone().status).toBe(403);
+  });
+});
+
+// RFC 9110 §8.6: no Content-Length on 1xx/204, and on 304 only the length a 200
+// would have had (never the length of an ignored body). Native `Response` rejects
+// a body on a null-body status; `FastResponse` skips that check, so the body is
+// ignored instead, as if it were `null`.
+describe("FastResponse ignores the body of a null-body status", () => {
+  async function rawGet(fetch: () => Response): Promise<{ head: string; rest: string }> {
+    const server = serve({ port: 0, hostname: "127.0.0.1", fetch });
+    await server.ready();
+    try {
+      const u = new URL(server.url!);
+      const raw = await rawExchange(
+        Number(u.port),
+        u.hostname,
+        `GET / HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+      );
+      const [head, ...rest] = raw.toString("latin1").split("\r\n\r\n");
+      return { head: head.toLowerCase(), rest: rest.join("\r\n\r\n") };
+    } finally {
+      await server.close(true);
+    }
+  }
+
+  const bodies: [string, () => BodyInit][] = [
+    ["string", () => "hello"],
+    ["empty string", () => ""],
+    ["Uint8Array", () => new TextEncoder().encode("hello")],
+    ["Blob", () => new Blob(["hello"], { type: "text/css" })],
+    ["URLSearchParams", () => new URLSearchParams("hello=1")],
+  ];
+
+  describe.each([204, 205, 304])("%s", (status) => {
+    test.each(bodies)("%s body sends no derived headers and no body bytes", async (_, body) => {
+      const { head, rest } = await rawGet(() => new FastResponse(body(), { status }));
+      expect(head).toMatch(new RegExp(`^http/1.1 ${status} `));
+      expect(head).not.toContain("content-length:");
+      expect(head).not.toContain("content-type:");
+      expect(rest).not.toContain("hello");
+    });
+
+    test("ReadableStream body is cancelled, not sent", async () => {
+      let cancelled = false;
+      let pulls = 0;
+      const { head, rest } = await rawGet(
+        () =>
+          new FastResponse(
+            new ReadableStream({
+              pull(controller) {
+                // Bounded so a regression fails below instead of pumping an
+                // ignored body forever (Node's no-op `write()` never backpressures).
+                if (++pulls > 64) return controller.close();
+                controller.enqueue(new TextEncoder().encode("hello"));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { status },
+          ),
+      );
+      expect(head).not.toContain("content-length:");
+      expect(rest).not.toContain("hello");
+      expect(cancelled).toBe(true);
+    });
+
+    test("Node Readable body is destroyed, not sent", async () => {
+      let readable!: Readable;
+      const { head, rest } = await rawGet(() => {
+        // Never ends: an ignored body must be destroyed up front, not piped
+        // into a response that can then never finish.
+        readable = new Readable({ read() {} });
+        readable.push("hello");
+        return new FastResponse(readable as unknown as BodyInit, { status });
+      });
+      expect(head).not.toContain("content-length:");
+      expect(rest).not.toContain("hello");
+      expect(readable.destroyed).toBe(true);
+    });
+
+    test("materializing drops the body instead of throwing", async () => {
+      const res = new FastResponse("hello", { status, headers: { "x-custom": "1" } });
+      expect(res.body).toBeNull();
+      expect(await res.text()).toBe("");
+      expect(res.status).toBe(status);
+      expect(res.headers.get("x-custom")).toBe("1");
+      expect(res.headers.get("content-length")).toBeNull();
+    });
+  });
+
+  test.each([101, 103])("%s gets no derived content-length", (status) => {
+    const { headers, body } = new FastResponse("hello", { status })._toNodeResponse();
+    expect(headers).not.toContain("content-length");
+    expect(headers).not.toContain("content-type");
+    expect(body).toBeUndefined();
+  });
+
+  test("a numeric string status is recognized", async () => {
+    const { head, rest } = await rawGet(
+      () => new FastResponse("hello", { status: "204" as unknown as number }),
+    );
+    expect(head).toMatch(/^http\/1.1 204 /);
+    expect(head).not.toContain("content-length:");
+    expect(rest).toBe("");
+  });
+
+  // Over HTTP/2 a body or content-length on 204/205 is a protocol error: the
+  // stream was reset with `NGHTTP2_PROTOCOL_ERROR` instead of answering.
+  describe.skipIf(skipHttp2)("http2", () => {
+    async function h2Get(fetch: () => Response) {
+      const tls = await getTLSCert();
+      const server = serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        silent: true,
+        tls,
+        node: { http2: true, allowHTTP1: false } as any,
+        fetch,
+      });
+      await server.ready();
+      const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+      client.on("error", () => {});
+      try {
+        const stream = client.request({ ":method": "GET", ":path": "/" });
+        const chunks: Buffer[] = [];
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        const [headers, error] = await Promise.all([
+          new Promise<http2.IncomingHttpHeaders | undefined>((resolve) => {
+            stream.once("response", resolve);
+            stream.once("close", () => resolve(undefined));
+          }),
+          new Promise<Error | undefined>((resolve) => {
+            stream.once("end", () => resolve(undefined));
+            stream.once("error", resolve);
+          }),
+        ]);
+        return { headers, error, body: Buffer.concat(chunks).toString() };
+      } finally {
+        client.destroy();
+        await server.close(true);
+      }
+    }
+
+    test.each([204, 205, 304])("%s with a string body", async (status) => {
+      const { headers, error, body } = await h2Get(() => new FastResponse("hello", { status }));
+      expect(error).toBeUndefined();
+      expect(headers?.[":status"]).toBe(status);
+      expect(headers?.["content-length"]).toBeUndefined();
+      expect(headers?.["content-type"]).toBeUndefined();
+      expect(body).toBe("");
+    });
+  });
+
+  test("an explicit content-length on a 304 is kept", async () => {
+    const { head, rest } = await rawGet(
+      () =>
+        new FastResponse("hello", {
+          status: 304,
+          headers: { "content-length": "42", etag: '"abc"' },
+        }),
+    );
+    expect(head).toMatch(/^http\/1.1 304 /);
+    expect(head).toContain("content-length: 42");
+    expect(head).toContain('etag: "abc"');
+    expect(head).not.toContain("content-type:");
+    expect(rest).toBe("");
+  });
+
+  test("a 200 still gets the derived headers", async () => {
+    const { head, rest } = await rawGet(() => new FastResponse("hello"));
+    expect(head).toContain("content-length: 5");
+    expect(rest).toBe("hello");
   });
 });
 
@@ -1830,6 +2166,407 @@ describe("node body crash regressions", () => {
   });
 });
 
+// arrayBuffer()/bytes()/blob() read straight off the Node stream (like
+// text()/json()) instead of through a native Request over `Readable.toWeb`. The
+// results must still be indistinguishable from what native fetch returns.
+describe("node direct body reads (arrayBuffer / bytes / blob)", () => {
+  async function withServer(
+    fetchHandler: (req: Request) => Response | Promise<Response>,
+    run: (url: string) => Promise<void>,
+    options: { maxRequestBodySize?: number } = {},
+  ) {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      silent: true,
+      ...options,
+      fetch: fetchHandler as any,
+    });
+    await server.ready();
+    try {
+      await run(server.url!);
+    } finally {
+      await server.close(true);
+    }
+  }
+
+  // 5 B and 3 KiB land in Node's shared `Buffer` pool (`Buffer.concat` /
+  // `allocUnsafe` below 4 KiB); 256 KiB arrives over many socket reads.
+  const sizes = [0, 5, 3 * 1024, 256 * 1024];
+  const payload = (size: number) => Uint8Array.from({ length: size }, (_, i) => (i * 31 + 7) % 251);
+  const digest = (bytes: Uint8Array) => {
+    let h = bytes.length;
+    for (const b of bytes) h = (h * 33 + b) >>> 0;
+    return h;
+  };
+
+  for (const size of sizes) {
+    test(`bytes() / arrayBuffer() return standalone, exact-length copies (${size} B)`, async () => {
+      const body = payload(size);
+      await withServer(
+        async (req) => {
+          const read =
+            new URL(req.url).searchParams.get("m") === "bytes"
+              ? await req.bytes()
+              : await req.arrayBuffer();
+          // Inspect bytes() as returned (wrapping it would copy).
+          const result = read instanceof Uint8Array ? read : new Uint8Array(read);
+          return Response.json({
+            ctor: read.constructor.name,
+            byteLength: result.byteLength,
+            byteOffset: result.byteOffset,
+            bufferByteLength: result.buffer.byteLength,
+            digest: digest(result),
+          });
+        },
+        async (url) => {
+          for (const m of ["bytes", "arrayBuffer"]) {
+            const res = await fetch(`${url}?m=${m}`, { method: "POST", body });
+            expect(await res.json()).toEqual({
+              // A plain Uint8Array (not a Buffer) / a plain ArrayBuffer.
+              ctor: m === "bytes" ? "Uint8Array" : "ArrayBuffer",
+              byteLength: size,
+              byteOffset: 0,
+              // Not a view into Node's buffer pool or the socket read buffer.
+              bufferByteLength: size,
+              digest: digest(body),
+            });
+          }
+        },
+      );
+    });
+  }
+
+  // The only assertions here that the old route (a native Request over
+  // `Readable.toWeb`) cannot satisfy: it wraps the Node stream, and leaves `body`
+  // as the drained (non-null) stream.
+  for (const method of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${method}() reads the Node stream directly, without Readable.toWeb`, async () => {
+      const toWeb = vi.spyOn(Readable, "toWeb");
+      try {
+        await withServer(
+          async (req) => {
+            await req[method]();
+            return Response.json({
+              toWebCalls: toWeb.mock.calls.length,
+              bodyNull: req.body === null,
+            });
+          },
+          async (url) => {
+            const res = await fetch(url, { method: "POST", body: "hello" });
+            expect(await res.json()).toEqual({ toWebCalls: 0, bodyNull: true });
+          },
+        );
+      } finally {
+        toWeb.mockRestore();
+      }
+    });
+  }
+
+  test("bytes() results do not share memory across requests", async () => {
+    const seen: Uint8Array[] = [];
+    await withServer(
+      async (req) => {
+        const bytes = await req.bytes();
+        seen.push(bytes);
+        bytes.fill(0); // must not clobber anything else
+        return new Response(String(seen.length));
+      },
+      async (url) => {
+        for (const body of ["first", "second"]) {
+          await (await fetch(url, { method: "POST", body })).text();
+        }
+      },
+    );
+    expect(seen).toHaveLength(2);
+    expect(seen[0].buffer).not.toBe(seen[1].buffer);
+  });
+
+  test("bytes() copies a pre-drained rawBody instead of aliasing it", async () => {
+    let rawBodyAfter: string | undefined;
+    const handler = toNodeHandler(async (request) => {
+      const bytes = await request.bytes();
+      bytes.fill(0x21); // "!"
+      return new Response(String(bytes.buffer.byteLength));
+    });
+    const server = createServer(async (req: any, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c);
+      req.rawBody = Buffer.concat(chunks);
+      res.on("finish", () => (rawBodyAfter = req.rawBody.toString()));
+      handler(req, res as any);
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+      const res = await fetch(url, { method: "POST", body: "hello" });
+      expect(await res.text()).toBe("5");
+      expect(rawBodyAfter).toBe("hello");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // Whatever native `Request.blob()` derives from `Content-Type` (WHATWG
+  // "extract a MIME type" + `Blob`'s lowercasing). Bun's own Request ignores the
+  // header for a stream body and always yields "", so the native reference
+  // itself is not meaningful there.
+  const contentTypes = [
+    undefined,
+    "application/octet-stream",
+    "Text/Plain; charset=UTF-8",
+    'TEXT/HTML;Charset="utf-8"',
+    "application/json; charset=utf-8; foo=bar",
+    "multipart/form-data; boundary=----abc",
+    "text/plain;",
+    "*/*",
+    "invalid",
+    "text/ plain",
+  ];
+  test.skipIf(isBun)("blob() type matches native Request.blob()", async () => {
+    await withServer(
+      async (req) => {
+        const blob = await req.blob();
+        return Response.json({ type: blob.type, text: await blob.text() });
+      },
+      async (url) => {
+        // Each type twice in a row: the second read is served from the
+        // last-type memo.
+        for (const contentType of contentTypes.flatMap((type) => [type, type])) {
+          const headers: Record<string, string> =
+            contentType === undefined ? {} : { "content-type": contentType };
+          const native = await new Request("http://localhost/", {
+            method: "POST",
+            headers,
+            body: new Blob(["x"]).stream(),
+            duplex: "half",
+          } as RequestInit).blob();
+          const res = await fetch(url, { method: "POST", headers, body: new Blob(["hello"]) });
+          expect(await res.json(), String(contentType)).toEqual({
+            type: native.type,
+            text: "hello",
+          });
+        }
+      },
+    );
+    // Spot-check the reference itself so a runtime change can't hide here.
+    const ref = await new Request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "Text/Plain; charset=UTF-8" },
+      body: new Blob(["x"]).stream(),
+      duplex: "half",
+    } as RequestInit).blob();
+    expect(ref.type).toBe("text/plain;charset=utf-8");
+  });
+
+  test.skipIf(isBun)("blob() type honors a content-type set through req.headers", async () => {
+    await withServer(
+      async (req) => {
+        req.headers.set("content-type", "Application/JSON");
+        return new Response((await req.blob()).type);
+      },
+      async (url) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: "{}",
+        });
+        expect(await res.text()).toBe("application/json");
+      },
+    );
+  });
+
+  for (const first of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${first}() marks the body used and every later read rejects`, async () => {
+      await withServer(
+        async (req) => {
+          const before = req.bodyUsed;
+          await req[first]();
+          const outcomes: Record<string, string> = {
+            before: String(before),
+            after: String(req.bodyUsed),
+          };
+          for (const method of [
+            "arrayBuffer",
+            "bytes",
+            "blob",
+            "formData",
+            "text",
+            "json",
+          ] as const) {
+            outcomes[method] = await (req[method]() as Promise<unknown>).then(
+              () => "resolved",
+              (error) =>
+                error instanceof TypeError && /unusable/.test(error.message)
+                  ? "TypeError: unusable"
+                  : `other: ${error}`,
+            );
+          }
+          return Response.json(outcomes);
+        },
+        async (url) => {
+          const res = await fetch(url, { method: "POST", body: "hello" });
+          expect(await res.json()).toEqual({
+            before: "false",
+            after: "true",
+            arrayBuffer: "TypeError: unusable",
+            bytes: "TypeError: unusable",
+            blob: "TypeError: unusable",
+            formData: "TypeError: unusable",
+            text: "TypeError: unusable",
+            json: "TypeError: unusable",
+          });
+        },
+      );
+    });
+  }
+
+  // Bodies that something else already touched keep going through the native
+  // Request, which must still read them once.
+  const preludes = {
+    "after req.body was accessed": (req: Request) => void req.body,
+    "after _request was materialized": (req: Request) => void (req as any)._request,
+    "after a clone was read": (req: Request) => req.clone().text(),
+  } as const;
+  for (const [name, prelude] of Object.entries(preludes)) {
+    test(`bytes() still reads the body ${name}`, async () => {
+      await withServer(
+        async (req) => {
+          await prelude(req);
+          const bytes = await req.bytes();
+          return Response.json({
+            text: new TextDecoder().decode(bytes),
+            bodyUsed: req.bodyUsed,
+            second: await req.bytes().then(
+              () => "resolved",
+              (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+            ),
+          });
+        },
+        async (url) => {
+          const res = await fetch(url, { method: "POST", body: "hello" });
+          expect(await res.json()).toEqual({ text: "hello", bodyUsed: true, second: "TypeError" });
+        },
+      );
+    });
+  }
+
+  test("GET with a body on the wire reads as an empty, repeatable body", async () => {
+    await withServer(
+      async (req) => {
+        const a = await req.arrayBuffer();
+        const b = await req.bytes();
+        const blob = await req.blob();
+        return new FastResponse(
+          JSON.stringify({
+            arrayBuffer: a.byteLength,
+            bytes: b.byteLength,
+            blob: blob.size,
+            bodyUsed: req.bodyUsed,
+          }),
+        );
+      },
+      async (url) => {
+        const u = new URL(url);
+        const raw = await rawExchange(
+          Number(u.port),
+          u.hostname,
+          "GET / HTTP/1.1\r\n" +
+            `Host: ${u.hostname}\r\n` +
+            "Content-Length: 5\r\n" +
+            "Connection: close\r\n" +
+            "\r\n" +
+            "hello",
+        );
+        const responses = parseHttpResponses(raw);
+        expect(JSON.parse(responses[0].body.toString())).toEqual({
+          arrayBuffer: 0,
+          bytes: 0,
+          blob: 0,
+          bodyUsed: false,
+        });
+      },
+    );
+  });
+
+  for (const method of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${method}() enforces maxRequestBodySize on a chunked body`, async () => {
+      await withServer(
+        async (req) => {
+          try {
+            const result: any = await req[method]();
+            return new Response(String(result.byteLength ?? result.size));
+          } catch (error: any) {
+            return new Response(error.code, { status: error.statusCode ?? 500 });
+          }
+        },
+        async (url) => {
+          // No content-length: only the streaming count can catch it.
+          const chunked = (size: number) =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (let i = 0; i < size; i += 1024) controller.enqueue(new Uint8Array(1024));
+                controller.close();
+              },
+            });
+          const ok = await fetch(url, {
+            method: "POST",
+            body: chunked(8 * 1024),
+            duplex: "half",
+          } as RequestInit);
+          expect(await ok.text()).toBe(String(8 * 1024));
+          const tooLarge = await fetch(url, {
+            method: "POST",
+            body: chunked(64 * 1024),
+            duplex: "half",
+          } as RequestInit);
+          expect(tooLarge.status).toBe(413);
+          expect(await tooLarge.text()).toBe("ERR_BODY_TOO_LARGE");
+        },
+        { maxRequestBodySize: 8 * 1024 },
+      );
+    });
+  }
+
+  test.skipIf(skipHttp2)("bytes() reads an HTTP/2 body as a standalone copy", async () => {
+    const tls = await getTLSCert();
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      tls,
+      node: { http2: true, allowHTTP1: false } as any,
+      async fetch(req) {
+        const bytes = await req.bytes();
+        return Response.json({
+          text: new TextDecoder().decode(bytes),
+          bufferByteLength: bytes.buffer.byteLength,
+        });
+      },
+    });
+    await server.ready();
+    const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+    client.on("error", () => {});
+    try {
+      const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 9 });
+      stream.end("test body");
+      const chunks: Buffer[] = [];
+      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      await new Promise((resolve, reject) => {
+        stream.once("end", resolve);
+        stream.once("error", reject);
+      });
+      expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual({
+        text: "test body",
+        bufferByteLength: 9,
+      });
+    } finally {
+      client.destroy();
+      await server.close(true);
+    }
+  });
+});
+
 // Regressions where the Node adapter diverged from native fetch semantics
 // (Response defaults, HEAD handling, send diagnostics, node-compat bridge).
 describe("node fetch-spec correctness regressions", () => {
@@ -2173,3 +2910,12 @@ function parseHttpResponses(buf: Buffer): { headers: string; body: Buffer }[] {
   }
   return responses;
 }
+
+// CI also runs this file under Bun and Deno, whose URL parsers differ from
+// Node's; the trust-proxy plugin and the Node adapter both rely on this.
+describe("isValidHost agrees with the runtime's URL parser", () => {
+  test.each(HOST_PARSER_AGREEMENT_CASES)("%s", (host) => {
+    expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+    expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+  });
+});

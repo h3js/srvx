@@ -221,6 +221,24 @@ describe("trustProxyPlugin", () => {
     expect(url.port).toBe("34697");
   });
 
+  // These pass a plain shape check, but the URL `host` setter rejects them
+  // (or applies the hostname without an out-of-range port) and the port-reset
+  // would still run, mixing forwarded and real parts.
+  test.each(["public.example:99999", "256.0.0.1", "foo.123", "[::::]"])(
+    "an X-Forwarded-Host the URL parser rejects (%s) is ignored",
+    async (forwardedHost) => {
+      const req = await run(
+        true,
+        makeRequest("http://origin.example:34697/", "10.0.0.1", {
+          "x-forwarded-host": forwardedHost,
+        }),
+      );
+      const url = new URL(req.url);
+      expect(url.hostname).toBe("origin.example");
+      expect(url.port).toBe("34697");
+    },
+  );
+
   test("honors the leftmost entry of a comma-joined X-Forwarded-Proto", async () => {
     const req = await run(
       true,

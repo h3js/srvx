@@ -1,9 +1,10 @@
 import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
 import { getNativeClass, lazyInherit } from "../../_inherit.ts";
+import { isNullBodyStatus } from "../../_utils.ts";
 import type { ResponseBody } from "../../types.ts";
 
-const kNativeResponse = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
+export const kNativeResponse: symbol = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
 
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null;
@@ -14,6 +15,40 @@ export interface PreparedNodeResponse {
   /** Flat rawHeaders-style list: `[name1, value1, name2, value2, …]` */
   headers: string[];
   body: PreparedNodeResponseBody;
+}
+
+/**
+ * Replaces the headers of a response init.
+ *
+ * `init` may be a `Response` (e.g. `new Response(res.body, res)`), whose
+ * `status` and `statusText` are prototype getters that an object spread drops.
+ */
+function withHeaders(init: ResponseInit | undefined, headers: HeadersInit): ResponseInit {
+  return { status: init?.status, statusText: init?.statusText, headers };
+}
+
+/**
+ * Releases a body that will never be read: streams are cancelled/destroyed so
+ * their source is freed. Duck-typed pipe objects (e.g. React's PipeableStream)
+ * expose `abort()` instead of `destroy()`. Non-stream bodies are ignored.
+ *
+ * A stream whose `_destroy()` fails emits `error` even when `destroy()` is
+ * called without one; nothing else listens on a discarded body, so swallow it
+ * rather than let it surface as an `uncaughtException`.
+ *
+ * @internal
+ */
+export function disposeBody(body: unknown): void {
+  if (body instanceof ReadableStream) {
+    body.cancel().catch(() => {});
+  } else if (typeof (body as NodeReadable | undefined)?.pipe === "function") {
+    if (typeof (body as NodeReadable).destroy === "function") {
+      (body as NodeReadable).on?.("error", () => {});
+      (body as NodeReadable).destroy();
+    } else {
+      (body as { abort?: () => void }).abort?.();
+    }
+  }
 }
 
 /**
@@ -40,6 +75,7 @@ export const NodeResponse: {
     #init?: ResponseInit;
     #headers?: Headers;
     #response?: globalThis.Response;
+    #contentLength?: number;
 
     constructor(body?: ResponseBody | null, init?: ResponseInit) {
       this.#body = body;
@@ -71,7 +107,7 @@ export const NodeResponse: {
         }
         headers = merged;
       }
-      return new NodeResponse(body, init ? { ...init, headers } : { headers });
+      return new NodeResponse(body, init ? withHeaders(init, headers) : { headers });
     }
 
     get status(): number {
@@ -118,7 +154,13 @@ export const NodeResponse: {
       // Undici accepts standard Response body or async iterators (which Node Readable implements too).
       // Pipeable objects, like React's renderToPipeableStream, do not implement async iterators.
       let body: ResponseBody | null | undefined = this.#body;
-      if (
+      if (body != null && isNullBodyStatus(this.status)) {
+        // Same as `_toNodeResponse()`: ignore the body instead of throwing. Only
+        // 204/205/304 get here: native `Response` still throws a `RangeError`
+        // for any 1xx status, so those only work on the `_toNodeResponse()` path.
+        disposeBody(body);
+        body = null;
+      } else if (
         body &&
         typeof (body as unknown as NodeReadable).pipe === "function" &&
         !(body instanceof NodeReadable)
@@ -132,36 +174,23 @@ export const NodeResponse: {
         body = stream as unknown as ResponseBody;
       }
 
-      // Carry the content-type / content-length that `_toNodeResponse()` would
-      // derive, so materializing (reading `.body`, `.clone()`, wrapping the
-      // body in a proxy layer, …) doesn't silently switch to chunked framing.
-      let contentType: string | undefined;
-      let contentLength: number | undefined;
+      // Derived length for `_toNodeResponse()`, kept out of `headers` to match native `Response`.
       if (typeof body === "string") {
-        contentType = "text/plain; charset=UTF-8";
-        contentLength = Buffer.byteLength(body);
+        this.#contentLength = Buffer.byteLength(body);
       } else if (
         body instanceof ArrayBuffer ||
         body instanceof Uint8Array ||
         body instanceof DataView
       ) {
-        contentLength = body.byteLength;
+        this.#contentLength = body.byteLength;
       } else if (body instanceof Blob) {
-        contentType = body.type;
-        contentLength = body.size;
-      }
-      let headers = this.#headers;
-      if (contentLength !== undefined) {
-        headers ??= new Headers(this.#init?.headers);
-        if (contentType && !headers.has("content-type")) {
-          headers.set("content-type", contentType);
-        }
-        if (!headers.has("content-length")) {
-          headers.set("content-length", String(contentLength));
-        }
+        this.#contentLength = body.size;
       }
 
-      this.#response = new NativeResponse(body, headers ? { ...this.#init, headers } : this.#init);
+      this.#response = new NativeResponse(
+        body,
+        this.#headers ? withHeaders(this.#init, this.#headers) : this.#init,
+      );
       this.#init = undefined;
       this.#headers = undefined;
       this.#body = undefined;
@@ -180,6 +209,16 @@ export const NodeResponse: {
       let contentLength: string | number | undefined | null;
       if (this.#response) {
         body = this.#response.body;
+        if (!this.#response.bodyUsed) {
+          contentLength = this.#contentLength;
+        }
+      } else if (this.#body != null && isNullBodyStatus(status)) {
+        // A body on a null-body status (1xx, 204, 205, 304). Native `Response`
+        // throws for it; `FastResponse` skips that check (like its other
+        // constructor validation, kept out for speed), so ignore the body as if
+        // it were `null`: no body bytes and no derived content-type/length
+        // (RFC 9110 §8.6). Explicit headers, e.g. a 304's content-length, are kept.
+        disposeBody(this.#body);
       } else if (this.#body != null) {
         // `!= null` (not a truthy check): an empty-string body is falsy but must
         // still receive the implicit `text/plain` content-type and a
@@ -261,6 +300,7 @@ export const NodeResponse: {
       this.#init = undefined;
       this.#headers = undefined;
       this.#response = undefined;
+      this.#contentLength = undefined;
       this.#body = undefined;
 
       return {

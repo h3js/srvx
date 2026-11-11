@@ -7,6 +7,7 @@ import type { BunHttpServer, BunServeOptions } from "./types/bun.ts";
 import type { DenoHttpServer, DenoServeHandlerInfo, DenoServeOptions } from "./types/deno.ts";
 import type { CloudflareEnv, CloudflareExecutionContext } from "./types/cloudflare.ts";
 import type {
+  AWSLambdaALBEvent,
   AWSLambdaContext,
   AWSLambdaProxyEvent,
   AWSLambdaProxyEventV2,
@@ -345,7 +346,7 @@ export interface ServerRuntimeContext {
 
   awsLambda?: {
     context: AWSLambdaContext;
-    event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2;
+    event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2 | AWSLambdaALBEvent;
   };
 
   serviceWorker?: { event: ServiceWorkerFetchEvent };
@@ -466,6 +467,7 @@ export type { BunHttpServer, BunServeOptions } from "./types/bun.ts";
 export type { DenoHttpServer, DenoServeHandlerInfo, DenoServeOptions } from "./types/deno.ts";
 export type { CloudflareEnv, CloudflareExecutionContext } from "./types/cloudflare.ts";
 export type {
+  AWSLambdaALBEvent,
   AWSLambdaContext,
   AWSLambdaProxyEvent,
   AWSLambdaProxyEventV2,
