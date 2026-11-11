@@ -131,6 +131,8 @@ const COMMON_MIME_TYPES: Record<string, string> = {
   ".mjs": "text/javascript",
   ".json": "application/json",
   ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".markdown": "text/markdown",
   ".xml": "application/xml",
   ".wasm": "application/wasm",
   ".gif": "image/gif",
@@ -188,6 +190,52 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
   // order of magnitude under brotli — that the default needs no walking back.
   gzip: () => createGzip(),
 };
+
+// A pathname that is not the canonical URL of the file it would decode to, so
+// serving it would let one file answer at several URLs — and routes or earlier
+// middleware matching on `url.pathname` would see a different path than the one
+// served (`/%61dmin/x` is `admin/x`, but not `startsWith("/admin")`). Matched
+// on the raw pathname, before decoding:
+//
+// - `//`: an empty segment, which `join()` collapses (`//admin` -> `admin`).
+// - An encoded unreserved character (RFC 3986 §2.3: ALPHA, DIGIT, `-._~`),
+//   which a URI should not encode, and whose encoded form is equivalent to the
+//   plain one. Encoded `.` included, so a dotfile has one URL for `dotfiles`.
+// - `%2F`: no file name holds a `/`, so it names no file. Decoded, it would
+//   become a separator; a name literally containing `%2F` is at `%252F`.
+// - `%5C`: `\` is a separator on Windows, so the same URL would name a
+//   different file per platform. Refused everywhere to keep the mapping fixed.
+//   A raw `\` is refused for the same reason (checked beside the regex: a
+//   single-char `includes` costs a fraction of another alternative here). The
+//   URL parser and `serve()` never let one through, but a hand-built
+//   `req._url` can still carry it verbatim.
+// - `%00`: a NUL must never reach the filesystem layer.
+// - An encoded character the URL serializer leaves raw in a path
+//   (`!$&'()*+,:;=@[]|`): decoded, `/%40fs/x` would serve `/@fs/x` past an
+//   earlier `startsWith("/@fs")` check.
+//
+// Not rejected by this check: characters a URL always carries encoded in a path
+// (`%20`, `%22`, `%23`, `%3C`, `%3E`, `%3F`, `%5E`, `%60`, `%7B`, `%7D`, other
+// controls), `%25`, and non-ASCII UTF-8 (whose bytes are all >= `%80`), so names
+// such as `release#1.txt`, `café.txt` or `50%.txt` stay reachable. Tested bare:
+// an `includes("%") || includes("//")` prefilter measured slower on every path,
+// as V8's two-char substring search costs more than this regex's whole scan.
+const NON_CANONICAL_PATH_RE =
+  /\/\/|%(?:00|2[146-9a-f]|3[\dabd]|4[\da-f]|5[\da-df]|6[1-9a-f]|7[\dace])/i;
+
+// Names Windows resolves to a different file than they spell, matched on the
+// decoded path. Win32 drops a trailing `.` or space from each segment, and `:`
+// opens an NTFS stream (`index.html::$DATA` is `index.html`'s own bytes). Each
+// gives a file a second name whose extension no longer reads `.html`, so it
+// would be served raw, without `renderHTML`. A trailing `.`/space is refused on
+// every platform to keep the URL-to-file mapping fixed; `:` only on Windows,
+// where no file name can hold one, so POSIX names like `12:00.log` still serve.
+// The `.` and `..` segments are left to `join()`, which resolves them; `...`
+// and longer are refused, as Windows strips those too.
+const TRAILING_DOT_OR_SPACE = String.raw`(?:[^/.]\.+|\.{3,}| )(?:\/|$)`;
+const ALIASED_NAME_RE = new RegExp(
+  sep === "\\" ? `:|${TRAILING_DOT_OR_SPACE}` : TRAILING_DOT_OR_SPACE,
+);
 
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
@@ -319,27 +367,38 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       return next();
     }
     const url = (req._url ??= new FastURL(req.url));
+    // An alternate spelling of a file's URL never serves it; it is the app's.
+    if (NON_CANONICAL_PATH_RE.test(url.pathname) || url.pathname.includes("\\")) {
+      return next();
+    }
     let path = url.pathname.slice(1);
     // `/sub/` names a directory, so only its index is probed: serving `sub.html`
     // or a file named `sub` there would mint a second URL for them, with
-    // relative links inside resolving against the wrong base.
+    // relative links inside resolving against the wrong base. (Only one slash:
+    // `/sub//` was refused above as an empty segment.)
     const trailingSlash = path.endsWith("/");
     if (trailingSlash) {
-      path = path.replace(/\/+$/, "");
+      path = path.slice(0, -1);
     }
     if (path.includes("%")) {
       // Decode the wire encoding exactly once, or names a client must encode
-      // (`café.txt`) are unreachable. `decodeURI` (not `decodeURIComponent`)
-      // keeps `%2F`/`%3F`/`%23` encoded, so an encoded separator never becomes
-      // a separator. Containment does not rely on the pathname arriving
-      // normalized: `join()` + `startsWith(dir)` below re-check whatever
-      // reaches them, including dot segments that decoding surfaces.
+      // (`café.txt`, `release#1.txt`) are unreachable. Every character is
+      // decoded (`decodeURIComponent`, not `decodeURI`): the query and fragment
+      // are already split off, so a decoded `?`/`#` is just a name character,
+      // and `NON_CANONICAL_PATH_RE` already refused `%2F`/`%5C`/`%00` and every
+      // character that could also arrive raw, so no separator, NUL or second
+      // spelling of a name can surface here. Containment does not rely on the
+      // pathname arriving normalized: `join()` + `startsWith(dir)` below
+      // re-check whatever reaches them.
       try {
-        path = decodeURI(path);
+        path = decodeURIComponent(path);
       } catch {
         // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static.
         return new FastResponse("Bad Request", { status: 400 });
       }
+    }
+    if (ALIASED_NAME_RE.test(path)) {
+      return next();
     }
     let paths: string[];
     if (path === "") {
@@ -383,7 +442,8 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       if (!identityStat) {
         continue;
       }
-      const contentType = COMMON_MIME_TYPES[extname(filePath)] || "application/octet-stream";
+      const contentType =
+        COMMON_MIME_TYPES[extname(filePath).toLowerCase()] || "application/octet-stream";
       // Keyed off the resolved type so `.htm` renders like `.html`.
       const renderHTML = contentType === "text/html" ? options.renderHTML : undefined;
       // Already-compressed types gain nothing from either path. `renderHTML`
@@ -786,7 +846,7 @@ function parseAcceptEncoding(header: string | null, served: EncodingSpec[]): Enc
     let q = 1;
     for (const param of params) {
       const trimmed = param.trim();
-      if (trimmed.startsWith("q=")) {
+      if (/^q=/i.test(trimmed)) {
         // A malformed q (`q=abc`) parses to NaN: treat it as refused.
         q = Number.parseFloat(trimmed.slice(2)) || 0;
       }

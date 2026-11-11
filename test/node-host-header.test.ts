@@ -23,11 +23,15 @@ import type { Server } from "../src/types.ts";
  * Send a raw HTTP request with a custom Host header.
  * Uses http.request because fetch() normalizes headers.
  */
-function rawRequest(port: number, host: string): Promise<{ statusCode: number; body: string }> {
+function rawRequest(
+  port: number,
+  host: string,
+  body?: string,
+): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       {
-        method: "GET",
+        method: body === undefined ? "GET" : "POST",
         path: "/",
         hostname: "127.0.0.1",
         port,
@@ -50,7 +54,7 @@ function rawRequest(port: number, host: string): Promise<{ statusCode: number; b
       req.destroy();
       reject(new Error("request timed out"));
     });
-    req.end();
+    req.end(body);
   });
 }
 
@@ -60,7 +64,7 @@ function getPort(server: Server): number {
   throw new Error("Cannot determine server port");
 }
 
-// Malformed Host header values that fail HOST_RE
+// Malformed Host header values (`isValidHost` rejects them)
 const MALFORMED_HOSTS = [
   "localhost:3000/foobar", // path in host
   "example.com?query=1", // query in host
@@ -68,6 +72,14 @@ const MALFORMED_HOSTS = [
   "evil@host.com", // @ sign
   "<script>alert(1)</script>", // XSS attempt
   "host:port:extra", // double colon
+  // well-formed shape, but `new URL()` throws on them
+  "localhost:65536", // port out of range
+  "localhost:99999",
+  "127.0.0.1:70000",
+  "[::1]:99999",
+  "256.0.0.1", // IPv4 octet out of range
+  "foo.123", // numeric last label is parsed as IPv4
+  "[::::]", // invalid IPv6
 ];
 
 describe("malformed Host header handling", () => {
@@ -152,6 +164,11 @@ describe("malformed Host header handling", () => {
       "127.0.0.1:3000",
       "[::1]",
       "[::1]:3000",
+      // port boundaries / leading zeros accepted by the WHATWG URL parser
+      "localhost:0",
+      "localhost:65535",
+      "localhost:080",
+      "localhost:00080",
     ];
 
     for (const host of validHosts) {
@@ -162,6 +179,21 @@ describe("malformed Host header handling", () => {
       const hostname = host.replace(/:\d+$/, "").replace(/[[\]]/g, "");
       expect(result.body).toContain(hostname);
     }
+  });
+
+  test("an unparseable Host does not 500 when the body builds the native Request", async () => {
+    server = serve({
+      port: 0,
+      async fetch(request) {
+        return new Response(`${new URL(request.url).host} ${await request.text()}`);
+      },
+    });
+    await server.ready();
+
+    const result = await rawRequest(getPort(server), "localhost:99999", "hi");
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toBe("_invalid_ hi");
   });
 
   test("missing Host header falls back to socket address", async () => {

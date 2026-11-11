@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.0.8
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.7...v1.0.8)
+
+### 🩹 Fixes
+
+- **node:** Don't expose derived content-length on materialized FastResponse headers ([#337](https://github.com/h3js/srvx/pull/337))
+- **node:** Send the head for stream bodies that end without data ([#339](https://github.com/h3js/srvx/pull/339))
+
+### 🏡 Chore
+
+- Update deps ([3806369](https://github.com/h3js/srvx/commit/3806369))
+
+### 🤖 CI
+
+- Run deno vitest via npm specifier to bypass pnpm 12 bin shim ([f0ef09c](https://github.com/h3js/srvx/commit/f0ef09c))
+
+### ❤️ Contributors
+
+- Pooya Parsa ([@pi0](https://github.com/pi0))
+- Daniel Roe ([@danielroe](https://github.com/danielroe))
+
+## v1.0.7
+
+[compare changes](https://github.com/h3js/srvx/compare/v1.0.6...v1.0.7)
+
+### 🩹 Fixes
+
+- **node:** Scope `FastResponse` subclass `instanceof` and avoid nesting as global `Response` ([#330](https://github.com/h3js/srvx/pull/330))
+- **node:** Keep derived `content-length` when `FastResponse` materializes ([#335](https://github.com/h3js/srvx/pull/335))
+- **node:** Resolve native `Request`/`Response` by base class to support globals patched by other servers ([#331](https://github.com/h3js/srvx/pull/331))
+
+### ❤️ Contributors
+
+- Pi0x <x@pi0.io>
+
 ## v1.0.6
 
 [compare changes](https://github.com/h3js/srvx/compare/v1.0.5...v1.0.6)

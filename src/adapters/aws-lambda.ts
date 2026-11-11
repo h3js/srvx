@@ -1,5 +1,6 @@
 import type { FetchHandler, Server, ServerOptions } from "../types.ts";
 import type {
+  AWSLambdaALBEvent,
   AWSLambdaContext,
   AWSLambdaProxyEvent,
   AWSLambdaProxyEventV2,
@@ -22,7 +23,7 @@ import {
 
 type MaybePromise<T> = T | Promise<T>;
 
-export type AwsLambdaEvent = AWSLambdaProxyEvent | AWSLambdaProxyEventV2;
+export type AwsLambdaEvent = AWSLambdaProxyEvent | AWSLambdaProxyEventV2 | AWSLambdaALBEvent;
 
 export type { AWSLambdaResponseStream };
 

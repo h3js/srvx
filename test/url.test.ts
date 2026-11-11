@@ -1,8 +1,10 @@
 import net from "node:net";
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { FastURL } from "../src/_url.ts";
 import { serve } from "../src/adapters/node.ts";
 import { NodeRequestURL } from "../src/adapters/_node/url.ts";
+import { isValidHost } from "../src/_trust-proxy.ts";
+import { HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
 
 const urlTests = await import("./wpt/url_tests.json", {
   with: { type: "json" },
@@ -214,6 +216,79 @@ describe("FastURL", () => {
         expect(url.href, ".href").toBe(std.href);
       });
     }
+
+    // The origin-form string fast path must apply the same path checks as the
+    // `URLInit` path (dot segments, `\`, path percent-encode set), not just the
+    // query set, and must split off the query before matching dot segments.
+    const needsNorm = [
+      "/a/../b",
+      "/a/..",
+      "/a/.",
+      "/../../etc/passwd",
+      "/files/../../../secret.env",
+      "/a/%2e%2e/b",
+      "/a/.%2E/b",
+      "/a/..?x=1",
+      "/a/.?x=1",
+      "/a\\b",
+      "/a^b",
+      "/a{b}",
+      "/a`b",
+      "/a?b='x'",
+      '/a?b="x"',
+    ] as const;
+
+    for (const input of needsNorm) {
+      test(`FastURL ${JSON.stringify(input)} normalizes like native`, () => {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, ".pathname").toBe(std.pathname);
+        expect(url.search, ".search").toBe(std.search);
+        expect(url.href, ".href").toBe(std.href);
+      });
+    }
+
+    // Path-set chars and dot segments in the query stay verbatim there
+    // (native leaves them raw too), so they must not change `search`.
+    test("path-set chars and dot segments in the query match native", () => {
+      for (const input of ["/p?a=^", "/p?a={b}", "/p?a=`", "/p?a=\\b", "/p?a=..", "/p?a=/../"]) {
+        const std = new URL(`http://localhost${input}`);
+        const url = new FastURL(input);
+        expect(url.pathname, `${input} .pathname`).toBe(std.pathname);
+        expect(url.search, `${input} .search`).toBe(std.search);
+        expect(url.href, `${input} .href`).toBe(std.href);
+      }
+    });
+
+    // Guard against over-deopting: canonical targets stay on the fast path,
+    // which never reads the native `pathname`/`search` getters.
+    test("canonical targets stay on the fast path", () => {
+      const pathname = vi.spyOn(URL.prototype, "pathname", "get");
+      const search = vi.spyOn(URL.prototype, "search", "get");
+      try {
+        for (const input of [
+          "/",
+          "/api/users/123?x=1",
+          "/a.b/c.d?x=1&y=2",
+          "/.well-known/x",
+          "/a/...",
+          "/a?",
+          "/path%20with%20space",
+        ]) {
+          const url = new FastURL(input);
+          void url.pathname;
+          void url.search;
+          expect(pathname, input).not.toHaveBeenCalled();
+          expect(search, input).not.toHaveBeenCalled();
+        }
+        // Sanity: a deopted target does hit the native getters.
+        void new FastURL("/a/../b").pathname;
+        expect(pathname).toHaveBeenCalled();
+      } finally {
+        pathname.mockRestore();
+        search.mockRestore();
+      }
+    });
   });
 
   describe("HTTP/2-reachable chars (control, space, DEL, non-ASCII)", () => {
@@ -330,6 +405,66 @@ describe("FastURL", () => {
         }
       });
     }
+  });
+
+  describe("Host header validation", () => {
+    // `request.url` must always be parseable: a host the WHATWG parser rejects
+    // (port > 65535, invalid IPv4/IPv6, numeric last label) becomes `_invalid_`
+    // instead of making `new URL()` / the native Request throw downstream (500).
+    const cases = [
+      // [Host, expected URL host]
+      ["localhost:0", "localhost:0"],
+      ["localhost:65535", "localhost:65535"],
+      ["localhost:080", "localhost"],
+      ["localhost:00080", "localhost"],
+      ["localhost:08080", "localhost:8080"],
+      ["127.0.0.1:3000", "127.0.0.1:3000"],
+      ["255.255.255.255", "255.255.255.255"],
+      ["01.02.03.04", "1.2.3.4"],
+      ["1.2.3", "1.2.0.3"],
+      ["0x7f.1", "127.0.0.1"],
+      ["foo.0xg", "foo.0xg"],
+      ["web1.example", "web1.example"],
+      ["[::1]:3000", "[::1]:3000"],
+      // out-of-range port
+      ["localhost:65536", "_invalid_"],
+      ["localhost:65540", "_invalid_"],
+      ["localhost:65600", "_invalid_"],
+      ["localhost:66000", "_invalid_"],
+      ["localhost:70000", "_invalid_"],
+      ["localhost:99999", "_invalid_"],
+      ["127.0.0.1:99999", "_invalid_"],
+      ["[::1]:99999", "_invalid_"],
+      // passes `HOST_RE`, rejected by the WHATWG parser
+      ["256.0.0.1", "_invalid_"],
+      ["999.999.999.999", "_invalid_"],
+      ["foo.123", "_invalid_"],
+      ["a.09", "_invalid_"],
+      ["foo.0x", "_invalid_"],
+      ["foo.0x1:3000", "_invalid_"],
+      ["99999999999", "_invalid_"],
+      ["[::::]", "_invalid_"],
+      ["[1.2.3]", "_invalid_"],
+    ] as const;
+
+    for (const [host, expected] of cases) {
+      test(`Host: ${host} => ${expected}`, () => {
+        expect(isValidHost(host), "isValidHost").toBe(expected !== "_invalid_");
+        const url = new NodeRequestURL({ req: { url: "/x", headers: { host } } as any });
+        expect(new URL(url.href).host).toBe(expected);
+        void url.hostname; // deopt
+        expect(url.host).toBe(expected);
+      });
+    }
+
+    // Runtimes disagree on some hosts (Bun/Deno reject invalid punycode such
+    // as `xn--a`, Bun rejects `42949672950x`; Node accepts both), so
+    // `isValidHost` defers to the current runtime's parser.
+    test.each(HOST_PARSER_AGREEMENT_CASES)("isValidHost(%j) agrees with URL.canParse", (host) => {
+      expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+      // a second call is answered from the one-entry cache
+      expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+    });
   });
 
   describe("absolute URI in request line", () => {
@@ -540,6 +675,32 @@ describe("FastURL", () => {
         expect(spoofed.statusLine).toMatch(/^HTTP\/1\.1 200 /);
         expect(spoofed.body).toContain("http://evil.com/x");
         expect(spoofed.body).not.toContain("https://");
+      });
+    });
+
+    // Raw `\` before the query: see `hasBackslashInPath`.
+    test.each([
+      String.raw`GET /public\..\admin/secret HTTP/1.1`,
+      String.raw`GET /public\admin HTTP/1.1`,
+      String.raw`GET /a\b?q=1 HTTP/1.1`,
+      String.raw`GET http://localhost/public\..\admin/secret HTTP/1.1`,
+      String.raw`GET http:\\localhost\admin HTTP/1.1`,
+    ])("%s over the wire returns 400", async (requestLine) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 400 /);
+      });
+    });
+
+    test.each([
+      ["GET /a%5Cb HTTP/1.1", "http://localhost/a%5Cb"],
+      [String.raw`GET /x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
+      [String.raw`GET http://localhost/x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
+    ])("%s (encoded or query backslash) is accepted", async (requestLine, href) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(result.body).toContain(href);
       });
     });
   });

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, parse, relative, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { staticMiddleware, type StaticMiddlewareOptions } from "../src/static.ts";
-import { FastURL } from "../src/_url.ts";
 import type { ServerRequest } from "../src/types.ts";
 
 let tmp: string;
@@ -82,6 +81,8 @@ beforeAll(async () => {
   await writeFile(join(dir, "big.js"), BIG_JS);
   await writeFile(join(dir, "big-gz.js"), BIG_JS);
   await writeFile(join(dir, "big-gz.js.gz"), BIG_GZ_MARKER);
+  // An upper-case extension is still a compressible type.
+  await writeFile(join(dir, "big-upper.JS"), BIG_JS);
 
   // The two size bounds, from either side. `truncate` extends `huge.js` with
   // zeros sparsely, so a 10 MiB size costs neither the write nor the disk.
@@ -108,13 +109,49 @@ beforeAll(async () => {
   // `.htm` maps to `text/html` just as `.html` does.
   await writeFile(join(dir, "page.htm"), "<h1>htm</h1>");
 
+  await writeFile(join(dir, "upper.HTML"), "<h1>upper</h1>");
+  await writeFile(join(dir, "mixed.Js"), "MIXED_JS");
+  await writeFile(join(dir, "upper.PNG"), "PNG_BYTES");
+
   // Names that only appear percent-encoded on the wire.
   await writeFile(join(dir, "hello world.txt"), "SPACE_NAME");
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
+  await writeFile(join(dir, "release#1.txt"), "HASH_NAME");
+  await writeFile(join(dir, "release%231.txt"), "LITERAL_HASH_ESCAPE");
+  // Characters a URL carries raw in a path (`*`, `:`, `|` are invalid on Windows).
+  await writeFile(join(dir, "!$&'()+,;=@[].txt"), "RAW_PUNCT_NAME");
+  await mkdir(join(dir, "@fs"), { recursive: true });
+  await writeFile(join(dir, "@fs", "secret.txt"), "AT_FS_SECRET");
+  if (sep !== "\\") {
+    await writeFile(join(dir, "question?.txt"), "QUESTION_NAME");
+    // Names Windows cannot hold (or would strip back to `trailing`).
+    await writeFile(join(dir, "trailing."), "TRAILING_DOT");
+    await writeFile(join(dir, "trailing "), "TRAILING_SPACE");
+    await writeFile(join(dir, "12:00.log"), "COLON_NAME");
+  }
+
+  // Every unreserved punctuation character (RFC 3986 §2.3), in one name.
+  await writeFile(join(dir, "a-b_c~d.txt"), "UNRESERVED_NAME");
+
+  // A directory literally named `%2Fsub`: its one canonical URL is `/%252Fsub/`.
+  await mkdir(join(dir, "%2Fsub"), { recursive: true });
+  await writeFile(join(dir, "%2Fsub", "inside.txt"), "LITERAL_ESCAPED_SLASH");
+
+  // A backslash is an ordinary name character on POSIX (a separator on Windows).
+  if (sep !== "\\") {
+    await writeFile(join(dir, "back\\slash.txt"), "BACKSLASH_NAME");
+  }
 
   // Extensions whose MIME mapping is pinned below; the contents never matter.
-  for (const name of ["mod.wasm", "pic.avif", "song.mp3", "bundle.gz"]) {
+  for (const name of [
+    "mod.wasm",
+    "pic.avif",
+    "song.mp3",
+    "bundle.gz",
+    "readme.md",
+    "readme.markdown",
+  ]) {
     await writeFile(join(dir, name), "X");
   }
 
@@ -207,13 +244,13 @@ const expectNext = async (res: Response, label?: string) => {
 
 // `new Request()` collapses dot segments in its constructor, so a request built
 // through it hands the middleware an already-resolved pathname and can never
-// exercise the containment check. `FastURL`'s origin-form fast path returns the
-// target verbatim (`_searchNeedsNormRE` in `_url.ts` does not deopt on `..`),
-// which is the one way an unresolved pathname reaches `static.ts` — so build
-// `_url` directly to test the check rather than the test harness.
+// exercise the containment check. `FastURL` resolves `..` and `\` like native
+// `URL` too, so only a hand-built `req._url` can carry an unresolved pathname
+// into `static.ts` — stub one (the middleware reads only `pathname`) to test
+// the check rather than the test harness.
 const rawReq = (path: string) => {
   const request = new Request("http://localhost/") as unknown as ServerRequest;
-  request._url = new FastURL(path);
+  request._url = { pathname: path } as unknown as URL;
   return request;
 };
 
@@ -273,9 +310,9 @@ describe("staticMiddleware", () => {
       await expect(res.text()).resolves.toContain("sub index");
     });
 
-    test.each(["/sub/", "/sub//"])("serves <dir>/index.html for %s", async (path) => {
-      const res = await fetchStatic(path);
-      expect(res.status, path).toBe(200);
+    test("serves <dir>/index.html for /sub/", async () => {
+      const res = await fetchStatic("/sub/");
+      expect(res.status).toBe(200);
       await expect(res.text()).resolves.toContain("sub index");
     });
 
@@ -478,6 +515,7 @@ describe("staticMiddleware", () => {
         body: "PLAIN_JS",
       },
       { why: "honors q=0 as a refusal", accept: "br;q=0, gzip", enc: "gzip", body: "GZIP_JS" },
+      { why: "honors Q=0 as a refusal", accept: "br;Q=0, gzip", enc: "gzip", body: "GZIP_JS" },
       { why: "honors an explicit q ranking", accept: "br;q=1.0", enc: "br", body: "BROTLI_JS" },
       { why: "treats a malformed q as a refusal", accept: "br;q=abc", enc: null, body: "PLAIN_JS" },
       { why: "supports the * wildcard", accept: "*", enc: "br", body: "BROTLI_JS" },
@@ -582,13 +620,20 @@ describe("staticMiddleware", () => {
       expect(body.length).toBeLessThan(BIG_JS.length);
     });
 
+    test("encodes a file with an upper-case extension", async () => {
+      const res = await fetchEncoded("/big-upper.JS", "br");
+      expect(res.headers.get("content-encoding")).toBe("br");
+      expect(res.headers.get("vary")).toBe("Accept-Encoding");
+      expect(brotliDecompressSync(Buffer.from(await res.arrayBuffer())).toString()).toBe(BIG_JS);
+    });
+
     test("prefers brotli over gzip", async () => {
       const res = await fetchEncoded("/big.js", "gzip, br");
       expect(res.headers.get("content-encoding")).toBe("br");
     });
 
-    test("honors q=0 as a refusal", async () => {
-      const res = await fetchEncoded("/big.js", "br;q=0, gzip");
+    test.each(["q", "Q"])("honors %s=0 as a refusal", async (quality) => {
+      const res = await fetchEncoded("/big.js", `br;${quality}=0, gzip`);
       expect(res.headers.get("content-encoding")).toBe("gzip");
     });
 
@@ -715,8 +760,8 @@ describe("staticMiddleware", () => {
       renderHTML: ({ html }: { html: string }) => new Response(`${html}<!--rendered-->`),
     };
 
-    test.each(["/index.html", "/page.htm"])("renders %s", async (path) => {
-      // Both map to `text/html`, so both render: an extension the MIME table
+    test.each(["/index.html", "/page.htm", "/upper.HTML"])("renders %s", async (path) => {
+      // These map to `text/html`, so all render: an extension the MIME table
       // treats as HTML must not be served as raw markup.
       const res = await fetchStatic(path, opts);
       await expect(res.text()).resolves.toContain("<!--rendered-->");
@@ -734,6 +779,8 @@ describe("staticMiddleware", () => {
       ["/index.html", "text/html; charset=utf-8"],
       ["/sub/inside.txt", "text/plain; charset=utf-8"],
       ["/app.js", "text/javascript; charset=utf-8"],
+      ["/readme.md", "text/markdown; charset=utf-8"],
+      ["/readme.markdown", "text/markdown; charset=utf-8"],
       // ...while non-text bytes have none to declare.
       ["/logo.png", "image/png"],
       ["/LICENSE", "application/octet-stream"],
@@ -742,6 +789,9 @@ describe("staticMiddleware", () => {
       ["/pic.avif", "image/avif"],
       ["/song.mp3", "audio/mpeg"],
       ["/bundle.gz", "application/gzip"],
+      ["/upper.HTML", "text/html; charset=utf-8"],
+      ["/mixed.Js", "text/javascript; charset=utf-8"],
+      ["/upper.PNG", "image/png"],
     ])("declares %s as %s", async (path, type) => {
       expect((await fetchStatic(path!)).headers.get("content-type")).toBe(type);
     });
@@ -1099,37 +1149,167 @@ describe("staticMiddleware", () => {
       ["/hello%20world.txt", "SPACE_NAME"],
       ["/caf%C3%A9.txt", "UNICODE_NAME"],
       ["/50%25.txt", "PERCENT_NAME"],
+      ["/release%231.txt", "HASH_NAME"],
+      ["/release%25231.txt", "LITERAL_HASH_ESCAPE"],
     ])("decodes %s exactly once for the lookup", async (path, contents) => {
       const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
     });
 
+    test("serves characters a URL keeps raw only at their raw spelling", async () => {
+      // `new URL()` leaves all of these raw in a path, so this is their one URL.
+      await expect(fetchStatic("/!$&'()+,;=@[].txt").then((r) => r.text())).resolves.toBe(
+        "RAW_PUNCT_NAME",
+      );
+      await expect(fetchStatic("/@fs/secret.txt").then((r) => r.text())).resolves.toBe(
+        "AT_FS_SECRET",
+      );
+    });
+
     test.each([
-      // The decoded lookup is for a file literally named `sub%2Finside.txt`.
-      "/sub%2Finside.txt",
-      // `%2f` survives `decodeURI`, so this stays a single literal filename
-      // rather than traversing. Reaches the middleware verbatim: `new Request()`
-      // only collapses real separators.
-      "/%2e%2e%2foutside%2fsecret.txt",
-    ])("keeps the encoded separator in %s encoded", async (path) => {
+      // Decoded, each would be a second URL for a file served at its raw
+      // spelling, which an earlier `startsWith("/@fs")` check would miss.
+      "/%40fs/secret.txt",
+      "/%21%24%26%27%28%29%2B%2C%3B%3D%40%5B%5D.txt",
+      "/%21$&'()+,;=@[].txt",
+      "/!$%26'()+,;=@[].txt",
+      "/!$&'()%2b,;=@[].txt",
+      "/!$&'()+,;=@%5b].txt",
+      // The rest of the set, with no fixture: refused before any lookup.
+      "/a%2Ab",
+      "/a%3Ab",
+      "/a%7Cb",
+    ])("serves nothing at the encoded spelling %s", async (path) => {
       await expectNext(await fetchStatic(path), path);
     });
 
-    test("applies the dotfile policy to the decoded name", async () => {
-      expect((await fetchStatic("/%2Eenv")).status).toBe(404);
-      await expect(fetchStatic("/%2Eenv", { dotfiles: true }).then((r) => r.text())).resolves.toBe(
+    test.skipIf(sep === "\\")("decodes a question mark in a filename", async () => {
+      const res = await fetchStatic("/question%3f.txt?download=true");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("QUESTION_NAME");
+    });
+
+    test("serves unreserved characters at their unencoded URL", async () => {
+      await expect(fetchStatic("/a-b_c~d.txt").then((r) => r.text())).resolves.toBe(
+        "UNRESERVED_NAME",
+      );
+    });
+
+    test.each([
+      // No file name can hold a `/`, so an encoded one never names a file.
+      "/sub%2Finside.txt",
+      // Never decoded into a separator, so this cannot traverse. Reaches the
+      // middleware verbatim: `new Request()` only collapses real separators.
+      "/%2e%2e%2foutside%2fsecret.txt",
+    ])("serves nothing for the encoded separator in %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
+    });
+
+    test("serves a literal `%2F` in a name only at its `%252F` URL", async () => {
+      await expect(fetchStatic("/%252Fsub/inside.txt").then((r) => r.text())).resolves.toBe(
+        "LITERAL_ESCAPED_SLASH",
+      );
+      // An encoded separator is refused before decoding, never treated as `/`.
+      await expectNext(await fetchStatic("/%2Fsub/inside.txt"));
+      await expectNext(await fetchStatic("/%2fsub/inside.txt"));
+    });
+
+    test.each([
+      // Encoded unreserved characters (RFC 3986 §2.3), in either hex case: a
+      // URL differing only by these is the same URL, so each would mint a second
+      // one for a file — and an earlier `startsWith("/sub")` check misses it.
+      "/%73ub/inside.txt",
+      "/%73%75%62/inside.txt",
+      "/sub/%69nside.txt",
+      "/sub/inside%2Etxt",
+      "/sub/inside%2etxt",
+      "/%61bout",
+      "/abou%74",
+      "/%350%25.txt",
+      "/hello%20world%2Etxt",
+      "/caf%C3%A9%2Etxt",
+      "/a%2Db_c~d.txt",
+      "/a-b%5Fc~d.txt",
+      "/a-b_c%7Ed.txt",
+      "/a-b_c%7ed.txt",
+      // Empty segments, which `join()` would collapse onto `sub/inside.txt`.
+      "//sub/inside.txt",
+      "/sub//inside.txt",
+      "/sub//",
+      "//",
+      // An encoded backslash, a separator on Windows: `sub\inside.txt` there.
+      "/sub%5Cinside.txt",
+      "/sub%5cinside.txt",
+      // An encoded NUL never reaches the filesystem.
+      "/index.html%00",
+      "/index%00.html",
+    ])("serves nothing at the non-canonical %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
+    });
+
+    test.skipIf(sep === "\\")("serves no file named with a backslash", async () => {
+      // Its name needs `%5C`, which Windows would read as a separator: refused
+      // on every platform, so a URL maps to the same file everywhere.
+      await expectNext(await fetchStatic("/back%5Cslash.txt"));
+      // A raw `\` too, which only a hand-built `_url` can carry.
+      await expectNext(await fetchRaw("/back\\slash.txt"));
+    });
+
+    test("serves nothing for a raw backslash", async () => {
+      // `sub\inside.txt` on Windows, where `\` is a separator.
+      await expectNext(await fetchRaw("/sub\\inside.txt"));
+    });
+
+    test.each([
+      // Windows drops a trailing `.`/space, so each opens `index.html` there,
+      // but under an extension that is not `.html`: served raw, not rendered.
+      "/index.html.",
+      "/index.html..",
+      "/index.html%20",
+      "/index.html.%20.",
+      "/sub./inside.txt",
+      "/sub%20/inside.txt",
+      "/sub/.../inside.txt",
+    ])("serves nothing at the Windows alias %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
+    });
+
+    test.skipIf(sep === "\\")("serves no POSIX name ending in `.` or a space", async () => {
+      // Valid names here, but Windows would serve `trailing` for both URLs:
+      // refused on every platform, so a URL maps to the same file everywhere.
+      await expectNext(await fetchStatic("/trailing."));
+      await expectNext(await fetchStatic("/trailing%20"));
+    });
+
+    test.skipIf(sep === "\\")("serves a POSIX name holding a `:`", async () => {
+      // No Windows name can hold one, so it aliases nothing and is only refused there.
+      await expect(fetchStatic("/12:00.log").then((r) => r.text())).resolves.toBe("COLON_NAME");
+    });
+
+    test.runIf(sep === "\\")("serves nothing through an NTFS stream", async () => {
+      // `index.html::$DATA` is `index.html`'s own bytes, under a non-HTML extension.
+      await expectNext(await fetchStatic("/index.html::$DATA"));
+      await expectNext(await fetchStatic("/index.html::$data"));
+      await expectNext(await fetchStatic("/index.html:stream"));
+    });
+
+    test("never serves an encoded dot, whatever the dotfile policy", async () => {
+      // `%2E` is an encoded unreserved `.`, so `/.env` is the only URL a
+      // dotfile is served at — and the one the policy checks.
+      await expectNext(await fetchStatic("/%2Eenv"));
+      await expectNext(await fetchStatic("/%2Eenv", { dotfiles: true }));
+      await expect(fetchStatic("/.env", { dotfiles: true }).then((r) => r.text())).resolves.toBe(
         "DOTENV",
       );
     });
 
-    test("applies the dotfile allow-list to the decoded name", async () => {
-      // The allow-list is matched after decoding, so an encoded `.well-known`
-      // is neither denied as an unknown dot segment nor let through unchecked.
-      await expect(fetchStatic("/%2Ewell-known/security.txt").then((r) => r.text())).resolves.toBe(
+    test("never serves an encoded allow-listed dot segment", async () => {
+      await expectNext(await fetchStatic("/%2Ewell-known/security.txt"));
+      await expectNext(await fetchStatic("/%2Ewell-known/%2Eenv"));
+      await expect(fetchStatic("/.well-known/security.txt").then((r) => r.text())).resolves.toBe(
         "SECURITY_TXT",
       );
-      expect((await fetchStatic("/%2Ewell-known/%2Eenv")).status).toBe(404);
     });
 
     test("does not decode twice", async () => {
@@ -1137,9 +1317,13 @@ describe("staticMiddleware", () => {
       await expectNext(await fetchStatic("/%252e%252e/outside/secret.txt"));
     });
 
-    test.each(["/foo%", "/%ZZ"])("rejects the malformed encoding %s with 400", async (path) => {
-      expect((await fetchStatic(path)).status, path).toBe(400);
-    });
+    // Including invalid UTF-8 (a bad continuation byte, a truncated sequence).
+    test.each(["/foo%", "/%ZZ", "/%C3%20", "/%E0%A4"])(
+      "rejects the malformed encoding %s with 400",
+      async (path) => {
+        expect((await fetchStatic(path)).status, path).toBe(400);
+      },
+    );
   });
 
   describe("byte ranges", () => {

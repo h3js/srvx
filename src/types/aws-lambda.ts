@@ -90,6 +90,21 @@ export interface AWSLambdaProxyEventV2 {
 }
 
 /**
+ * Application Load Balancer target event (`ALBEvent`).
+ */
+export interface AWSLambdaALBEvent {
+  requestContext: { elb: { targetGroupArn: string } };
+  httpMethod: string;
+  path: string;
+  queryStringParameters?: Record<string, string | undefined>;
+  headers?: Record<string, string | undefined>;
+  multiValueQueryStringParameters?: Record<string, string[] | undefined>;
+  multiValueHeaders?: Record<string, string[] | undefined>;
+  body: string | null;
+  isBase64Encoded: boolean;
+}
+
+/**
  * API Gateway REST API (v1) proxy result (`APIGatewayProxyResult`).
  */
 export interface AWSLambdaProxyResult {

@@ -171,6 +171,19 @@ describe("trustProxy host gating (Node)", () => {
     });
     expect(body).toBe("real.example");
   });
+
+  test.each(["forwarded.example:99999", "256.0.0.1", "foo.123", "[::::]"])(
+    "falls back to Host when a trusted X-Forwarded-Host is unparseable (%s)",
+    async (forwardedHost) => {
+      const port = await start({ trustProxy: true });
+      const { statusCode, body } = await rawRequest(port, {
+        Host: "real.example",
+        "X-Forwarded-Host": forwardedHost,
+      });
+      expect(statusCode).toBe(200);
+      expect(body).toBe("real.example");
+    },
+  );
 });
 
 describe("trustProxy client IP gating (Node)", () => {

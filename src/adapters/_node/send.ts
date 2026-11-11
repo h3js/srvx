@@ -2,7 +2,7 @@ import { type Readable as NodeReadable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
-import type { NodeResponse } from "./response.ts";
+import { disposeBody, type NodeResponse } from "./response.ts";
 
 /**
  * Sends a web `Response` to a Node.js `ServerResponse`.
@@ -123,6 +123,10 @@ function _sendNodeResponse(
   webRes: Response | NodeResponse,
   detached: boolean,
 ): Promise<void> | void {
+  if (nodeRes.writableEnded) {
+    return handleAlreadyEndedResponse(nodeRes, webRes, detached);
+  }
+
   if (!webRes) {
     nodeRes.statusCode = 500;
     return endNodeResponse(nodeRes, detached);
@@ -140,12 +144,10 @@ function _sendNodeResponse(
         return pipeBody(res.body as NodeReadable, nodeRes, res.status, res.statusText, res.headers);
       }
       writeHead(nodeRes, res.status, res.statusText, res.headers);
-      // Note: NodeHttp2ServerResponse.write() body type declared as string | Uint8Array
-      // We explicitly test other types in runtime.
-      (nodeRes as NodeHttp.ServerResponse).write(res.body);
-    } else {
-      writeHead(nodeRes, res.status, res.statusText, res.headers);
+      // Buffered body (string / Uint8Array / Buffer)
+      return endNodeResponse(nodeRes, detached, res.body as string | Uint8Array);
     }
+    writeHead(nodeRes, res.status, res.statusText, res.headers);
     return endNodeResponse(nodeRes, detached);
   }
 
@@ -156,6 +158,28 @@ function _sendNodeResponse(
   writeHead(nodeRes, webRes.status, webRes.statusText, rawHeaders);
 
   return webRes.body ? streamBody(webRes.body, nodeRes) : endNodeResponse(nodeRes, detached);
+}
+
+// The handler already ended the response, so there is nothing left to write.
+// Dispose of any unsent body, and for the non-detached path wait for the
+// response to finish flushing so the returned promise keeps its contract.
+function handleAlreadyEndedResponse(
+  nodeRes: NodeServerResponse,
+  webRes: Response | NodeResponse | undefined,
+  detached: boolean,
+): Promise<void> | void {
+  disposeBody(
+    (webRes as NodeResponse | undefined)?._toNodeResponse
+      ? (webRes as NodeResponse)._toNodeResponse().body
+      : (webRes as Response | undefined)?.body,
+  );
+  if (detached || nodeRes.writableFinished || nodeRes.destroyed) {
+    return;
+  }
+  return new Promise<void>((resolve) => {
+    nodeRes.once("finish", resolve);
+    nodeRes.once("close", resolve);
+  });
 }
 
 function writeHead(
@@ -202,12 +226,36 @@ function safeStatusText(statusText: string): string {
     : statusText;
 }
 
-function endNodeResponse(nodeRes: NodeServerResponse, detached?: boolean): Promise<void> | void {
+// A buffered `body` goes through `end(body)` rather than `write(body); end()`:
+// a separate `write()` corks the socket until the next tick and costs an extra
+// internal write, while `end(body)` flushes headers and body in one go (Node
+// >= 22 also attaches the finish callback to that final write).
+function endNodeResponse(
+  nodeRes: NodeServerResponse,
+  detached?: boolean,
+  body?: string | Uint8Array,
+): Promise<void> | void {
+  // Cast: the HTTP/1 and HTTP/2 `end()` overloads don't unify, but both take
+  // `(chunk?, cb?)`.
+  const res = nodeRes as NodeHttp.ServerResponse;
   if (detached) {
-    nodeRes.end();
+    res.end(body);
     return;
   }
-  return new Promise<void>((resolve) => nodeRes.end(resolve));
+  return new Promise<void>((resolve) => {
+    // `end()`'s callback never fires once the client is gone (HTTP/1.1 socket
+    // closed before or while sending, HTTP/2 stream reset mid-body), so also
+    // settle on `close` -- or right away if the response is already destroyed
+    // and `close` may have been emitted.
+    if (nodeRes.destroyed) {
+      res.end(body);
+      return resolve();
+    }
+    // `on` (not `once`): skips the once-wrapper allocation on this per-response
+    // path; `close` fires at most once and a second `resolve()` is a no-op.
+    nodeRes.on("close", resolve);
+    res.end(body, resolve);
+  });
 }
 
 function pipeBody(
@@ -228,12 +276,7 @@ function pipeBody(
   // event loop. Discard the source up front instead, mirroring streamBody.
   // Headers are still deferred here, so write them before ending.
   if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
-    if (typeof stream.destroy === "function") {
-      stream.destroy();
-    } else {
-      // Duck-typed pipe objects (e.g. React's PipeableStream) expose abort().
-      (stream as unknown as { abort?: () => void }).abort?.();
-    }
+    disposeBody(stream);
     writeHead(nodeRes, status, statusText, headers);
     return endNodeResponse(nodeRes);
   }
@@ -247,9 +290,16 @@ function pipeBody(
   }
 
   // Real Node.js streams support pipeline() for proper error/abort propagation.
-  // Wait for the first event (readable or error) before writing headers so that
+  // Wait for the first event (readable, end or error) before writing headers so that
   // if the stream errors before producing any data we can respond with 500
   // instead of committing to the original status code.
+
+  // Stream already ended: no further events would fire. An error after the end
+  // still answers 500 below.
+  if (stream.readableEnded && !stream.errored) {
+    writeHead(nodeRes, status, statusText, headers);
+    return endNodeResponse(nodeRes);
+  }
 
   // Stream already destroyed/errored — neither 'readable' nor 'error' would fire.
   if (stream.destroyed) {
@@ -258,10 +308,11 @@ function pipeBody(
   }
 
   return new Promise<void>((resolve) => {
-    // All three outcomes are terminal: whichever fires first detaches the others.
+    // All outcomes are terminal: whichever fires first detaches the others.
     function cleanup() {
       stream.off("error", onEarlyError);
       stream.off("readable", onReadable);
+      stream.off("end", onEnd);
       nodeRes.off("close", onResClose);
     }
     function onEarlyError() {
@@ -281,6 +332,15 @@ function pipeBody(
         .catch(() => {})
         .then(() => resolve());
     }
+    // An ended stream with nothing buffered emits 'end' without 'readable'.
+    function onEnd() {
+      cleanup();
+      if (nodeRes.destroyed) {
+        return resolve();
+      }
+      writeHead(nodeRes, status, statusText, headers);
+      (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
+    }
     // The client can vanish before the stream produces its first byte. Nothing
     // else observes that here (`pipeline()` has not started yet), so the source
     // — and whatever fd/socket backs it — would stay open forever.
@@ -291,6 +351,7 @@ function pipeBody(
     }
     stream.once("error", onEarlyError);
     stream.once("readable", onReadable);
+    stream.once("end", onEnd);
     nodeRes.once("close", onResClose);
   });
 }

@@ -2,12 +2,99 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll } from "vitest";
 import { execa, type ResultPromise as ExecaRes } from "execa";
-import { getRandomPort, waitForPort } from "get-port-please";
+import { getRandomPort } from "get-port-please";
 import { addTests } from "./_tests.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
+
+function canConnect(port: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ port, host: "localhost", signal });
+    const finish = (connected: boolean) => {
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(100);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+/**
+ * Wait until `child` accepts TCP connections on `port`.
+ *
+ * Probes with a real connection (a bind-based "port in use" check can report a
+ * free port while the server already listens, e.g. macOS + Node 24) and races
+ * against the child exiting, so early failures surface with their exit status
+ * and output instead of a generic timeout.
+ */
+export async function waitForServer(
+  port: number,
+  child: ExecaRes,
+  opts: { timeout?: number } = {},
+): Promise<void> {
+  const controller = new AbortController();
+  // Children may be spawned with or without `reject: false`; normalize both.
+  const exited = child
+    .then(
+      (result) => result,
+      (error) => error,
+    )
+    .then(({ exitCode, signal }) => {
+      throw new Error(
+        `Process exited with ${signal ? `signal ${signal}` : `code ${exitCode}`} before listening on port ${port}`,
+      );
+    });
+  const listening = async () => {
+    const deadline = Date.now() + (opts.timeout ?? 5000);
+    while (Date.now() < deadline) {
+      if (await canConnect(port, controller.signal)) {
+        return;
+      }
+      await delay(50, undefined, { signal: controller.signal });
+    }
+    throw new Error(`Timeout waiting for server on port ${port}`);
+  };
+  try {
+    await Promise.race([listening(), exited]);
+  } catch (error) {
+    controller.abort();
+    child.kill("SIGTERM");
+    const { stderr, stdout } = await child.catch((error_) => error_);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${message}\n${stderr ?? ""}\n${stdout ?? ""}`, { cause: error });
+  } finally {
+    controller.abort();
+  }
+}
+
+/**
+ * Hosts that pass the `HOST_RE` shape check but where runtimes' URL parsers
+ * disagree or reject: `isValidHost` must match `URL.canParse` on each of them
+ * in whatever runtime runs the test.
+ */
+export const HOST_PARSER_AGREEMENT_CASES: string[] = [
+  "xn--a.com", // invalid punycode: Bun/Deno reject, Node accepts
+  "XN--zz",
+  "foo.xn--a:8080",
+  "xn--bcher-kva.example", // valid punycode
+  "a--b.com",
+  "42949672950x", // Bun rejects, Node/Deno accept
+  "10000000000X",
+  "255.42949672950x7f",
+  "0x7f.42949672950X:0",
+  "4294967295x",
+  "256.0.0.1", // rejected everywhere
+  "foo.123",
+  "[::::]",
+  "localhost:3000", // accepted everywhere
+  "[::1]:3000",
+];
 
 // Output that tests deliberately provoke and runtimes print to stderr. These
 // are expected and only add noise to the vitest output, so they are filtered
@@ -52,7 +139,7 @@ export function testsExec(cmd: string, opts: { runtime: string; silent?: boolean
         console.log(chunk.toString());
       });
     }
-    await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+    await waitForServer(port, childProc);
   });
 
   afterAll(async () => {
