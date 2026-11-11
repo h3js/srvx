@@ -1993,6 +1993,407 @@ describe("node body crash regressions", () => {
   });
 });
 
+// arrayBuffer()/bytes()/blob() read straight off the Node stream (like
+// text()/json()) instead of through a native Request over `Readable.toWeb`. The
+// results must still be indistinguishable from what native fetch returns.
+describe("node direct body reads (arrayBuffer / bytes / blob)", () => {
+  async function withServer(
+    fetchHandler: (req: Request) => Response | Promise<Response>,
+    run: (url: string) => Promise<void>,
+    options: { maxRequestBodySize?: number } = {},
+  ) {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      silent: true,
+      ...options,
+      fetch: fetchHandler as any,
+    });
+    await server.ready();
+    try {
+      await run(server.url!);
+    } finally {
+      await server.close(true);
+    }
+  }
+
+  // 5 B and 3 KiB land in Node's shared `Buffer` pool (`Buffer.concat` /
+  // `allocUnsafe` below 4 KiB); 256 KiB arrives over many socket reads.
+  const sizes = [0, 5, 3 * 1024, 256 * 1024];
+  const payload = (size: number) => Uint8Array.from({ length: size }, (_, i) => (i * 31 + 7) % 251);
+  const digest = (bytes: Uint8Array) => {
+    let h = bytes.length;
+    for (const b of bytes) h = (h * 33 + b) >>> 0;
+    return h;
+  };
+
+  for (const size of sizes) {
+    test(`bytes() / arrayBuffer() return standalone, exact-length copies (${size} B)`, async () => {
+      const body = payload(size);
+      await withServer(
+        async (req) => {
+          const read =
+            new URL(req.url).searchParams.get("m") === "bytes"
+              ? await req.bytes()
+              : await req.arrayBuffer();
+          // Inspect bytes() as returned (wrapping it would copy).
+          const result = read instanceof Uint8Array ? read : new Uint8Array(read);
+          return Response.json({
+            ctor: read.constructor.name,
+            byteLength: result.byteLength,
+            byteOffset: result.byteOffset,
+            bufferByteLength: result.buffer.byteLength,
+            digest: digest(result),
+          });
+        },
+        async (url) => {
+          for (const m of ["bytes", "arrayBuffer"]) {
+            const res = await fetch(`${url}?m=${m}`, { method: "POST", body });
+            expect(await res.json()).toEqual({
+              // A plain Uint8Array (not a Buffer) / a plain ArrayBuffer.
+              ctor: m === "bytes" ? "Uint8Array" : "ArrayBuffer",
+              byteLength: size,
+              byteOffset: 0,
+              // Not a view into Node's buffer pool or the socket read buffer.
+              bufferByteLength: size,
+              digest: digest(body),
+            });
+          }
+        },
+      );
+    });
+  }
+
+  // The only assertions here that the old route (a native Request over
+  // `Readable.toWeb`) cannot satisfy: it wraps the Node stream, and leaves `body`
+  // as the drained (non-null) stream.
+  for (const method of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${method}() reads the Node stream directly, without Readable.toWeb`, async () => {
+      const toWeb = vi.spyOn(Readable, "toWeb");
+      try {
+        await withServer(
+          async (req) => {
+            await req[method]();
+            return Response.json({
+              toWebCalls: toWeb.mock.calls.length,
+              bodyNull: req.body === null,
+            });
+          },
+          async (url) => {
+            const res = await fetch(url, { method: "POST", body: "hello" });
+            expect(await res.json()).toEqual({ toWebCalls: 0, bodyNull: true });
+          },
+        );
+      } finally {
+        toWeb.mockRestore();
+      }
+    });
+  }
+
+  test("bytes() results do not share memory across requests", async () => {
+    const seen: Uint8Array[] = [];
+    await withServer(
+      async (req) => {
+        const bytes = await req.bytes();
+        seen.push(bytes);
+        bytes.fill(0); // must not clobber anything else
+        return new Response(String(seen.length));
+      },
+      async (url) => {
+        for (const body of ["first", "second"]) {
+          await (await fetch(url, { method: "POST", body })).text();
+        }
+      },
+    );
+    expect(seen).toHaveLength(2);
+    expect(seen[0].buffer).not.toBe(seen[1].buffer);
+  });
+
+  test("bytes() copies a pre-drained rawBody instead of aliasing it", async () => {
+    let rawBodyAfter: string | undefined;
+    const handler = toNodeHandler(async (request) => {
+      const bytes = await request.bytes();
+      bytes.fill(0x21); // "!"
+      return new Response(String(bytes.buffer.byteLength));
+    });
+    const server = createServer(async (req: any, res) => {
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c);
+      req.rawBody = Buffer.concat(chunks);
+      res.on("finish", () => (rawBodyAfter = req.rawBody.toString()));
+      handler(req, res as any);
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    try {
+      const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+      const res = await fetch(url, { method: "POST", body: "hello" });
+      expect(await res.text()).toBe("5");
+      expect(rawBodyAfter).toBe("hello");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  // Whatever native `Request.blob()` derives from `Content-Type` (WHATWG
+  // "extract a MIME type" + `Blob`'s lowercasing). Bun's own Request ignores the
+  // header for a stream body and always yields "", so the native reference
+  // itself is not meaningful there.
+  const contentTypes = [
+    undefined,
+    "application/octet-stream",
+    "Text/Plain; charset=UTF-8",
+    'TEXT/HTML;Charset="utf-8"',
+    "application/json; charset=utf-8; foo=bar",
+    "multipart/form-data; boundary=----abc",
+    "text/plain;",
+    "*/*",
+    "invalid",
+    "text/ plain",
+  ];
+  test.skipIf(isBun)("blob() type matches native Request.blob()", async () => {
+    await withServer(
+      async (req) => {
+        const blob = await req.blob();
+        return Response.json({ type: blob.type, text: await blob.text() });
+      },
+      async (url) => {
+        // Each type twice in a row: the second read is served from the
+        // last-type memo.
+        for (const contentType of contentTypes.flatMap((type) => [type, type])) {
+          const headers: Record<string, string> =
+            contentType === undefined ? {} : { "content-type": contentType };
+          const native = await new Request("http://localhost/", {
+            method: "POST",
+            headers,
+            body: new Blob(["x"]).stream(),
+            duplex: "half",
+          } as RequestInit).blob();
+          const res = await fetch(url, { method: "POST", headers, body: new Blob(["hello"]) });
+          expect(await res.json(), String(contentType)).toEqual({
+            type: native.type,
+            text: "hello",
+          });
+        }
+      },
+    );
+    // Spot-check the reference itself so a runtime change can't hide here.
+    const ref = await new Request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "Text/Plain; charset=UTF-8" },
+      body: new Blob(["x"]).stream(),
+      duplex: "half",
+    } as RequestInit).blob();
+    expect(ref.type).toBe("text/plain;charset=utf-8");
+  });
+
+  test.skipIf(isBun)("blob() type honors a content-type set through req.headers", async () => {
+    await withServer(
+      async (req) => {
+        req.headers.set("content-type", "Application/JSON");
+        return new Response((await req.blob()).type);
+      },
+      async (url) => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: "{}",
+        });
+        expect(await res.text()).toBe("application/json");
+      },
+    );
+  });
+
+  for (const first of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${first}() marks the body used and every later read rejects`, async () => {
+      await withServer(
+        async (req) => {
+          const before = req.bodyUsed;
+          await req[first]();
+          const outcomes: Record<string, string> = {
+            before: String(before),
+            after: String(req.bodyUsed),
+          };
+          for (const method of [
+            "arrayBuffer",
+            "bytes",
+            "blob",
+            "formData",
+            "text",
+            "json",
+          ] as const) {
+            outcomes[method] = await (req[method]() as Promise<unknown>).then(
+              () => "resolved",
+              (error) =>
+                error instanceof TypeError && /unusable/.test(error.message)
+                  ? "TypeError: unusable"
+                  : `other: ${error}`,
+            );
+          }
+          return Response.json(outcomes);
+        },
+        async (url) => {
+          const res = await fetch(url, { method: "POST", body: "hello" });
+          expect(await res.json()).toEqual({
+            before: "false",
+            after: "true",
+            arrayBuffer: "TypeError: unusable",
+            bytes: "TypeError: unusable",
+            blob: "TypeError: unusable",
+            formData: "TypeError: unusable",
+            text: "TypeError: unusable",
+            json: "TypeError: unusable",
+          });
+        },
+      );
+    });
+  }
+
+  // Bodies that something else already touched keep going through the native
+  // Request, which must still read them once.
+  const preludes = {
+    "after req.body was accessed": (req: Request) => void req.body,
+    "after _request was materialized": (req: Request) => void (req as any)._request,
+    "after a clone was read": (req: Request) => req.clone().text(),
+  } as const;
+  for (const [name, prelude] of Object.entries(preludes)) {
+    test(`bytes() still reads the body ${name}`, async () => {
+      await withServer(
+        async (req) => {
+          await prelude(req);
+          const bytes = await req.bytes();
+          return Response.json({
+            text: new TextDecoder().decode(bytes),
+            bodyUsed: req.bodyUsed,
+            second: await req.bytes().then(
+              () => "resolved",
+              (error) => (error instanceof TypeError ? "TypeError" : `other: ${error}`),
+            ),
+          });
+        },
+        async (url) => {
+          const res = await fetch(url, { method: "POST", body: "hello" });
+          expect(await res.json()).toEqual({ text: "hello", bodyUsed: true, second: "TypeError" });
+        },
+      );
+    });
+  }
+
+  test("GET with a body on the wire reads as an empty, repeatable body", async () => {
+    await withServer(
+      async (req) => {
+        const a = await req.arrayBuffer();
+        const b = await req.bytes();
+        const blob = await req.blob();
+        return new FastResponse(
+          JSON.stringify({
+            arrayBuffer: a.byteLength,
+            bytes: b.byteLength,
+            blob: blob.size,
+            bodyUsed: req.bodyUsed,
+          }),
+        );
+      },
+      async (url) => {
+        const u = new URL(url);
+        const raw = await rawExchange(
+          Number(u.port),
+          u.hostname,
+          "GET / HTTP/1.1\r\n" +
+            `Host: ${u.hostname}\r\n` +
+            "Content-Length: 5\r\n" +
+            "Connection: close\r\n" +
+            "\r\n" +
+            "hello",
+        );
+        const responses = parseHttpResponses(raw);
+        expect(JSON.parse(responses[0].body.toString())).toEqual({
+          arrayBuffer: 0,
+          bytes: 0,
+          blob: 0,
+          bodyUsed: false,
+        });
+      },
+    );
+  });
+
+  for (const method of ["arrayBuffer", "bytes", "blob"] as const) {
+    test(`${method}() enforces maxRequestBodySize on a chunked body`, async () => {
+      await withServer(
+        async (req) => {
+          try {
+            const result: any = await req[method]();
+            return new Response(String(result.byteLength ?? result.size));
+          } catch (error: any) {
+            return new Response(error.code, { status: error.statusCode ?? 500 });
+          }
+        },
+        async (url) => {
+          // No content-length: only the streaming count can catch it.
+          const chunked = (size: number) =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (let i = 0; i < size; i += 1024) controller.enqueue(new Uint8Array(1024));
+                controller.close();
+              },
+            });
+          const ok = await fetch(url, {
+            method: "POST",
+            body: chunked(8 * 1024),
+            duplex: "half",
+          } as RequestInit);
+          expect(await ok.text()).toBe(String(8 * 1024));
+          const tooLarge = await fetch(url, {
+            method: "POST",
+            body: chunked(64 * 1024),
+            duplex: "half",
+          } as RequestInit);
+          expect(tooLarge.status).toBe(413);
+          expect(await tooLarge.text()).toBe("ERR_BODY_TOO_LARGE");
+        },
+        { maxRequestBodySize: 8 * 1024 },
+      );
+    });
+  }
+
+  test.skipIf(skipHttp2)("bytes() reads an HTTP/2 body as a standalone copy", async () => {
+    const tls = await getTLSCert();
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      silent: true,
+      tls,
+      node: { http2: true, allowHTTP1: false } as any,
+      async fetch(req) {
+        const bytes = await req.bytes();
+        return Response.json({
+          text: new TextDecoder().decode(bytes),
+          bufferByteLength: bytes.buffer.byteLength,
+        });
+      },
+    });
+    await server.ready();
+    const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+    client.on("error", () => {});
+    try {
+      const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 9 });
+      stream.end("test body");
+      const chunks: Buffer[] = [];
+      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      await new Promise((resolve, reject) => {
+        stream.once("end", resolve);
+        stream.once("error", reject);
+      });
+      expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual({
+        text: "test body",
+        bufferByteLength: 9,
+      });
+    } finally {
+      client.destroy();
+      await server.close(true);
+    }
+  });
+});
+
 // Regressions where the Node adapter diverged from native fetch semantics
 // (Response defaults, HEAD handling, send diagnostics, node-compat bridge).
 describe("node fetch-spec correctness regressions", () => {
