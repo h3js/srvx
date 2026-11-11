@@ -1,6 +1,7 @@
 import { ServerResponse } from "node:http";
 import { WebRequestSocket, prematureCloseError } from "./socket.ts";
 import type { WebIncomingMessage } from "./incoming.ts";
+import { isNullBodyStatus } from "../../../_utils.ts";
 
 // Node's OutgoingMessage sets an internal `kNeedDrain` symbol to true when a
 // write returns false, and clears it (emitting "drain") from the HTTP server's
@@ -15,9 +16,6 @@ function getNeedDrainSymbol(res: ServerResponse): symbol | undefined {
   needDrainSymbol ??= Object.getOwnPropertySymbols(res).find((s) => s.description === "kNeedDrain");
   return needDrainSymbol;
 }
-
-// Statuses that must not carry a response body per the Fetch/HTTP spec.
-const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 // Hop-by-hop headers (RFC 9110 §7.6.1). They describe a single transport hop,
 // not the message, so they must never be carried into the web `Response` the
@@ -252,7 +250,7 @@ export class WebServerResponse extends ServerResponse {
     // stream to `new Response()` for these throws, which would otherwise be
     // caught and surfaced as a 500 (e.g. Express `res.sendStatus(204)` or a
     // conditional-GET 304 through `toFetchHandler`).
-    const nullBody = NULL_BODY_STATUSES.has(this.statusCode);
+    const nullBody = isNullBodyStatus(this.statusCode);
     return new Response(nullBody ? null : this.#socket._webResBody, {
       status: this.statusCode,
       statusText: this.statusMessage,

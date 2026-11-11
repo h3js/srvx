@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, test } from "vitest";
 import { FastResponse, sendNodeResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
 import type { NodeHttp1Handler, NodeServerResponse, ServerRequest } from "../src/types.ts";
@@ -276,6 +277,45 @@ describe("node adapter already-ended response", () => {
     await sent;
     expect(settled).toBe(true);
   });
+});
+
+// A discarded Node stream body is destroyed with no other listener attached. A
+// `_destroy()` that fails still emits `error`, which must not escape as an
+// `uncaughtException`.
+describe("node adapter discarded stream body with a failing destroy", () => {
+  function failingBody() {
+    const body = new Readable({
+      read() {},
+      destroy(_error, callback) {
+        callback(new Error("cleanup failed"));
+      },
+    });
+    body.push("hello");
+    return body as unknown as BodyInit;
+  }
+
+  for (const [name, method, handler] of [
+    ["null-body status", "GET", () => new FastResponse(failingBody(), { status: 204 })],
+    ["HEAD request", "HEAD", () => new FastResponse(failingBody())],
+    [
+      "already-ended response",
+      "GET",
+      (req: ServerRequest) => {
+        req.runtime!.node!.res!.end("hi");
+        return new FastResponse(failingBody());
+      },
+    ],
+  ] as const) {
+    test(name, async () => {
+      const captured = captureProcessErrors("uncaughtException");
+      await withServer(handler, async (url) => {
+        const res = await fetch(url, { method, signal: AbortSignal.timeout(1000) });
+        await res.arrayBuffer();
+        await new Promise((r) => setTimeout(r, 50));
+        expect(captured).toEqual([]);
+      });
+    });
+  }
 });
 
 // The in-process tests above run inside vitest, which installs its own

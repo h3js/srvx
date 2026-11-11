@@ -2,7 +2,7 @@ import { type Readable as NodeReadable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
-import type { NodeResponse } from "./response.ts";
+import { disposeBody, type NodeResponse } from "./response.ts";
 
 /**
  * Sends a web `Response` to a Node.js `ServerResponse`.
@@ -168,14 +168,11 @@ function handleAlreadyEndedResponse(
   webRes: Response | NodeResponse | undefined,
   detached: boolean,
 ): Promise<void> | void {
-  const body = (webRes as NodeResponse | undefined)?._toNodeResponse
-    ? (webRes as NodeResponse)._toNodeResponse().body
-    : (webRes as Response | undefined)?.body;
-  if (body instanceof ReadableStream) {
-    body.cancel().catch(() => {});
-  } else if (body) {
-    destroyNodeBody(body as NodeReadable);
-  }
+  disposeBody(
+    (webRes as NodeResponse | undefined)?._toNodeResponse
+      ? (webRes as NodeResponse)._toNodeResponse().body
+      : (webRes as Response | undefined)?.body,
+  );
   if (detached || nodeRes.writableFinished || nodeRes.destroyed) {
     return;
   }
@@ -183,16 +180,6 @@ function handleAlreadyEndedResponse(
     nodeRes.once("finish", resolve);
     nodeRes.once("close", resolve);
   });
-}
-
-// Duck-typed pipe objects (e.g. React's PipeableStream) expose abort() instead
-// of destroy(). Non-stream bodies (string, Buffer) have neither and are ignored.
-function destroyNodeBody(body: NodeReadable): void {
-  if (typeof body.destroy === "function") {
-    body.destroy();
-  } else {
-    (body as unknown as { abort?: () => void }).abort?.();
-  }
 }
 
 function writeHead(
@@ -289,7 +276,7 @@ function pipeBody(
   // event loop. Discard the source up front instead, mirroring streamBody.
   // Headers are still deferred here, so write them before ending.
   if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
-    destroyNodeBody(stream);
+    disposeBody(stream);
     writeHead(nodeRes, status, statusText, headers);
     return endNodeResponse(nodeRes);
   }

@@ -155,3 +155,15 @@ export function createWaitUntil() {
     },
   };
 }
+
+/**
+ * Statuses that carry no content: fetch's null body statuses (101, 103, 204,
+ * 205, 304), widened to all of 1xx per RFC 9110 §15.2.
+ *
+ * Coerces with `+` since `FastResponse` doesn't validate `init.status`, which
+ * may be a numeric string (Node's `writeHead()` coerces it the same way).
+ */
+export function isNullBodyStatus(status: number): boolean {
+  status = +status;
+  return status < 200 || status === 204 || status === 205 || status === 304;
+}
