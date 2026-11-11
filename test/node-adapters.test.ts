@@ -194,18 +194,27 @@ describe("adapters", () => {
     expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(simpleNodeHandler);
   });
 
-  // See `hasBackslashInPath`. Bun/Deno parse the request line themselves.
-  test.skipIf(isDeno || isBun)("toNodeHandler rejects a raw backslash in the path", async () => {
+  // See `hasAmbiguousPath`. Bun/Deno parse the request line themselves.
+  test.skipIf(isDeno || isBun)("toNodeHandler rejects ambiguous paths", async () => {
     // Explicit content-length so the raw response body can be compared exactly.
     const webHandler = (request: Request) => {
       const { pathname } = new URL(request.url);
       return new Response(pathname, { headers: { "content-length": String(pathname.length) } });
     };
     const nodeHandler = toNodeHandler(webHandler) as NodeHttp1Handler;
-    const plain = createServer(nodeHandler);
-    // Mounted under express: `/public/` matches the raw target and the mounted
-    // `req.url` becomes `/\..\admin/secret`, which resolves to `/admin/secret`.
-    const mounted = createServer(express().use("/public", nodeHandler));
+    const guard = (_req: unknown, res: NodeServerResponse) => {
+      res.statusCode = 401;
+      res.end();
+    };
+    // Express matches its mounts on the raw `req.url`, while the fetch handler
+    // gets the parsed URL. For `/public/../admin/secret` (or `/public\..\admin/secret`)
+    // Express would see a path outside `/admin` and the fetch handler
+    // `/admin/secret`: the 400 keeps both on one path.
+    const root = createServer(express().use("/admin", guard).use(nodeHandler));
+    // Mounted: Express strips `/public` from the raw target, so the mounted
+    // `req.url` would be `/x/../admin/secret` while the fetch handler sees
+    // `/admin/secret`.
+    const mounted = createServer(express().use("/public/admin", guard).use("/public", nodeHandler));
     const send = async (server: ReturnType<typeof createServer>, target: string) => {
       const { port } = server.address() as AddressInfo;
       const raw = await rawExchange(
@@ -218,22 +227,45 @@ describe("adapters", () => {
     };
     try {
       await Promise.all(
-        [plain, mounted].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))),
+        [root, mounted].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))),
       );
-      expect((await send(plain, String.raw`/public\..\admin/secret`)).status).toBe(400);
-      expect((await send(mounted, String.raw`/public/\..\admin/secret`)).status).toBe(400);
-      // Accepted: encoded `%5C`, `\` in the query, and a normal mounted path.
+      for (const [server, target, status] of [
+        [root, "/admin/secret", 401],
+        [root, String.raw`/public\..\admin/secret`, 400],
+        [root, "/public/../admin/secret", 400],
+        [root, "/public/%2e%2e/admin/secret", 400],
+        [root, "/public/.%2E/admin/secret", 400],
+        [root, "/public/%2E/admin", 400],
+        [root, "/a/..", 400],
+        [root, "/a/.", 400],
+        [root, "/..", 400],
+        [root, "/.", 400],
+        [mounted, "/public/admin/secret", 401],
+        [mounted, String.raw`/public/\..\admin/secret`, 400],
+        [mounted, "/public/x/../admin/secret", 400],
+        [mounted, "/public/x/%2e%2e/admin/secret", 400],
+      ] as const) {
+        expect((await send(server, target)).status, target).toBe(status);
+      }
+      // Accepted: encoded `%5C`, dots inside a segment, and `\` / dots in the query.
       for (const [server, target, pathname] of [
-        [plain, "/a%5Cb", "/a%5Cb"],
-        [plain, String.raw`/x?q=\a`, "/x"],
+        [root, "/a%5Cb", "/a%5Cb"],
+        [root, String.raw`/x?q=\a`, "/x"],
+        [root, "/.well-known/x", "/.well-known/x"],
+        [root, "/a/...", "/a/..."],
+        [root, "/a/..b", "/a/..b"],
+        [root, "/assets/app.3f9a.js", "/assets/app.3f9a.js"],
+        [root, "/x?p=/../admin", "/x"],
         [mounted, "/public/x", "/x"],
+        [mounted, "/public/.well-known/x", "/.well-known/x"],
+        [mounted, "/public/a.b/c", "/a.b/c"],
       ] as const) {
         const res = await send(server, target);
         expect(res.status, target).toBe(200);
         expect(res.body, target).toBe(pathname);
       }
     } finally {
-      plain.close();
+      root.close();
       mounted.close();
     }
   });

@@ -2,7 +2,7 @@ import net from "node:net";
 import { describe, test, expect, vi } from "vitest";
 import { FastURL } from "../src/_url.ts";
 import { serve } from "../src/adapters/node.ts";
-import { NodeRequestURL } from "../src/adapters/_node/url.ts";
+import { hasAmbiguousPath, NodeRequestURL } from "../src/adapters/_node/url.ts";
 import { isValidHost } from "../src/_trust-proxy.ts";
 import { HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
 
@@ -678,7 +678,7 @@ describe("FastURL", () => {
       });
     });
 
-    // Raw `\` before the query: see `hasBackslashInPath`.
+    // Raw `\` before the query: see `hasAmbiguousPath`.
     test.each([
       String.raw`GET /public\..\admin/secret HTTP/1.1`,
       String.raw`GET /public\admin HTTP/1.1`,
@@ -697,6 +697,31 @@ describe("FastURL", () => {
       [String.raw`GET /x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
       [String.raw`GET http://localhost/x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
     ])("%s (encoded or query backslash) is accepted", async (requestLine, href) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(result.body).toContain(href);
+      });
+    });
+
+    // A complete `.` / `..` segment before the query: see `hasAmbiguousPath`
+    // (the full table is in the `hasAmbiguousPath` tests below).
+    test.each([
+      "GET /public/../admin/secret HTTP/1.1",
+      "GET /public/%2e%2e/admin/secret HTTP/1.1",
+      "GET http://localhost/public/../admin/secret HTTP/1.1",
+    ])("%s over the wire returns 400", async (requestLine) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 400 /);
+      });
+    });
+
+    test.each([
+      ["GET /.well-known/x HTTP/1.1", "http://localhost/.well-known/x"],
+      ["GET /x?p=/../a HTTP/1.1", "http://localhost/x?p=/../a"],
+      ["OPTIONS * HTTP/1.1", "http://localhost/*"],
+    ])("%s (dots inside a segment or in the query) is accepted", async (requestLine, href) => {
       await withServer(async (port) => {
         const result = await sendRaw(port, requestLine);
         expect(result.statusLine).toMatch(/^HTTP\/1\.1 200 /);
@@ -933,5 +958,103 @@ describe("FastURL", () => {
       expect(url.pathname).toBe("/base/foo");
       expect(req.url).toBe("/foo?q=1");
     });
+  });
+});
+
+// The Node adapter's request-target gate (`serve()`, `toNodeHandler()`) and
+// `FastURL`'s origin-form normalization (#359) must agree on what a dot segment
+// is: a target passes the gate exactly when `FastURL` keeps its path verbatim.
+describe("hasAmbiguousPath", () => {
+  const rejected = [
+    "/a/../b",
+    "/a/./b",
+    "/a/%2e%2e/b",
+    "/a/%2E%2E/b",
+    "/a/.%2e/b",
+    "/a/.%2E/b",
+    "/a/%2e./b",
+    "/a/%2E./b",
+    "/a/%2e/b",
+    "/a/%2E/b",
+    "/a/..",
+    "/a/.",
+    "/a/%2e",
+    "/a/%2e%2e",
+    "/..",
+    "/.",
+    "/../a",
+    "/./a",
+    "//..",
+    "/a//./b",
+    "/a/..?q=1",
+    "/a/.?q=1",
+    "/a/..#x",
+    "/a/..?q=/ok",
+    "/a.b/../c",
+    "/a.b/c.d/./e",
+    "/x.y/%2e%2e/z",
+    "/a%20b/%2e/c",
+    "/a%20b/x.y/.%2e",
+    String.raw`/a\b`,
+    String.raw`/a\b?q=1`,
+  ];
+  const accepted = [
+    "/",
+    "/api/users/123",
+    "/assets/app.3f9a.js",
+    "/.well-known/x",
+    "/a/.hidden",
+    "/.hidden",
+    "/a/...",
+    "/a/.../b",
+    "/a/..b",
+    "/a/.b.",
+    "/a/b..",
+    "/a/b.",
+    "/a.b/c",
+    "/a/%2e%2e%2e",
+    "/a/.%2e.",
+    "/a/%2ex",
+    "/a/x%2e",
+    "/a/%2",
+    "/a/.%2",
+    "/a/%",
+    "/a/%2f..",
+    "/a/%20",
+    "/a%5Cb",
+    "/a.b/c.d/e.f",
+    "/caf%C3%A9/na%C3%AFve/x%20y",
+    "/x?p=/../a",
+    "/x?/./a",
+    "/x?p=%2e%2e",
+    String.raw`/x?q=\a`,
+    "/x?q=/a/../b&r=.",
+  ];
+
+  test.each(rejected)("%s is rejected", (target) => {
+    expect(hasAmbiguousPath(target)).toBe(true);
+    // The fetch-side view would rewrite this path.
+    const path = target.split("?")[0]!.split("#")[0]!;
+    expect(new FastURL(target).pathname).not.toBe(path);
+  });
+
+  test.each(accepted)("%s is accepted", (target) => {
+    expect(hasAmbiguousPath(target)).toBe(false);
+    // Passing the gate, the path reaches the fetch handler verbatim.
+    expect(new FastURL(target).pathname).toBe(target.split("?")[0]);
+  });
+
+  test.each([
+    ["http://localhost/a/../b", true],
+    ["http://localhost/a/%2e%2e/b", true],
+    ["http://localhost/a/.", true],
+    ["http://u@h:8080/a/../b", true],
+    ["/a/%2E%2e", true],
+    ["http://localhost/a.b/c?p=/../a", false],
+    ["http://localhost:8080/api/users/123?x=1", false],
+    ["http://localhost", false],
+    ["*", false],
+  ] as const)("absolute-form, asterisk-form and mixed case: %s => %s", (target, expected) => {
+    expect(hasAmbiguousPath(target)).toBe(expected);
   });
 });
