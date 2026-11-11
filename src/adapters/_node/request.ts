@@ -6,6 +6,7 @@ import { NodeRequestHeaders } from "./headers.ts";
 import { kNativeResponse } from "./response.ts";
 import { getNativeClass, lazyInherit } from "../../_inherit.ts";
 import { createBodyTooLargeError, limitBodyStream } from "../../body-limit.ts";
+import { onBodyLimitExceeded } from "./body-limit.ts";
 import { Readable } from "node:stream";
 
 export type NodeRequestContext = {
@@ -24,6 +25,11 @@ export type NodeRequestContext = {
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
+
+// Called when the body goes over a limit — the adapter's own `maxRequestBodySize`
+// stream, or `limitRequestBody()` (`src/body-limit.ts`) — so the connection is
+// closed (or the HTTP/2 stream reset) after the response; see `./body-limit.ts`.
+const kBodyLimitExceeded: unique symbol = /* @__PURE__ */ Symbol.for("srvx.bodyLimitExceeded");
 
 /** The buffered body as one `Buffer`; single-chunk bodies (the common case) skip the copy. */
 function concatBuffers(chunks: Buffer[]): Buffer {
@@ -353,11 +359,20 @@ export const NodeRequest: {
         // `Request` methods — `formData()`, and every read once `_request` or the
         // stream is in play — and streaming). Direct reads enforce it in `readBody()`.
         if (stream && this.#maxRequestBodySize !== undefined) {
-          stream = limitBodyStream(stream, this.#maxRequestBodySize);
+          stream = limitBodyStream(stream, this.#maxRequestBodySize, {
+            createError: (size) => {
+              this[kBodyLimitExceeded]();
+              return createBodyTooLargeError(size);
+            },
+          });
         }
         this.#bodyStream = stream;
       }
       return this.#bodyStream;
+    }
+
+    [kBodyLimitExceeded](): void {
+      onBodyLimitExceeded(this.#req, this.runtime!.node!.res);
     }
 
     get bodyUsed(): boolean {
@@ -414,7 +429,7 @@ export const NodeRequest: {
     // intermediate `Buffer.concat` it does not need.
     #readBuffered(): Promise<Buffer[]> {
       if ("rawBody" in this.#req && Buffer.isBuffer(this.#req.rawBody)) {
-        return readBody(this.#req, this.#maxRequestBodySize);
+        return readBody(this.runtime!.node!, this.#maxRequestBodySize);
       }
       // A source that is already finished emits no further `data` / `end` /
       // `error`, so `readBody()` would wait forever on a body that can no longer
@@ -427,7 +442,7 @@ export const NodeRequest: {
       if (isBodySourceFinished(this.#req)) {
         return Promise.reject(this.#bodyError());
       }
-      return readBody(this.#req, this.#maxRequestBodySize);
+      return readBody(this.runtime!.node!, this.#maxRequestBodySize);
     }
 
     text(): Promise<string> {
@@ -645,11 +660,15 @@ export function patchGlobalRequest(): typeof Request {
  * `.arrayBuffer()` / `.bytes()` / `.blob()` when the body was not consumed as a
  * stream. When `maxRequestBodySize` (bytes) is provided, the accumulated
  * length is tracked as chunks arrive and, once it is exceeded, reading is aborted
- * (the stream is paused so a handler can still send a response) and the promise
- * rejects with a `413`-style error. When `maxRequestBodySize` is `undefined` (the default)
- * no limit is enforced.
+ * (the stream is paused so a handler can still send a response, after which
+ * `onBodyLimitExceeded()` closes the connection) and the promise rejects with a
+ * `413`-style error. When `maxRequestBodySize` is `undefined` (the default) no
+ * limit is enforced.
  */
-function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<Buffer[]> {
+function readBody(
+  { req, res }: NodeRequestContext,
+  maxRequestBodySize?: number,
+): Promise<Buffer[]> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
     if (maxRequestBodySize !== undefined && req.rawBody.length > maxRequestBodySize) {
@@ -673,8 +692,10 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
         if (size > maxRequestBodySize) {
           cleanup();
           // Stop consuming the body but keep the socket alive so a handler can
-          // still respond (e.g. with an HTTP 413).
+          // still respond (e.g. with an HTTP 413); the connection is closed
+          // (or the HTTP/2 stream reset) once that response is sent.
           req.pause?.();
+          onBodyLimitExceeded(req, res);
           reject(createBodyTooLargeError(maxRequestBodySize));
           return;
         }

@@ -54,7 +54,7 @@ export function limitRequestBody<T extends Request>(
     return request;
   }
 
-  const createError = options?.createError ?? createBodyTooLargeError;
+  const createError = withLimitHook(request, options?.createError ?? createBodyTooLargeError);
 
   // Fast path: reject before reading a single byte when the declared size is
   // already over the limit. `Content-Length` is `1*DIGIT` per HTTP, so anything
@@ -90,7 +90,7 @@ export function limitRequestBody<T extends Request>(
     (limited ??= new Response(
       overLimit
         ? erroredStream(createError(maxRequestBodySize))
-        : limitBodyStream(request.body!, maxRequestBodySize, options),
+        : limitBodyStream(request.body!, maxRequestBodySize, { createError }),
     ));
 
   return new Proxy(request, {
@@ -188,6 +188,28 @@ export function limitBodyStream(
       return reader.cancel(reason);
     },
   });
+}
+
+/**
+ * A runtime adapter's request may carry a method under this key to learn that its
+ * body went over a limit, so the connection can be closed once the response is
+ * sent (the Node adapter does — see `adapters/_node/body-limit.ts`).
+ */
+const kBodyLimitExceeded = /* @__PURE__ */ Symbol.for("srvx.bodyLimitExceeded");
+
+/** `createError`, notifying the request's adapter (if it listens) on every overflow. */
+function withLimitHook(
+  request: Request,
+  createError: BodyLimitErrorFactory,
+): BodyLimitErrorFactory {
+  const onExceeded = (request as any)[kBodyLimitExceeded] as (() => void) | undefined;
+  if (typeof onExceeded !== "function") {
+    return createError;
+  }
+  return (maxRequestBodySize) => {
+    onExceeded.call(request);
+    return createError(maxRequestBodySize);
+  };
 }
 
 /** Body-reading methods routed through the size-limited body by {@link limitRequestBody}. */
