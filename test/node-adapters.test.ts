@@ -1480,6 +1480,52 @@ describe("FastResponse copies init Headers", () => {
   });
 });
 
+// https://github.com/h3js/srvx/issues/343
+// A response passed as init exposes `status`/`statusText` as prototype getters,
+// so they must not be read by spreading it.
+describe("FastResponse keeps the status of a response used as init", () => {
+  const forbidden = () => new FastResponse("denied", { status: 403, statusText: "Forbidden" });
+
+  test("copy with mutated headers keeps its status once materialized", () => {
+    const copy = new FastResponse("denied", forbidden());
+    copy.headers.set("x-extra", "1");
+
+    const clone = copy.clone();
+    expect(clone.status).toBe(403);
+    expect(clone.statusText).toBe("Forbidden");
+    expect(clone.headers.get("x-extra")).toBe("1");
+    expect(copy.status).toBe(403);
+    expect(copy.statusText).toBe("Forbidden");
+  });
+
+  test("copy with mutated headers keeps its status on the wire", async () => {
+    const copy = new FastResponse("denied", forbidden());
+    copy.headers.set("x-extra", "1");
+    void copy.body; // materialize
+
+    const prepared = copy._toNodeResponse();
+    expect(prepared.status).toBe(403);
+    expect(prepared.statusText).toBe("Forbidden");
+    expect(prepared.headers).toContain("x-extra");
+  });
+
+  test("a native response works as init too", () => {
+    const copy = new FastResponse("denied", new Response(null, { status: 403 }));
+    copy.headers.set("x-extra", "1");
+
+    expect(copy.clone().status).toBe(403);
+  });
+
+  test("json() keeps the status of a response init", () => {
+    const res = FastResponse.json({ error: "denied" }, forbidden());
+
+    expect(res.status).toBe(403);
+    expect(res.statusText).toBe("Forbidden");
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(res.clone().status).toBe(403);
+  });
+});
+
 // Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
 // decorating a response must be able to mutate `res.headers` without paying for
 // materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
