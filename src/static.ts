@@ -203,6 +203,10 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 //   would reach a name literally containing `%2F`, whose own URL is `%252F`.
 // - `%5C`: `\` is a separator on Windows, so the same URL would name a
 //   different file per platform. Refused everywhere to keep the mapping fixed.
+//   A raw `\` is refused for the same reason (checked beside the regex: a
+//   single-char `includes` costs a fraction of another alternative here). The
+//   URL parser and `serve()` never let one through, but a hand-built
+//   origin-form `FastURL` in `req._url` keeps it verbatim.
 // - `%00`: a NUL must never reach the filesystem layer.
 //
 // Not rejected by this check: encoded reserved characters (`%23`, `%26`,
@@ -343,7 +347,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     }
     const url = (req._url ??= new FastURL(req.url));
     // An alternate spelling of a file's URL never serves it; it is the app's.
-    if (NON_CANONICAL_PATH_RE.test(url.pathname)) {
+    if (NON_CANONICAL_PATH_RE.test(url.pathname) || url.pathname.includes("\\")) {
       return next();
     }
     let path = url.pathname.slice(1);

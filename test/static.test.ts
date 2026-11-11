@@ -1179,6 +1179,13 @@ describe("staticMiddleware", () => {
       // Its name needs `%5C`, which Windows would read as a separator: refused
       // on every platform, so a URL maps to the same file everywhere.
       await expectNext(await fetchStatic("/back%5Cslash.txt"));
+      // A raw `\` too, which only a hand-built origin-form `_url` keeps.
+      await expectNext(await fetchRaw("/back\\slash.txt"));
+    });
+
+    test("serves nothing for a raw backslash", async () => {
+      // `sub\inside.txt` on Windows, where `\` is a separator.
+      await expectNext(await fetchRaw("/sub\\inside.txt"));
     });
 
     test("never serves an encoded dot, whatever the dotfile policy", async () => {
