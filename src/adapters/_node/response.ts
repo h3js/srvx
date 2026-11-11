@@ -32,6 +32,10 @@ function withHeaders(init: ResponseInit | undefined, headers: HeadersInit): Resp
  * their source is freed. Duck-typed pipe objects (e.g. React's PipeableStream)
  * expose `abort()` instead of `destroy()`. Non-stream bodies are ignored.
  *
+ * A stream whose `_destroy()` fails emits `error` even when `destroy()` is
+ * called without one; nothing else listens on a discarded body, so swallow it
+ * rather than let it surface as an `uncaughtException`.
+ *
  * @internal
  */
 export function disposeBody(body: unknown): void {
@@ -39,6 +43,7 @@ export function disposeBody(body: unknown): void {
     body.cancel().catch(() => {});
   } else if (typeof (body as NodeReadable | undefined)?.pipe === "function") {
     if (typeof (body as NodeReadable).destroy === "function") {
+      (body as NodeReadable).on?.("error", () => {});
       (body as NodeReadable).destroy();
     } else {
       (body as { abort?: () => void }).abort?.();
