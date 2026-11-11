@@ -3,7 +3,7 @@ import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from 
 import { getNativeClass, lazyInherit } from "../../_inherit.ts";
 import type { ResponseBody } from "../../types.ts";
 
-const kNativeResponse = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
+export const kNativeResponse: symbol = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
 
 // prettier-ignore
 export type PreparedNodeResponseBody = string | Buffer | Uint8Array | DataView | ReadableStream | NodeReadable | undefined | null;

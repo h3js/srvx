@@ -3,6 +3,7 @@ import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { resolveClientIP, trustedHops } from "../../_trust-proxy.ts";
 import { NodeRequestURL } from "./url.ts";
 import { NodeRequestHeaders } from "./headers.ts";
+import { kNativeResponse } from "./response.ts";
 import { getNativeClass, lazyInherit } from "../../_inherit.ts";
 import { createBodyTooLargeError, limitBodyStream } from "../../body-limit.ts";
 import { Readable } from "node:stream";
@@ -23,6 +24,39 @@ export type NodeRequestContext = {
 };
 
 const kNativeRequest = /* @__PURE__ */ Symbol.for("srvx.nativeRequest");
+
+/** The buffered body as one `Buffer`; single-chunk bodies (the common case) skip the copy. */
+function concatBuffers(chunks: Buffer[]): Buffer {
+  return chunks.length === 1 ? chunks[0] : Buffer.concat(chunks);
+}
+
+/**
+ * The buffered body copied into a fresh, exactly-sized `Uint8Array`, as native
+ * `bytes()` / `arrayBuffer()` return. Never hands out a chunk (or a
+ * `Buffer.concat` result) as-is: those are views into memory the caller does not
+ * own — Node's shared `Buffer` pool for small allocations, the socket's read
+ * buffer, a `rawBody` the middleware kept — which `.buffer` would expose (and
+ * let a write clobber). It must also be a plain `Uint8Array`, not a `Buffer`.
+ */
+function copyBytes(chunks: Buffer[]): Uint8Array<ArrayBuffer> {
+  let size = 0;
+  for (const chunk of chunks) {
+    size += chunk.byteLength;
+  }
+  // Every byte is overwritten below, so large bodies skip the zero-fill:
+  // `allocUnsafeSlow` is never pooled, its `ArrayBuffer` is exactly `size`
+  // bytes, and the `Buffer` itself is dropped for a plain view of that memory.
+  const bytes =
+    size >= 65_536
+      ? new Uint8Array(Buffer.allocUnsafeSlow(size).buffer, 0, size)
+      : new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
 
 /** Rejection for a second read of an already-consumed body (matches native fetch). */
 function bodyUnusable(): TypeError {
@@ -91,6 +125,14 @@ export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
   const NativeRequest = getNativeClass(kNativeRequest, globalThis.Request);
+  // `globalThis.Response` may be srvx's own `FastResponse` (or another
+  // server's subclass); `blob()` wants the runtime's Body mixin itself.
+  const NativeResponse = getNativeClass(kNativeResponse, globalThis.Response);
+  // Single-entry memo for `blob()`'s type: the last `Content-Type` value and the
+  // type the runtime derived from it. A server mostly sees one upload type, and
+  // the derivation is a pure function of the header value.
+  let lastContentType: string | undefined;
+  let lastBlobType = "";
 
   class Request implements Partial<ServerRequest> {
     runtime: ServerRequest["runtime"];
@@ -103,8 +145,8 @@ export const NodeRequest: {
     #url?: URL;
     #bodyStream?: ReadableStream | null;
     // The fetch spec's "disturbed" bit, tracked at the srvx level: set by the
-    // buffered fast path (text()/json()) directly, and latched from the stream
-    // `body` hands out by `#isBodyUsed()`. Every body read rejects with
+    // buffered fast path (text()/json()/arrayBuffer()/bytes()/blob()) directly,
+    // and latched from the stream `body` hands out by `#isBodyUsed()`. Every body read rejects with
     // `TypeError: Body is unusable` once set (like native fetch) instead of
     // hanging on a re-listened, already-ended IncomingMessage or resolving empty
     // off the null-body Request that `_request` serves in this state. Also lets
@@ -305,9 +347,10 @@ export const NodeRequest: {
             ) as unknown as ReadableStream;
           }
         }
-        // Enforce `maxRequestBodySize` at the single choke point every consumer funnels
-        // through (`request.body`, and therefore the native `Request` methods
-        // `arrayBuffer()` / `blob()` / `bytes()` / `formData()` and streaming).
+        // Enforce `maxRequestBodySize` at the single choke point every stream
+        // consumer funnels through (`request.body`, and therefore the native
+        // `Request` methods — `formData()`, and every read once `_request` or the
+        // stream is in play — and streaming). Direct reads enforce it in `readBody()`.
         if (stream && this.#maxRequestBodySize !== undefined) {
           stream = limitBodyStream(stream, this.#maxRequestBodySize);
         }
@@ -327,8 +370,8 @@ export const NodeRequest: {
     }
 
     // The spec's "disturbed" check. `#bodyUsed` only sees the buffered fast path
-    // (text()/json()); a consumer reading or cancelling the stream `body` handed
-    // out bypasses it, so consult the stream's own disturbed bit via
+    // (text()/json()/arrayBuffer()/bytes()/blob()); a consumer reading or
+    // cancelling the stream `body` handed out bypasses it, so consult the stream's own disturbed bit via
     // `isDisturbed` (the same primitive undici's guards use — a `ReadableStream`
     // doesn't expose it; the `Readable` static alias is used because `@types/node`
     // doesn't declare the module-level export) and latch the answer. Latching
@@ -363,10 +406,12 @@ export const NodeRequest: {
       return this.#req.errored || (isClientGone(this.#req) ? abortError() : bodyUnusable());
     }
 
-    // Buffer the raw request body once; consumers add their own single
-    // continuation (`.toString()` / `JSON.parse`) so no extra promise or
-    // microtask hop is introduced vs. inlining the read.
-    #readBuffered() {
+    // Buffer the raw request body once, as the list of chunks it arrived in;
+    // consumers add their own single continuation (`.toString()` / `JSON.parse`
+    // / a copy into a fresh `Uint8Array`) so no extra promise or microtask hop is
+    // introduced vs. inlining the read, and none of them pays for an
+    // intermediate `Buffer.concat` it does not need.
+    #readBuffered(): Promise<Buffer[]> {
       if ("rawBody" in this.#req && Buffer.isBuffer(this.#req.rawBody)) {
         return readBody(this.#req, this.#maxRequestBodySize);
       }
@@ -408,7 +453,7 @@ export const NodeRequest: {
           return Promise.reject(error);
         }
       }
-      return this.#readBuffered().then((buf) => buf.toString());
+      return this.#readBuffered().then((chunks) => concatBuffers(chunks).toString());
     }
 
     json(): Promise<any> {
@@ -433,27 +478,74 @@ export const NodeRequest: {
       }
       // Parse in a single continuation (readBody -> parse) instead of going
       // through text() — one less promise + microtask hop per body read.
-      return this.#readBuffered().then((buf) => JSON.parse(buf.toString()));
+      return this.#readBuffered().then((chunks) => JSON.parse(concatBuffers(chunks).toString()));
     }
 
     arrayBuffer(): Promise<ArrayBuffer> {
-      return this.#consumeNative("arrayBuffer");
+      return this.#readDirect("arrayBuffer", (chunks) => copyBytes(chunks).buffer);
     }
 
     bytes(): Promise<Uint8Array<ArrayBuffer>> {
-      return this.#consumeNative("bytes");
+      return this.#readDirect("bytes", copyBytes);
     }
 
     blob(): Promise<Blob> {
-      return this.#consumeNative("blob");
+      return this.#readDirect("blob", (chunks) => {
+        // `Blob` copies its parts, so the chunks go in as they are. The type is
+        // the request's body MIME type, which native fetch derives from
+        // `Content-Type` (WHATWG "extract a MIME type", then `Blob`'s own
+        // lowercasing) — a parse with enough corner cases (multiple values,
+        // `*/*`, charset carry-over, invalid tokens) that it is delegated to the
+        // runtime's Body mixin rather than re-implemented. Read once the bytes
+        // are in, like undici does, so a header set mid-read is honored.
+        // (Socket chunks are never `SharedArrayBuffer`-backed; the cast is for TS.)
+        const parts = chunks as BlobPart[];
+        const contentType = this.headers.get("content-type");
+        if (contentType === null) {
+          return new Blob(parts);
+        }
+        if (contentType === lastContentType) {
+          return new Blob(parts, { type: lastBlobType });
+        }
+        return new NativeResponse(null, { headers: { "content-type": contentType } })
+          .blob()
+          .then(({ type }) => {
+            lastContentType = contentType;
+            lastBlobType = type;
+            return new Blob(parts, { type });
+          });
+      });
     }
 
     formData(): Promise<FormData> {
       return this.#consumeNative("formData");
     }
 
-    // Unlike text()/json() these have no buffered fast path — they hand off to the
-    // native Request, which owns the accounting from there. The one case it cannot
+    // arrayBuffer()/bytes()/blob() read straight off the Node stream like
+    // text()/json(), instead of through a native Request over `Readable.toWeb`
+    // (a web-stream round trip per chunk; ~1.6x the throughput at 64 KiB). Only a request with a body
+    // that nothing has touched yet takes this path; everything else — a
+    // materialized `_request`, a `body` stream already handed out, GET/HEAD's
+    // null body — stays with the native Request, exactly as before.
+    #readDirect<T>(
+      method: "arrayBuffer" | "bytes" | "blob",
+      convert: (chunks: Buffer[]) => T | Promise<T>,
+    ): Promise<T> {
+      if (this.#request || this.#bodyStream !== undefined || !this.#hasBody()) {
+        return this.#consumeNative(method); // runs the body-used guard itself
+      }
+      // No `body` stream was handed out, so `#bodyUsed` alone is the
+      // disturbed bit here (see `#isBodyUsed()`).
+      if (this.#bodyUsed) {
+        return Promise.reject(bodyUnusable());
+      }
+      this.#bodyUsed = true;
+      return this.#readBuffered().then(convert);
+    }
+
+    // formData() has no buffered fast path (nor do the other body methods once a
+    // native Request or `body` stream is in play) — it hands off to the native
+    // Request, which owns the accounting from there. The one case it cannot
     // see is a body srvx already consumed: `_request` then serves a *null-body*
     // Request (see `_request`), whose body is pristine, so undici's own
     // "Body is unusable" guard never fires and the read resolves empty. Guard here.
@@ -546,22 +638,23 @@ export function patchGlobalRequest(): typeof Request {
 }
 
 /**
- * Buffers the whole request body into a single `Buffer`.
+ * Buffers the whole request body, resolving with the chunks it arrived in.
  *
- * This is the fallback used by `NodeRequest.text()` / `.json()` when the body was
- * not consumed as a stream. When `maxRequestBodySize` (bytes) is provided, the accumulated
+ * This is the direct read behind `NodeRequest.text()` / `.json()` /
+ * `.arrayBuffer()` / `.bytes()` / `.blob()` when the body was not consumed as a
+ * stream. When `maxRequestBodySize` (bytes) is provided, the accumulated
  * length is tracked as chunks arrive and, once it is exceeded, reading is aborted
  * (the stream is paused so a handler can still send a response) and the promise
  * rejects with a `413`-style error. When `maxRequestBodySize` is `undefined` (the default)
  * no limit is enforced.
  */
-function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<any> {
+function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<Buffer[]> {
   // https://github.com/GoogleCloudPlatform/functions-framework-nodejs/blob/5ce5e513d739fdb8388fb0e8b6fd5f52d59604f2/src/server.ts#L62
   if ("rawBody" in req && Buffer.isBuffer(req.rawBody)) {
     if (maxRequestBodySize !== undefined && req.rawBody.length > maxRequestBodySize) {
       return Promise.reject(createBodyTooLargeError(maxRequestBodySize));
     }
-    return Promise.resolve(req.rawBody);
+    return Promise.resolve([req.rawBody]);
   }
 
   return new Promise((resolve, reject) => {
@@ -603,8 +696,9 @@ function readBody(req: NodeServerRequest, maxRequestBodySize?: number): Promise<
         reject(req.errored || abortError());
         return;
       }
-      // Single-chunk bodies (the common case) skip Buffer.concat's alloc+copy
-      resolve(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
+      // Each consumer joins the chunks the way it needs (see `concatBuffers()` /
+      // `copyBytes()`), so none pays for a `Buffer.concat` it then copies again.
+      resolve(chunks);
     };
     // A destroy that surfaces no `error` (`req.destroy()`, or a reset that only
     // shows up as a close) would otherwise leave this promise — and the handler
