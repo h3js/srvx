@@ -54,10 +54,17 @@ export function awsRequest(
   const { sourceIp, forwardedFor } = awsEventPeer(event, headers);
   const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
+  // `new Request()` throws for a GET/HEAD with a body, and this runs before the
+  // error middleware, so it would fail the whole invocation. ALB forwards such
+  // bodies (the AWS docs sample is a GET with `body: "Test"`); a GET/HEAD body
+  // has no defined semantics (RFC 9110 §9.3.1), so it is dropped.
+  const method = awsEventMethod(event);
+  const isBodyless = /^(?:get|head)$/i.test(method);
+
   const req = new Request(awsEventURL(event, headers, hops), {
-    method: awsEventMethod(event),
+    method,
     headers,
-    body: awsEventBody(event),
+    body: isBodyless ? undefined : awsEventBody(event),
   }) as ServerRequest;
 
   req.runtime = {

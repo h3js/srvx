@@ -770,9 +770,7 @@ describe("[AWS Lambda] Request Utils", () => {
             "x-forwarded-port": ["80"],
             "x-forwarded-proto": ["http"],
           },
-          // The AWS docs sample carries `body: "Test"` on this GET, which
-          // `new Request()` rejects; that is a body-handling concern.
-          body: null,
+          body: "Test",
           isBase64Encoded: false,
         };
 
@@ -787,6 +785,29 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(request.headers.get("user-agent")).toBe("curl/7.79.1");
         // Two `Cookie` lines must form one cookie-string, not a `, ` list.
         expect(request.headers.get("cookie")).toBe("name1=value1; name2=value2");
+      });
+
+      // The AWS docs sample is a GET with `body: "Test"`, which `new Request()`
+      // rejects outright.
+      test("drops the body of a GET/HEAD instead of throwing", () => {
+        for (const httpMethod of ["GET", "HEAD", "get"]) {
+          for (const isBase64Encoded of [false, true]) {
+            const request = awsRequest(
+              albEvent({ httpMethod, body: "Test", isBase64Encoded }) as any,
+              createMockContext(),
+            );
+            expect(request.method).toBe(httpMethod.toUpperCase());
+            expect(request.body).toBeNull();
+          }
+        }
+      });
+
+      test("keeps the body of other methods", async () => {
+        const request = awsRequest(
+          albEvent({ httpMethod: "POST", body: "Test" }) as any,
+          createMockContext(),
+        );
+        expect(await request.text()).toBe("Test");
       });
 
       test("health check event does not throw", () => {
@@ -867,6 +888,13 @@ describe("[AWS Lambda] Request Utils", () => {
           ...event.requestContext,
         } as any,
       }) as APIGatewayProxyEventV2;
+
+    test("drops a GET body on API Gateway events too", () => {
+      const v1 = awsRequest(v1EventWith({ body: "Test" }), createMockContext());
+      const v2 = awsRequest(v2EventWith({ body: "Test" }), createMockContext());
+      expect(v1.body).toBeNull();
+      expect(v2.body).toBeNull();
+    });
 
     // [rawPath/path, resulting pathname]
     const hostilePaths: [string, string][] = [
