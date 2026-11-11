@@ -1,7 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { execa, type ResultPromise as ExecaRes } from "execa";
-import { getRandomPort, waitForPort } from "get-port-please";
+import { getRandomPort } from "get-port-please";
+import { waitForServer } from "./_utils.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
 
@@ -21,7 +22,7 @@ export function maxRequestBodySizeTests(cmd: string): void {
     childProc.catch((error) => {
       if (error.signal !== "SIGTERM") console.error(error);
     });
-    await waitForPort(port, { host: "localhost", delay: 50, retries: 100 });
+    await waitForServer(port, childProc);
   });
 
   afterAll(async () => {
