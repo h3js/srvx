@@ -96,6 +96,32 @@ export class NodeRequestURL extends FastURL {
 }
 
 /**
+ * Whether a request-target contains a raw `\` before its first `?`.
+ *
+ * A raw `\` is not valid in a request-target (RFC 3986 §3.3, RFC 9112 §3.2), but
+ * llhttp and nghttp2 deliver it verbatim, and it is the only character WHATWG URL
+ * parsing rewrites into a path separator for http(s) URLs. So
+ * `/public\..\admin/secret` would reach the fetch handler as `/admin/secret` while
+ * the raw `req.url` (seen by Node middleware) still routes under `/public`.
+ * `serve()` and `toNodeHandler()` answer 400 instead. A percent-encoded
+ * `%5C` stays encoded and a `\` in the query is left alone.
+ *
+ * This only covers `\`: dot segments (`/a/../b`, `/a/%2e%2e/b`) still normalize
+ * as before. The scan stops at `?` only, so a `\` after a `#` (itself invalid in
+ * a request-target) but before any `?` is rejected too.
+ *
+ * The common case (no `\` at all) is a single `indexOf`.
+ */
+export function hasBackslashInPath(target: string): boolean {
+  const backslashIndex = target.indexOf("\\");
+  if (backslashIndex === -1) {
+    return false;
+  }
+  const queryIndex = target.indexOf("?");
+  return queryIndex === -1 || backslashIndex < queryIndex;
+}
+
+/**
  * Whether `target` is an absolute-form request-target (RFC 9112 §3.2.2) that srvx
  * can serve as an origin server: parseable as a Fetch URL, http(s), and carrying
  * an authority.

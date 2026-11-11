@@ -417,6 +417,30 @@ export function addTests(opts: {
     }
   });
 
+  // Raw `\` in `:path`: see `hasBackslashInPath` (HTTP/1 cases in test/url.test.ts).
+  test.runIf(opts.http2)("raw backslash in :path is rejected with 400", async () => {
+    const _url = new URL(url("/"));
+    const client = http2.connect(_url.origin, { ca: opts.ca });
+    try {
+      for (const [path, status] of [
+        [String.raw`/public\..\admin/secret`, 400],
+        // Reaches the app (unknown route): encoded `%5C` and `\` in the query are fine.
+        ["/a%5Cb", 404],
+        [String.raw`/?q=\a`, 200],
+      ] as const) {
+        const req = client.request({ ":path": path, ":authority": "localhost" });
+        const headers = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
+          req.on("response", resolve);
+          req.on("error", reject);
+        });
+        req.resume();
+        expect(headers[":status"], path).toBe(status);
+      }
+    } finally {
+      client.close();
+    }
+  });
+
   test.skipIf(opts.http2)("absolute path in request line", async () => {
     const _url = new URL(url("/"));
 
