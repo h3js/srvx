@@ -83,7 +83,7 @@ export function toFetchHandler(
     return fetchNodeHandler(handler, req);
   }
 
-  // A connect or Express app (`app.handle`) comes back as is, since its own final handler ends the stack; other middleware gets the caller's `next`, else one where `next()` answers 404 and `next(err)` 500.
+  // A connect or Express app (`app.listen`) comes back as is, since its own final handler ends the stack; other middleware, an Express router included, gets the caller's `next`, else one where `next()` answers 404 and `next(err)` 500.
   function nodeMiddleware(
     nodeReq: NodeServerRequest,
     nodeRes: NodeServerResponse,
@@ -108,7 +108,7 @@ export function toFetchHandler(
   assignFnName(nodeMiddleware, handler, "");
 
   (convertedNodeHandler as AdapterMeta).__nodeHandler =
-    handler.length === 3 && typeof (handler as { handle?: unknown }).handle !== "function"
+    handler.length === 3 && typeof (handler as { listen?: unknown }).listen !== "function"
       ? nodeMiddleware
       : (handler as NodeHttpHandler);
   assignFnName(convertedNodeHandler, handler, " (converted to Web handler)");

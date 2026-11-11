@@ -759,8 +759,9 @@ describe("adapters", () => {
 
   // `node:http` calls the round-tripped middleware without `next`, so it gets one
   // where `next()` answers 404 and `next(err)` 500, while an Express app comes back
-  // as is and answers with its own final handler; Express passes its own `next`,
-  // which must reach the next route.
+  // as is and answers with its own final handler (an Express router has none, so it
+  // gets the same `next` as middleware); Express passes its own `next`, which must
+  // reach the next route.
   test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
     const middleware = (
       req: NodeServerRequest,
@@ -814,6 +815,21 @@ describe("adapters", () => {
     expect((await fetch(`${helloUrl}/missing`)).status).toBe(404);
 
     await new Promise<void>((resolve) => helloServer.close(() => resolve()));
+
+    const router = express.Router().get("/route", (req, res) => res.end("route"));
+    // A router's Express-typed `req` fails the types, but untyped code converts one too.
+    const routerServer = createServer(
+      toNodeHandler(toFetchHandler(router as any)) as NodeHttp1Handler,
+    );
+    await new Promise<void>((resolve) => routerServer.listen(0, resolve));
+    const routerUrl = `http://localhost:${(routerServer.address() as AddressInfo).port}`;
+
+    const route = await fetch(`${routerUrl}/route`, { signal: AbortSignal.timeout(3000) });
+    expect(await route.text()).toBe("route");
+    const routeMissing = await fetch(`${routerUrl}/missing`, { signal: AbortSignal.timeout(3000) });
+    expect(routeMissing.status).toBe(404);
+
+    await new Promise<void>((resolve) => routerServer.close(() => resolve()));
 
     const errorHandler = (err: Error, req: any, res: any, next: any) =>
       res.status(418).send(err.message);
