@@ -6,7 +6,12 @@ import { describe, expect, test, vi } from "vitest";
 import { getTLSCert, HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
 import { isValidHost } from "../src/_trust-proxy.ts";
 
-import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
+import type {
+  NodeHttp1Handler,
+  NodeHTTP1Middleware,
+  NodeServerRequest,
+  NodeServerResponse,
+} from "../src/types.ts";
 import {
   fetchNodeHandler,
   FastResponse,
@@ -723,6 +728,36 @@ describe("adapters", () => {
       ),
     ]);
     expect(settled).toMatchObject({ status: 200, header: "1" });
+  });
+
+  // An SSE middleware neither ends the response nor calls `next()`, so the
+  // Response must settle on the head, as for a plain handler (#248).
+  test.skipIf(noBridge)("connect-style middleware streams before res.end()", async () => {
+    let pushChunk!: () => void;
+    let fail!: () => void;
+    const middleware: NodeHTTP1Middleware = (_req, res, next) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      pushChunk = () => res.write("data: 2\n\n");
+      fail = () => next(new Error("stream failed"));
+    };
+    const res = await Promise.race([
+      toFetchHandler(middleware)(new Request("http://localhost/")),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("streaming middleware hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    expect(decoder.decode((await reader.read()).value)).toBe("data: 1\n\n");
+    pushChunk();
+    expect(decoder.decode((await reader.read()).value)).toBe("data: 2\n\n");
+    // Past the head, `next(err)` can no longer change the status, so it fails the body.
+    fail();
+    await expect(reader.read()).rejects.toThrow("stream failed");
   });
 
   test("connect-style middleware calling next(err) propagates as an error", async () => {
