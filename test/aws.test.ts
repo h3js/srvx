@@ -16,7 +16,11 @@ import {
   toLambdaHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
+import type { TrustProxyOption } from "../src/_trust-proxy.ts";
+import type { ServerRequest } from "../src/types.ts";
 import type {
+  ALBEvent,
+  ALBResult,
   APIGatewayProxyEvent,
   APIGatewayProxyEventV2,
   APIGatewayProxyResult,
@@ -541,6 +545,301 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(url.host).toBe("forwarded.example");
     });
 
+    describe("multiValueHeaders", () => {
+      const v1Event = (
+        headers: APIGatewayProxyEvent["headers"],
+        multiValueHeaders: APIGatewayProxyEvent["multiValueHeaders"],
+      ): APIGatewayProxyEvent => ({
+        httpMethod: "GET",
+        path: "/",
+        headers,
+        multiValueHeaders,
+        body: null,
+        isBase64Encoded: false,
+        multiValueQueryStringParameters: null,
+        queryStringParameters: null,
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.3" } } as any,
+        resource: "",
+      });
+
+      // h3js/srvx#313: `headers` only carries the last value of each repeated header.
+      const repeated = v1Event(
+        {
+          Host: "api.example.com",
+          Accept: "application/json",
+          "X-Forwarded-For": "10.0.0.2",
+        },
+        {
+          Host: ["api.example.com"],
+          Accept: ["text/html", "application/json"],
+          "X-Forwarded-For": ["10.0.0.1", "10.0.0.2"],
+        },
+      );
+
+      test("keeps every value of a repeated header", () => {
+        const request = awsRequest(repeated, createMockContext());
+
+        expect(request.headers.get("accept")).toBe("text/html, application/json");
+        expect(request.headers.get("x-forwarded-for")).toBe("10.0.0.1, 10.0.0.2");
+        expect(new URL(request.url).host).toBe("api.example.com");
+      });
+
+      test("resolves request.ip across the merged X-Forwarded-For chain", () => {
+        expect(awsRequest(repeated, createMockContext(), true).ip).toBe("10.0.0.1");
+        expect(awsRequest(repeated, createMockContext(), ["10.0.0.3"]).ip).toBe("10.0.0.2");
+      });
+
+      test("fills in keys only present in headers, case-insensitively", () => {
+        const request = awsRequest(
+          v1Event(
+            { host: "api.example.com", "X-Only-Flat": "flat", accept: "application/json" },
+            { Accept: ["text/html", "application/json"] },
+          ),
+          createMockContext(),
+        );
+
+        expect(request.headers.get("x-only-flat")).toBe("flat");
+        expect(request.headers.get("host")).toBe("api.example.com");
+        expect(request.headers.get("accept")).toBe("text/html, application/json");
+      });
+
+      test("uses the last value of a repeated Host for the URL", () => {
+        const request = awsRequest(
+          v1Event({ Host: "b.example.com" }, { Host: ["a.example.com", "b.example.com"] }),
+          createMockContext(),
+        );
+
+        expect(new URL(request.url).host).toBe("b.example.com");
+      });
+    });
+
+    describe("ALB (`requestContext.elb`)", () => {
+      const requestContext = {
+        elb: {
+          targetGroupArn:
+            "arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a",
+        },
+      };
+
+      const albEvent = (overrides: Partial<ALBEvent> = {}): ALBEvent => ({
+        requestContext,
+        httpMethod: "GET",
+        path: "/lambda",
+        headers: { host: "lb.elb.amazonaws.com" },
+        body: null,
+        isBase64Encoded: false,
+        ...overrides,
+      });
+
+      describe("query", () => {
+        const searchOf = (overrides: Partial<ALBEvent>) =>
+          new URL(awsRequest(albEvent(overrides), createMockContext()).url).search;
+
+        // ALB passes keys and values still percent-encoded (h3js/srvx#314).
+        test("keeps single-value params as they arrived on the wire", () => {
+          const event = albEvent({
+            queryStringParameters: { q: "a%20b", "x%5B%5D": "1", plus: "a+b", amp: "%26" },
+          });
+          const url = new URL(awsRequest(event, createMockContext()).url);
+
+          expect(url.search).toBe("?q=a%20b&x%5B%5D=1&plus=a+b&amp=%26");
+          expect(url.searchParams.get("q")).toBe("a b");
+          expect(url.searchParams.get("x[]")).toBe("1");
+          expect(url.searchParams.get("plus")).toBe("a b");
+          expect(url.searchParams.get("amp")).toBe("&");
+        });
+
+        test("expands multi-value params with repeated keys", () => {
+          expect(
+            searchOf({
+              headers: undefined,
+              multiValueHeaders: { host: ["lb.elb.amazonaws.com"] },
+              multiValueQueryStringParameters: { tag: ["a%2Cb", "c"], q: ["x%20y"] },
+            }),
+          ).toBe("?tag=a%2Cb&tag=c&q=x%20y");
+        });
+
+        test("keeps a valueless param bare, and an empty-named one with `=`", () => {
+          expect(searchOf({ queryStringParameters: { foo: "", page: "1" } })).toBe("?foo&page=1");
+          expect(searchOf({ queryStringParameters: { a: "1", "": "" } })).toBe("?a=1&=");
+        });
+
+        test("emits no query for empty params", () => {
+          expect(searchOf({ queryStringParameters: {} })).toBe("");
+          expect(searchOf({ multiValueQueryStringParameters: {} })).toBe("");
+        });
+
+        test("cannot end the query early with a raw `#`", () => {
+          const url = new URL(
+            awsRequest(
+              albEvent({ queryStringParameters: { a: "1#2", b: "3" } }),
+              createMockContext(),
+            ).url,
+          );
+
+          expect(url.hash).toBe("");
+          expect(url.searchParams.get("a")).toBe("1#2");
+          expect(url.searchParams.get("b")).toBe("3");
+        });
+      });
+
+      describe("request.ip", () => {
+        const ipOf = (xff: string | undefined, trustProxy?: TrustProxyOption) =>
+          awsRequest(
+            albEvent({
+              headers: {
+                host: "lb.elb.amazonaws.com",
+                ...(xff === undefined ? {} : { "x-forwarded-for": xff }),
+              },
+            }),
+            createMockContext(),
+            trustProxy,
+          ).ip;
+
+        // ALB appends the address it saw as the last entry (default `append` mode).
+        test("is the last X-Forwarded-For entry by default", () => {
+          expect(ipOf("72.12.164.125")).toBe("72.12.164.125");
+          expect(ipOf("1.1.1.1, 2.2.2.2")).toBe("2.2.2.2");
+        });
+
+        test("walks further left only through trusted hops", () => {
+          expect(ipOf("1.1.1.1, 2.2.2.2", ["2.2.2.2"])).toBe("1.1.1.1");
+          expect(ipOf("1.1.1.1, 2.2.2.2", ["3.3.3.3"])).toBe("2.2.2.2");
+          expect(ipOf("1.1.1.1, 2.2.2.2, 3.3.3.3", ["3.3.3.3", "2.2.2.2"])).toBe("1.1.1.1");
+          expect(ipOf("1.1.1.1, 2.2.2.2", true)).toBe("1.1.1.1");
+        });
+
+        test("only honours X-Forwarded-Proto from a trusted peer", () => {
+          const urlOf = (trustProxy?: TrustProxyOption) =>
+            new URL(
+              awsRequest(
+                albEvent({
+                  headers: {
+                    host: "lb.elb.amazonaws.com",
+                    "x-forwarded-for": "1.1.1.1",
+                    "x-forwarded-proto": "http",
+                  },
+                }),
+                createMockContext(),
+                trustProxy,
+              ).url,
+            );
+
+          expect(urlOf().protocol).toBe("https:");
+          expect(urlOf(["1.1.1.1"]).protocol).toBe("http:");
+        });
+
+        test("strips the client port ALB adds with `xff_client_port`", () => {
+          expect(ipOf("1.2.3.4:8080")).toBe("1.2.3.4");
+          expect(ipOf("[2001:db8::1]:8080")).toBe("2001:db8::1");
+          expect(ipOf("2001:db8::1")).toBe("2001:db8::1");
+          expect(ipOf("::ffff:1.2.3.4")).toBe("::ffff:1.2.3.4");
+          expect(ipOf("1.1.1.1, 2.2.2.2:443", ["2.2.2.2"])).toBe("1.1.1.1");
+        });
+
+        test("is undefined without X-Forwarded-For (health checks)", () => {
+          expect(ipOf(undefined)).toBeUndefined();
+          expect(ipOf(undefined, true)).toBeUndefined();
+          expect(ipOf("")).toBeUndefined();
+        });
+
+        test("reads the chain across multi-value X-Forwarded-For lines", () => {
+          const ipOfLines = (trustProxy?: TrustProxyOption) =>
+            awsRequest(
+              albEvent({
+                headers: undefined,
+                multiValueHeaders: {
+                  host: ["lb.elb.amazonaws.com"],
+                  "x-forwarded-for": ["1.1.1.1, 2.2.2.2", "3.3.3.3"],
+                },
+              }),
+              createMockContext(),
+              trustProxy,
+            ).ip;
+
+          expect(ipOfLines()).toBe("3.3.3.3");
+          expect(ipOfLines(["3.3.3.3"])).toBe("2.2.2.2");
+          expect(ipOfLines(true)).toBe("1.1.1.1");
+        });
+      });
+
+      test("multi-value mode (no `headers` field) does not throw", () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            accept: ["*/*"],
+            cookie: ["name1=value1", "name2=value2"],
+            host: ["alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com"],
+            "user-agent": ["curl/7.79.1"],
+            "x-amzn-trace-id": ["Root=1-62fa9327-21cdd4da4c6db451490a5fb7"],
+            "x-forwarded-for": ["123.123.123.123"],
+            "x-forwarded-port": ["80"],
+            "x-forwarded-proto": ["http"],
+          },
+          body: "Test",
+          isBase64Encoded: false,
+        };
+
+        const request = awsRequest(event, createMockContext(), true);
+        const url = new URL(request.url);
+
+        expect(url.host).toBe(
+          "alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com".toLowerCase(),
+        );
+        expect(url.protocol).toBe("http:");
+        expect(url.pathname).toBe("/lambda");
+        expect(request.headers.get("user-agent")).toBe("curl/7.79.1");
+        // Two `Cookie` lines must form one cookie-string, not a `, ` list.
+        expect(request.headers.get("cookie")).toBe("name1=value1; name2=value2");
+      });
+
+      // The AWS docs sample is a GET with `body: "Test"`, which `new Request()`
+      // rejects outright.
+      test("drops the body of a GET/HEAD instead of throwing", () => {
+        for (const httpMethod of ["GET", "HEAD", "get"]) {
+          for (const isBase64Encoded of [false, true]) {
+            const request = awsRequest(
+              albEvent({ httpMethod, body: "Test", isBase64Encoded }),
+              createMockContext(),
+            );
+            expect(request.method).toBe(httpMethod.toUpperCase());
+            expect(request.body).toBeNull();
+          }
+        }
+      });
+
+      test("keeps the body of other methods", async () => {
+        const request = awsRequest(
+          albEvent({ httpMethod: "POST", body: "Test" }),
+          createMockContext(),
+        );
+        expect(await request.text()).toBe("Test");
+      });
+
+      test("health check event does not throw", () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/",
+          queryStringParameters: {},
+          headers: { "user-agent": "ELB-HealthChecker/2.0" },
+          body: "",
+          isBase64Encoded: false,
+        };
+
+        const request = awsRequest(event, createMockContext());
+
+        expect(request.method).toBe("GET");
+        expect(request.headers.get("user-agent")).toBe("ELB-HealthChecker/2.0");
+        expect(request.body).toBeNull();
+      });
+    });
+
     test("should handle path parameters in URL construction", () => {
       const v1Event: APIGatewayProxyEvent = {
         httpMethod: "GET",
@@ -600,6 +899,13 @@ describe("[AWS Lambda] Request Utils", () => {
           ...event.requestContext,
         } as any,
       }) as APIGatewayProxyEventV2;
+
+    test("drops a GET body on API Gateway events too", () => {
+      const v1 = awsRequest(v1EventWith({ body: "Test" }), createMockContext());
+      const v2 = awsRequest(v2EventWith({ body: "Test" }), createMockContext());
+      expect(v1.body).toBeNull();
+      expect(v2.body).toBeNull();
+    });
 
     // [rawPath/path, resulting pathname]
     const hostilePaths: [string, string][] = [
@@ -919,30 +1225,47 @@ describe("[AWS Lambda] Request Utils", () => {
         // `multiValueHeaders` would be ignored by this target group, so the flat
         // record is the only way the cookie reaches the client.
         expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
-        expect(awsResponse.headers["set-cookie"]).toBe("a=1; Path=/");
-        expect(awsResponse.headers["content-type"]).toBe("application/json");
+        expect(awsResponse.headers?.["set-cookie"]).toBe("a=1; Path=/");
+        expect(awsResponse.headers?.["content-type"]).toBe("application/json");
       });
 
       test("keeps the last cookie when multi-value is off, matching ALB's own last-wins rule", () => {
         const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(false));
 
-        expect(awsResponse.headers["set-cookie"]).toBe("b=2");
+        expect(awsResponse.headers?.["set-cookie"]).toBe("b=2");
         expect(awsResponse.cookies).toBeUndefined();
         expect(awsResponse.multiValueHeaders).toBeUndefined();
       });
 
-      test("uses multiValueHeaders when the event carries them", () => {
+      // A multi-value target group ignores the flat `headers` record, so every
+      // header (not only `set-cookie`) has to go into `multiValueHeaders`.
+      test("returns every header in multiValueHeaders when the event carries them", () => {
         const awsResponse = awsResponseHeaders(responseWith("a=1", "b=2"), albEvent(true));
 
-        expect(Object.keys(awsResponse).sort()).toEqual(["headers", "multiValueHeaders"]);
-        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
-        expect(awsResponse.multiValueHeaders).toEqual({ "set-cookie": ["a=1", "b=2"] });
+        expect(Object.keys(awsResponse)).toEqual(["multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({
+          "content-type": ["application/json"],
+          "set-cookie": ["a=1", "b=2"],
+        });
       });
 
-      test("leaves cookie-less ALB responses untouched", () => {
+      test("returns multiValueHeaders for cookie-less multi-value responses too", () => {
+        const awsResponse = awsResponseHeaders(
+          new Response("{}", { headers: { "content-type": "application/json", "x-a": "1" } }),
+          albEvent(true),
+        );
+
+        expect(Object.keys(awsResponse)).toEqual(["multiValueHeaders"]);
+        expect(awsResponse.multiValueHeaders).toEqual({
+          "content-type": ["application/json"],
+          "x-a": ["1"],
+        });
+      });
+
+      test("leaves cookie-less single-value ALB responses untouched", () => {
         const awsResponse = awsResponseHeaders(new Response("{}"), albEvent(false));
 
-        expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+        expect(awsResponse.headers?.["set-cookie"]).toBeUndefined();
         expect(Object.keys(awsResponse).sort()).toEqual(["headers"]);
       });
     });
@@ -980,12 +1303,12 @@ describe("[AWS Lambda] Request Utils", () => {
       });
 
       const v1 = awsResponseHeaders(response);
-      expect(v1.headers["set-cookie"]).toBeUndefined();
-      expect(v1.headers["content-type"]).toBe("application/json");
+      expect(v1.headers?.["set-cookie"]).toBeUndefined();
+      expect(v1.headers?.["content-type"]).toBe("application/json");
       expect(v1.multiValueHeaders).toEqual({ "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"] });
 
       const v2 = awsResponseHeaders(response, { version: "2.0" } as APIGatewayProxyEventV2);
-      expect(v2.headers["set-cookie"]).toBeUndefined();
+      expect(v2.headers?.["set-cookie"]).toBeUndefined();
       expect(v2.cookies).toEqual(["a=1; Path=/", "b=2; HttpOnly"]);
       expect(v2.multiValueHeaders).toBeUndefined();
     });
@@ -997,7 +1320,7 @@ describe("[AWS Lambda] Request Utils", () => {
         version: "2.0",
       } as APIGatewayProxyEventV2);
 
-      expect(awsResponse.headers["set-cookie"]).toBeUndefined();
+      expect(awsResponse.headers?.["set-cookie"]).toBeUndefined();
       expect(awsResponse.cookies).toEqual(["a=1"]);
     });
 
@@ -1014,7 +1337,7 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.headers.accept).toBe("application/json, text/html, text/plain");
+      expect(awsResponse.headers?.accept).toBe("application/json, text/html, text/plain");
     });
 
     test("should handle null/undefined header values", () => {
@@ -1031,9 +1354,9 @@ describe("[AWS Lambda] Request Utils", () => {
 
       const awsResponse = awsResponseHeaders(response);
 
-      expect(awsResponse.headers["valid-header"]).toBe("valid-value");
-      expect(awsResponse.headers["null-header"]).toBe("null");
-      expect(awsResponse.headers["undefined-header"]).toBe("undefined");
+      expect(awsResponse.headers?.["valid-header"]).toBe("valid-value");
+      expect(awsResponse.headers?.["null-header"]).toBe("null");
+      expect(awsResponse.headers?.["undefined-header"]).toBe("undefined");
     });
 
     test("should throw error for invalid response", () => {
@@ -1069,7 +1392,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("Hello, World!");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should convert JSON response to UTF-8 string", async () => {
@@ -1082,7 +1405,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe(JSON.stringify(jsonData));
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should convert binary response to base64", async () => {
@@ -1104,7 +1427,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should handle response without body", async () => {
@@ -1113,7 +1436,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should identify binary content types correctly", async () => {
@@ -1180,7 +1503,7 @@ describe("[AWS Lambda] Request Utils", () => {
         const awsBody = await awsResponseBody(response);
 
         expect(awsBody.body).toBe(content);
-        expect(awsBody.isBase64Encoded).toBeUndefined();
+        expect(awsBody.isBase64Encoded).toBe(false);
       }
     });
 
@@ -1206,7 +1529,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("Hello, World!");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should handle missing content-type header", async () => {
@@ -1215,7 +1538,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("content");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should throw error for invalid response", async () => {
@@ -1413,6 +1736,212 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(result.statusCode).toBe(200);
       const request = fetchHandler.mock.calls[0][0] as Request;
       expect(request.method).toBe("GET");
+    });
+
+    // The sample events from the AWS docs, typed as DefinitelyTyped `ALBEvent`
+    // so passing them in also checks that it is assignable to the handler.
+    // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#receive-event-from-load-balancer
+    describe("ALB (`requestContext.elb`)", () => {
+      const requestContext = {
+        elb: {
+          targetGroupArn:
+            "arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a",
+        },
+      };
+
+      const echo = async (req: Request) =>
+        Response.json({
+          method: req.method,
+          url: req.url,
+          ip: (req as ServerRequest).ip,
+          body: req.body ? await req.text() : null,
+        });
+
+      test("single-value sample event", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          queryStringParameters: { query: "1234ABCD" },
+          headers: {
+            accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "accept-encoding": "gzip",
+            "accept-language": "en-US,en;q=0.9",
+            connection: "keep-alive",
+            host: "lambda-alb-123578498.us-east-2.elb.amazonaws.com",
+            "upgrade-insecure-requests": "1",
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36",
+            "x-amzn-trace-id": "Root=1-5c536348-3d683b8b04734faae651f476",
+            "x-forwarded-for": "72.12.164.125",
+            "x-forwarded-port": "80",
+            "x-forwarded-proto": "http",
+            "x-imforwards": "20",
+          },
+          body: "Test",
+          isBase64Encoded: false,
+        };
+
+        const result = (await handleLambdaEvent(echo, event, createMockContext())) as ALBResult;
+
+        expect(result.statusCode).toBe(200);
+        expect(JSON.parse(result.body!)).toEqual({
+          method: "GET",
+          url: "https://lambda-alb-123578498.us-east-2.elb.amazonaws.com/lambda?query=1234ABCD",
+          ip: "72.12.164.125",
+          body: null,
+        });
+      });
+
+      test("multi-value sample event", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            accept: ["*/*"],
+            host: ["alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com"],
+            "user-agent": ["curl/7.79.1"],
+            "x-amzn-trace-id": ["Root=1-62fa9327-21cdd4da4c6db451490a5fb7"],
+            "x-forwarded-for": ["123.123.123.123"],
+            "x-forwarded-port": ["80"],
+            "x-forwarded-proto": ["http"],
+          },
+          body: "Test",
+          isBase64Encoded: false,
+        };
+
+        const handler = toLambdaHandler({ fetch: echo });
+        const result = (await handler(event, createMockContext())) as ALBResult;
+
+        expect(result.statusCode).toBe(200);
+        expect(JSON.parse(result.body!)).toEqual({
+          method: "GET",
+          url: "https://alb-c-loadb-14pofkyclbnsf-1815800096.eu-central-1.elb.amazonaws.com/lambda",
+          ip: "123.123.123.123",
+          body: null,
+        });
+      });
+
+      test("encoded multi-value query and POST body", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "POST",
+          path: "/lambda",
+          multiValueQueryStringParameters: { q: ["a%20b", "c%26d"] },
+          multiValueHeaders: {
+            host: ["lb.elb.amazonaws.com"],
+            "content-type": ["text/plain"],
+            "x-forwarded-for": ["10.0.0.1, 123.123.123.123:5555"],
+          },
+          body: Buffer.from("Test").toString("base64"),
+          isBase64Encoded: true,
+        };
+
+        const result = (await handleLambdaEvent(echo, event, createMockContext())) as ALBResult;
+        const seen = JSON.parse(result.body!);
+
+        expect(seen.url).toBe("https://lb.elb.amazonaws.com/lambda?q=a%20b&q=c%26d");
+        expect(new URL(seen.url).searchParams.getAll("q")).toEqual(["a b", "c&d"]);
+        expect(seen.ip).toBe("123.123.123.123");
+        expect(seen.body).toBe("Test");
+      });
+
+      // "You must use `multiValueHeaders` if you have enabled multi-value
+      // headers and `headers` otherwise", and the result "must include the
+      // Base64 encoding status, status code, and headers".
+      // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#respond-to-load-balancer
+      describe("result shape", () => {
+        const multiValueEvent: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            host: ["lb.elb.amazonaws.com"],
+            "x-forwarded-for": ["123.123.123.123"],
+          },
+          body: null,
+          isBase64Encoded: false,
+        };
+
+        test("multi-value: every header in multiValueHeaders, no flat headers", async () => {
+          const fetch = () => {
+            const headers = new Headers({ "content-type": "text/plain; charset=utf-8" });
+            headers.append("set-cookie", "a=1; Path=/");
+            headers.append("set-cookie", "b=2; HttpOnly");
+            return new Response("hello", { status: 201, headers });
+          };
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            multiValueEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 201,
+            multiValueHeaders: {
+              "content-type": ["text/plain; charset=utf-8"],
+              "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"],
+            },
+            body: "hello",
+            isBase64Encoded: false,
+          });
+          expect(result).not.toHaveProperty("headers");
+        });
+
+        test("multi-value: binary body is base64-encoded", async () => {
+          const bytes = Buffer.from([0x00, 0xff, 0x10]);
+          const fetch = () =>
+            new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            multiValueEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 200,
+            multiValueHeaders: { "content-type": ["application/octet-stream"] },
+            body: bytes.toString("base64"),
+            isBase64Encoded: true,
+          });
+        });
+
+        test("single-value: flat headers with the last cookie", async () => {
+          const fetch = () => {
+            const headers = new Headers({ "content-type": "text/plain" });
+            headers.append("set-cookie", "a=1");
+            headers.append("set-cookie", "b=2");
+            return new Response("hello", { headers });
+          };
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            {
+              requestContext,
+              httpMethod: "GET",
+              path: "/lambda",
+              queryStringParameters: {},
+              headers: { host: "lb.elb.amazonaws.com" },
+              body: "",
+              isBase64Encoded: false,
+            } satisfies ALBEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 200,
+            headers: { "content-type": "text/plain", "set-cookie": "b=2" },
+            body: "hello",
+            isBase64Encoded: false,
+          });
+        });
+      });
     });
   });
 
@@ -1666,6 +2195,36 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(getChunks().length).toBeGreaterThan(0);
       expect(isEndCalled()).toBe(true);
       expect(mockWriter.end).toHaveBeenCalled();
+    });
+
+    // ALB cannot stream, but a multi-value event (no flat `headers` in the
+    // metadata) handed here must not crash.
+    test("should not crash on an ALB multi-value event", async () => {
+      const { mockStream, getMetadata, isEndCalled } = createMockResponseStream();
+
+      const event = {
+        requestContext: { elb: { targetGroupArn: "arn:aws:elasticloadbalancing:::tg" } },
+        httpMethod: "GET",
+        path: "/",
+        multiValueHeaders: { host: ["lb.elb.amazonaws.com"] },
+        body: null,
+        isBase64Encoded: false,
+      } satisfies ALBEvent;
+
+      await awsStreamResponse(
+        new Response("hi", { headers: { "content-type": "text/plain" } }),
+        mockStream,
+        event,
+      );
+
+      expect(getMetadata()).toEqual({
+        statusCode: 200,
+        multiValueHeaders: {
+          "content-type": ["text/plain"],
+          "transfer-encoding": ["chunked"],
+        },
+      });
+      expect(isEndCalled()).toBe(true);
     });
 
     test("should handle empty response body", async () => {
