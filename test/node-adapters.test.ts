@@ -1547,10 +1547,21 @@ describe("FastResponse.redirect()", () => {
     const { status, statusText, ok, redirected, type, url, body, bodyUsed } = res;
     const clone = res.clone();
     return {
-      ...{ status, statusText, ok, redirected, type, url, body, bodyUsed },
+      status,
+      statusText,
+      ok,
+      redirected,
+      type,
+      url,
+      body,
+      bodyUsed,
       headers: [...res.headers],
       mutable: mutable(res),
-      clone: { status: clone.status, headers: [...clone.headers], mutable: mutable(clone) },
+      clone: {
+        status: clone.status,
+        headers: [...clone.headers],
+        mutable: mutable(clone),
+      },
     };
   };
 
