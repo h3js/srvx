@@ -193,6 +193,50 @@ describe("adapters", () => {
     expect(toNodeHandler(toFetchHandler(simpleNodeHandler))).toBe(simpleNodeHandler);
   });
 
+  // See `hasBackslashInPath`. Bun/Deno parse the request line themselves.
+  test.skipIf(isDeno || isBun)("toNodeHandler rejects a raw backslash in the path", async () => {
+    // Explicit content-length so the raw response body can be compared exactly.
+    const webHandler = (request: Request) => {
+      const { pathname } = new URL(request.url);
+      return new Response(pathname, { headers: { "content-length": String(pathname.length) } });
+    };
+    const nodeHandler = toNodeHandler(webHandler) as NodeHttp1Handler;
+    const plain = createServer(nodeHandler);
+    // Mounted under express: `/public/` matches the raw target and the mounted
+    // `req.url` becomes `/\..\admin/secret`, which resolves to `/admin/secret`.
+    const mounted = createServer(express().use("/public", nodeHandler));
+    const send = async (server: ReturnType<typeof createServer>, target: string) => {
+      const { port } = server.address() as AddressInfo;
+      const raw = await rawExchange(
+        port,
+        "127.0.0.1",
+        `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+      );
+      const text = raw.toString("latin1");
+      return { status: Number(text.split(" ")[1]), body: text.split("\r\n\r\n")[1] ?? "" };
+    };
+    try {
+      await Promise.all(
+        [plain, mounted].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))),
+      );
+      expect((await send(plain, String.raw`/public\..\admin/secret`)).status).toBe(400);
+      expect((await send(mounted, String.raw`/public/\..\admin/secret`)).status).toBe(400);
+      // Accepted: encoded `%5C`, `\` in the query, and a normal mounted path.
+      for (const [server, target, pathname] of [
+        [plain, "/a%5Cb", "/a%5Cb"],
+        [plain, String.raw`/x?q=\a`, "/x"],
+        [mounted, "/public/x", "/x"],
+      ] as const) {
+        const res = await send(server, target);
+        expect(res.status, target).toBe(200);
+        expect(res.body, target).toBe(pathname);
+      }
+    } finally {
+      plain.close();
+      mounted.close();
+    }
+  });
+
   // https://github.com/h3js/srvx/issues/208
   test.skipIf(noBridge)("backpressure-aware handler does not deadlock", async () => {
     const backpressureHandler: NodeHttp1Handler = (_req, res) => {

@@ -542,6 +542,32 @@ describe("FastURL", () => {
         expect(spoofed.body).not.toContain("https://");
       });
     });
+
+    // Raw `\` before the query: see `hasBackslashInPath`.
+    test.each([
+      String.raw`GET /public\..\admin/secret HTTP/1.1`,
+      String.raw`GET /public\admin HTTP/1.1`,
+      String.raw`GET /a\b?q=1 HTTP/1.1`,
+      String.raw`GET http://localhost/public\..\admin/secret HTTP/1.1`,
+      String.raw`GET http:\\localhost\admin HTTP/1.1`,
+    ])("%s over the wire returns 400", async (requestLine) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 400 /);
+      });
+    });
+
+    test.each([
+      ["GET /a%5Cb HTTP/1.1", "http://localhost/a%5Cb"],
+      [String.raw`GET /x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
+      [String.raw`GET http://localhost/x?q=\a HTTP/1.1`, String.raw`http://localhost/x?q=\a`],
+    ])("%s (encoded or query backslash) is accepted", async (requestLine, href) => {
+      await withServer(async (port) => {
+        const result = await sendRaw(port, requestLine);
+        expect(result.statusLine).toMatch(/^HTTP\/1\.1 200 /);
+        expect(result.body).toContain(href);
+      });
+    });
   });
 
   describe("fragment (#) in request target", () => {

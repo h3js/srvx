@@ -87,6 +87,7 @@ function isBodySourceFinished(req: NodeServerRequest): boolean {
   return isClientGone(req) || req.destroyed || req.readableEnded;
 }
 
+/** Request-target checks (e.g. `hasBackslashInPath`) run in `serve()`/`toNodeHandler()`, not here. */
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
 } = /* @__PURE__ */ (() => {
