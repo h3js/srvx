@@ -168,8 +168,9 @@ beforeAll(async () => {
   await writeFile(join(dir, "escape-variant.js"), "PLAIN_VARIANT");
   await symlink(join(tmp, "outside", "secret.txt"), join(dir, "escape-variant.js.br"));
 
-  // A link that stays within the root must keep working.
+  // Links that stay within the root must keep working, to a file or a directory.
   await symlink(join(dir, "sub", "inside.txt"), join(dir, "contained.txt"));
+  await symlink(join(dir, "sub"), join(dir, "contained-dir"));
 
   // Links that stay inside the root but land on a dot path: containment alone
   // serves these, since the name they are requested under has no dot segment.
@@ -340,6 +341,42 @@ describe("staticMiddleware", () => {
       const res = await fetchStatic("/contained.txt");
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe("INSIDE");
+    });
+
+    test("serves through a symlinked directory contained within the root", async () => {
+      const res = await fetchStatic("/contained-dir/inside.txt");
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("INSIDE");
+    });
+
+    test("serves a link whose target differs from it only in case", async ({ skip }) => {
+      // On a case-sensitive filesystem a different case is a different name, so
+      // a case-only link (`changelog.txt` -> `CHANGELOG.txt`, kept for old URLs)
+      // is a deliberate second name, not the alias a case-insensitive one makes.
+      const file = join(dir, "CHANGELOG.txt");
+      const fileLink = join(dir, "changelog.txt");
+      const dirLink = join(dir, "SUB");
+      await writeFile(file, "CHANGELOG");
+      const created = await symlink(file, fileLink).then(
+        () => true,
+        () => false, // EEXIST: this filesystem is case-insensitive
+      );
+      try {
+        if (!created) {
+          skip();
+        }
+        await symlink(join(dir, "sub"), dirLink);
+        const res = await fetchStatic("/changelog.txt");
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("CHANGELOG");
+        const viaDir = await fetchStatic("/SUB/inside.txt");
+        expect(viaDir.status).toBe(200);
+        await expect(viaDir.text()).resolves.toBe("INSIDE");
+      } finally {
+        await rm(fileLink, { force: true });
+        await rm(dirLink, { force: true });
+        await rm(file, { force: true });
+      }
     });
 
     test("serves files when dir is itself a symlink", async () => {

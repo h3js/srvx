@@ -10,6 +10,7 @@ import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
+import { isSpellingAlias, swapPathCase } from "./_static-alias.ts";
 
 export interface StaticMiddlewareOptions {
   /**
@@ -310,16 +311,40 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // Symlink-resolved `dir` for containment checks — `dir` itself may
   // legitimately be a symlink. Resolved lazily and cached only on success, so
   // a `dir` created after the first request is still picked up.
-  let realDir: string | undefined;
-  const getRealDir = async (): Promise<string> => {
-    if (realDir === undefined) {
-      const resolved = await realpath(dir).catch(() => null);
-      if (resolved === null) {
-        return dir;
-      }
-      realDir = asPrefix(resolved);
+  //
+  // Resolved alongside it, once: whether the filesystem holding it folds case,
+  // which is the only place a differently cased URL can open a file. The root
+  // is looked up again with the ASCII letters of its last lettered segment
+  // swapped (`public` -> `PUBLIC`); reaching the same inode means it folds.
+  // On a case-sensitive filesystem a case-only symlink (`readme.md` ->
+  // `README.md`) is a deliberate second name, so `isSpellingAlias` is skipped
+  // there. A root path with no ASCII letter cannot be probed and keeps the
+  // check, which there only costs such case-only links.
+  type Root = { path: string; foldsCase: boolean };
+  let rootPromise: Promise<Root | null> | undefined;
+  const resolveRoot = async (): Promise<Root | null> => {
+    const resolved = await realpath(dir).catch(() => null);
+    if (resolved === null) {
+      return null;
     }
-    return realDir;
+    const swapped = swapPathCase(resolved, sep);
+    let foldsCase = true;
+    if (swapped !== undefined) {
+      const [a, b] = await Promise.all([
+        stat(resolved).catch(() => null),
+        stat(swapped).catch(() => null),
+      ]);
+      foldsCase = a !== null && b !== null && a.ino === b.ino && a.dev === b.dev;
+    }
+    return { path: asPrefix(resolved), foldsCase };
+  };
+  const getRoot = async (): Promise<Root> => {
+    const root = await (rootPromise ??= resolveRoot());
+    if (root === null) {
+      rootPromise = undefined;
+      return { path: dir, foldsCase: true };
+    }
+    return root;
   };
 
   const statFile = async (candidate: string): Promise<Stats | null> => {
@@ -338,7 +363,17 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // comparison pins that fd to the path that passed the checks — with a
   // check-then-`createReadStream(path)` sequence, a symlink swap in between
   // would serve a file the checks never saw.
-  const openServable = async (candidate: string): Promise<ServableFile | null> => {
+  //
+  // On a filesystem that folds case, the resolved path must also not be the
+  // same file under another letter case than the request named (see
+  // `isSpellingAlias`). `candidate` always starts
+  // with `dir` (the handler's pre-filter), so both sides are root-relative and a
+  // `dir` option spelled in another case than the folder on disk still serves.
+  // Its last `suffixLength` characters were added here, not by the URL.
+  const openServable = async (
+    candidate: string,
+    suffixLength: number,
+  ): Promise<ServableFile | null> => {
     const handle = await open(candidate, OPEN_FLAGS).catch(() => null);
     if (handle === null) {
       return null;
@@ -347,8 +382,16 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       const fileStat = await handle.stat();
       const realPath = fileStat.isFile() ? await realpath(candidate).catch(() => null) : null;
       if (realPath !== null) {
-        const root = await getRealDir();
-        if (realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length))) {
+        const root = await getRoot();
+        const realRel = realPath.slice(root.path.length);
+        if (
+          realPath.startsWith(root.path) &&
+          !isDeniedDotPath(realRel) &&
+          !(
+            root.foldsCase &&
+            isSpellingAlias(realRel, candidate.slice(dir.length), suffixLength, sep)
+          )
+        ) {
           const realStat = await stat(realPath).catch(() => null);
           if (realStat && realStat.ino === fileStat.ino && realStat.dev === fileStat.dev) {
             return { handle, size: fileStat.size, mtimeMs: fileStat.mtimeMs };
@@ -430,6 +473,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     let rangeRequest: string | undefined;
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
+      // What this middleware appended to the URL's path (`index.html`, `.html`),
+      // whose case on disk is not the URL's to check.
+      const suffixLength = candidate.length - path.length;
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
       // guarantees `slice(dir.length)` yields an actual relative path.
       if (!filePath.startsWith(dir) || isDeniedDotPath(filePath.slice(dir.length))) {
@@ -475,7 +521,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           }
           // An unservable variant (escapes the root, or resolves onto a denied
           // dot path) is skipped, not fatal: the identity file can still serve.
-          const variant = await openServable(variantPath);
+          const variant = await openServable(variantPath, suffixLength + spec.ext.length);
           if (variant) {
             encoding = spec.name;
             servePath = variantPath;
@@ -485,7 +531,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
         }
       }
       // Only the bytes actually sent need checking; a winning variant already was.
-      file ??= await openServable(filePath);
+      file ??= await openServable(filePath, suffixLength);
       if (!file) {
         continue;
       }
