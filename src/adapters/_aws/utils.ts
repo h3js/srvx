@@ -158,9 +158,12 @@ function awsEventURL(event: AWSEvent, headers: Headers, hops: number): URL {
   // below nor throw out of `awsRequest` (which runs before the error
   // middleware, so a throw fails the whole invocation). Same `HOST_RE` gate and
   // `_invalid_` sentinel as the Node adapter.
+  //
+  // A `Host` repeated in `multiValueHeaders` is merged into `a, b`, which no
+  // host matches; `event.headers` keeps the last one, so that one is used.
   const host =
     (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
-    headers.get("host") ||
+    forwardedList(headers.get("host")).pop() ||
     // ALB has no `domainName`; its events always carry `Host` (health checks
     // excepted, which then get the `_invalid_` sentinel).
     (event as AWSLambdaProxyEvent | AWSLambdaProxyEventV2).requestContext?.domainName;
@@ -214,7 +217,8 @@ function awsEventHeaders(event: AWSEvent): Headers {
   const multiValueHeaders = (event as AWSLambdaProxyEvent).multiValueHeaders;
   const fromMultiValue = new Set<string>();
   // Repeated `Cookie` lines (one array entry each on ALB) form one cookie-string
-  // joined by `; ` (RFC 6265 §5.4), not the generic `, ` list separator.
+  // joined by `; ` (RFC 6265 §5.4). Undici's `Headers` special-cases `cookie`
+  // the same way, but the generic combine rule is `, `, so it is not relied on.
   const cookieLines: string[] = [];
   if (multiValueHeaders) {
     for (const [key, values] of Object.entries(multiValueHeaders)) {
@@ -543,7 +547,8 @@ function stringifyQuery(obj: Record<string, unknown>, encoded?: boolean) {
   for (const [key, value] of Object.entries(obj)) {
     for (const item of Array.isArray(value) ? value : [value]) {
       const str = item == null ? "" : String(item);
-      // Encode through `URLSearchParams` to keep escaping identical.
+      // Decoded params go through `URLSearchParams` to keep escaping identical;
+      // raw (ALB) ones are joined as-is.
       const pair = encoded
         ? `${escapeRawQuery(key)}=${escapeRawQuery(str)}`
         : new URLSearchParams([[key, str]]).toString();

@@ -604,6 +604,15 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(request.headers.get("host")).toBe("api.example.com");
         expect(request.headers.get("accept")).toBe("text/html, application/json");
       });
+
+      test("uses the last value of a repeated Host for the URL", () => {
+        const request = awsRequest(
+          v1Event({ Host: "b.example.com" }, { Host: ["a.example.com", "b.example.com"] }),
+          createMockContext(),
+        );
+
+        expect(new URL(request.url).host).toBe("b.example.com");
+      });
     });
 
     describe("ALB (`requestContext.elb`)", () => {
