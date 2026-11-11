@@ -92,6 +92,8 @@ export class WebServerResponse extends ServerResponse {
     });
 
     // Express can override prototype so we have to bind methods
+    // (`writeHead` too, since it releases `waitForResponseHead()`)
+    this.writeHead = this.writeHead.bind(this);
     this.waitToFinish = this.waitToFinish.bind(this);
     this.waitForResponseHead = this.waitForResponseHead.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);

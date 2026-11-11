@@ -760,6 +760,29 @@ describe("adapters", () => {
     await expect(reader.read()).rejects.toThrow("stream failed");
   });
 
+  // Express swaps the response's prototype, so the head must still be noticed without it.
+  test.skipIf(noBridge)("an Express app streams before res.end()", async () => {
+    let endStream!: () => void;
+    const app = express().get("/", (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      endStream = () => res.end();
+    });
+    const res = await Promise.race([
+      toFetchHandler(app)(new Request("http://localhost/")),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("Express stream hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const reader = res.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("data: 1\n\n");
+    endStream();
+    expect((await reader.read()).done).toBe(true);
+  });
+
   test("connect-style middleware calling next(err) propagates as an error", async () => {
     const error = new Error("boom");
     const middleware = (
