@@ -343,16 +343,21 @@ export function awsResponseHeaders(response: Response, event?: AWSEvent): AWSRes
 // AWS Lambda proxy integrations requires base64 encoded buffers
 // binaryMediaTypes should be */*
 // see https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-payload-encodings.html
+//
+// `isBase64Encoded` is always set: ALB requires it ("The response from your
+// Lambda function must include the Base64 encoding status, status code, and
+// headers"), and API Gateway accepts an explicit `false` just the same.
+// https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#respond-to-load-balancer
 export async function awsResponseBody(
   response: Response,
-): Promise<{ body: string; isBase64Encoded?: boolean }> {
+): Promise<{ body: string; isBase64Encoded: boolean }> {
   if (!response.body) {
-    return { body: "" };
+    return { body: "", isBase64Encoded: false };
   }
   const buffer = await toBuffer(response.body as any);
   const contentType = response.headers.get("content-type") || "";
   return isTextType(contentType)
-    ? { body: buffer.toString("utf8") }
+    ? { body: buffer.toString("utf8"), isBase64Encoded: false }
     : { body: buffer.toString("base64"), isBase64Encoded: true };
 }
 

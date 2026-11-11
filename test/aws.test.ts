@@ -1383,7 +1383,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("Hello, World!");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should convert JSON response to UTF-8 string", async () => {
@@ -1396,7 +1396,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe(JSON.stringify(jsonData));
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should convert binary response to base64", async () => {
@@ -1418,7 +1418,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should handle response without body", async () => {
@@ -1427,7 +1427,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should identify binary content types correctly", async () => {
@@ -1494,7 +1494,7 @@ describe("[AWS Lambda] Request Utils", () => {
         const awsBody = await awsResponseBody(response);
 
         expect(awsBody.body).toBe(content);
-        expect(awsBody.isBase64Encoded).toBeUndefined();
+        expect(awsBody.isBase64Encoded).toBe(false);
       }
     });
 
@@ -1520,7 +1520,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("Hello, World!");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should handle missing content-type header", async () => {
@@ -1529,7 +1529,7 @@ describe("[AWS Lambda] Request Utils", () => {
       const awsBody = await awsResponseBody(response);
 
       expect(awsBody.body).toBe("content");
-      expect(awsBody.isBase64Encoded).toBeUndefined();
+      expect(awsBody.isBase64Encoded).toBe(false);
     });
 
     test("should throw error for invalid response", async () => {
@@ -1838,6 +1838,100 @@ describe("[AWS Lambda] Request Utils", () => {
         expect(new URL(seen.url).searchParams.getAll("q")).toEqual(["a b", "c&d"]);
         expect(seen.ip).toBe("123.123.123.123");
         expect(seen.body).toBe("Test");
+      });
+
+      // "You must use `multiValueHeaders` if you have enabled multi-value
+      // headers and `headers` otherwise", and the result "must include the
+      // Base64 encoding status, status code, and headers".
+      // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#respond-to-load-balancer
+      describe("result shape", () => {
+        const multiValueEvent: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            host: ["lb.elb.amazonaws.com"],
+            "x-forwarded-for": ["123.123.123.123"],
+          },
+          body: null,
+          isBase64Encoded: false,
+        };
+
+        test("multi-value: every header in multiValueHeaders, no flat headers", async () => {
+          const fetch = () => {
+            const headers = new Headers({ "content-type": "text/plain; charset=utf-8" });
+            headers.append("set-cookie", "a=1; Path=/");
+            headers.append("set-cookie", "b=2; HttpOnly");
+            return new Response("hello", { status: 201, headers });
+          };
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            multiValueEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 201,
+            multiValueHeaders: {
+              "content-type": ["text/plain; charset=utf-8"],
+              "set-cookie": ["a=1; Path=/", "b=2; HttpOnly"],
+            },
+            body: "hello",
+            isBase64Encoded: false,
+          });
+          expect(result).not.toHaveProperty("headers");
+        });
+
+        test("multi-value: binary body is base64-encoded", async () => {
+          const bytes = Buffer.from([0x00, 0xff, 0x10]);
+          const fetch = () =>
+            new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            multiValueEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 200,
+            multiValueHeaders: { "content-type": ["application/octet-stream"] },
+            body: bytes.toString("base64"),
+            isBase64Encoded: true,
+          });
+        });
+
+        test("single-value: flat headers with the last cookie", async () => {
+          const fetch = () => {
+            const headers = new Headers({ "content-type": "text/plain" });
+            headers.append("set-cookie", "a=1");
+            headers.append("set-cookie", "b=2");
+            return new Response("hello", { headers });
+          };
+
+          const result = (await handleLambdaEvent(
+            fetch,
+            {
+              requestContext,
+              httpMethod: "GET",
+              path: "/lambda",
+              queryStringParameters: {},
+              headers: { host: "lb.elb.amazonaws.com" },
+              body: "",
+              isBase64Encoded: false,
+            } satisfies ALBEvent,
+            createMockContext(),
+          )) as ALBResult;
+
+          expect(result).toEqual({
+            statusCode: 200,
+            headers: { "content-type": "text/plain", "set-cookie": "b=2" },
+            body: "hello",
+            isBase64Encoded: false,
+          });
+        });
       });
     });
   });
