@@ -9,12 +9,16 @@ import {
 } from "../../_trust-proxy.ts";
 import type { ResponseBody } from "../../types.ts";
 import type {
+  AWSLambdaALBEvent,
   AWSLambdaContext,
   AWSLambdaProxyEvent,
   AWSLambdaProxyEventV2,
   AWSLambdaProxyResult,
   AWSLambdaProxyResultV2,
 } from "../../types/aws-lambda.ts";
+
+// Every event shape the adapter accepts (API Gateway v1/v2 and ALB).
+type AWSEvent = AWSLambdaProxyEvent | AWSLambdaProxyEventV2 | AWSLambdaALBEvent;
 
 // -- Streaming types --
 
@@ -40,7 +44,7 @@ export interface AWSResponseHeaders {
 // Incoming (AWS => Web)
 
 export function awsRequest(
-  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  event: AWSEvent,
   context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
@@ -77,7 +81,7 @@ export function awsRequest(
   return req;
 }
 
-function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string {
+function awsEventMethod(event: AWSEvent): string {
   return (
     (event as AWSLambdaProxyEvent).httpMethod ||
     (event as AWSLambdaProxyEventV2).requestContext?.http?.method ||
@@ -85,7 +89,7 @@ function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): str
   );
 }
 
-function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
+function awsEventIP(event: AWSEvent): string | undefined {
   return (
     (event as AWSLambdaProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
     (event as AWSLambdaProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
@@ -102,7 +106,7 @@ function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string 
 // mode it is absent (so is the IP). Health checks carry no `X-Forwarded-For`.
 // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/x-forwarded-headers.html#x-forwarded-for
 function awsEventPeer(
-  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  event: AWSEvent,
   headers: Headers,
 ): { sourceIp: string | undefined; forwardedFor: string | null } {
   const forwardedFor = headers.get("x-forwarded-for");
@@ -129,11 +133,7 @@ function stripClientPort(address: string): string {
   return colon !== -1 && colon === address.lastIndexOf(":") ? address.slice(0, colon) : address;
 }
 
-function awsEventURL(
-  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
-  headers: Headers,
-  hops: number,
-): URL {
+function awsEventURL(event: AWSEvent, headers: Headers, hops: number): URL {
   const rawPath =
     (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath || "/";
 
@@ -160,7 +160,9 @@ function awsEventURL(
   const host =
     (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
     headers.get("host") ||
-    event.requestContext?.domainName;
+    // ALB has no `domainName`; its events always carry `Host` (health checks
+    // excepted, which then get the `_invalid_` sentinel).
+    (event as AWSLambdaProxyEvent | AWSLambdaProxyEventV2).requestContext?.domainName;
   const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
@@ -170,7 +172,7 @@ function awsEventURL(
   return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
 }
 
-function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
+function awsEventQuery(event: AWSEvent) {
   if (typeof (event as AWSLambdaProxyEventV2).rawQueryString === "string") {
     return (event as AWSLambdaProxyEventV2).rawQueryString;
   }
@@ -195,13 +197,11 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
 }
 
 // ALB events carry `requestContext.elb` instead of API Gateway's `identity`/`http`.
-function isALBEvent(
-  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
-): event is AWSLambdaProxyEvent {
-  return !!(event as AWSLambdaProxyEvent).requestContext?.elb;
+function isALBEvent(event: AWSEvent): event is AWSLambdaALBEvent {
+  return !!(event as AWSLambdaALBEvent).requestContext?.elb;
 }
 
-function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
+function awsEventHeaders(event: AWSEvent): Headers {
   const headers = new Headers();
 
   // API Gateway v1 puts only the last value of a repeated header in `headers`
@@ -258,9 +258,7 @@ function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): He
   return headers;
 }
 
-export function awsEventBody(
-  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
-): ResponseBody | undefined {
+export function awsEventBody(event: AWSEvent): ResponseBody | undefined {
   if (!event.body) {
     return undefined;
   }
@@ -272,10 +270,7 @@ export function awsEventBody(
 
 // Outgoing (Web => AWS)
 
-export function awsResponseHeaders(
-  response: Response,
-  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
-): AWSResponseHeaders {
+export function awsResponseHeaders(response: Response, event?: AWSEvent): AWSResponseHeaders {
   const headers = Object.create(null);
   for (const [key, value] of response.headers) {
     // `Headers` iteration yields one entry per `set-cookie`, so a flat record
@@ -351,7 +346,7 @@ export async function awsResponseBody(
 export async function awsStreamResponse(
   response: Response,
   responseStream: AWSLambdaResponseStream,
-  event?: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  event?: AWSEvent,
 ): Promise<void> {
   const metadata: AWSLambdaStreamResponseMetadata = {
     statusCode: response.status,

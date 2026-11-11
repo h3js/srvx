@@ -17,8 +17,10 @@ import {
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
 import type { TrustProxyOption } from "../src/_trust-proxy.ts";
+import type { ServerRequest } from "../src/types.ts";
 import type {
   ALBEvent,
+  ALBResult,
   APIGatewayProxyEvent,
   APIGatewayProxyEventV2,
   APIGatewayProxyResult,
@@ -624,14 +626,14 @@ describe("[AWS Lambda] Request Utils", () => {
 
       describe("query", () => {
         const searchOf = (overrides: Partial<ALBEvent>) =>
-          new URL(awsRequest(albEvent(overrides) as any, createMockContext()).url).search;
+          new URL(awsRequest(albEvent(overrides), createMockContext()).url).search;
 
         // ALB passes keys and values still percent-encoded (h3js/srvx#314).
         test("keeps single-value params as they arrived on the wire", () => {
           const event = albEvent({
             queryStringParameters: { q: "a%20b", "x%5B%5D": "1", plus: "a+b", amp: "%26" },
           });
-          const url = new URL(awsRequest(event as any, createMockContext()).url);
+          const url = new URL(awsRequest(event, createMockContext()).url);
 
           expect(url.search).toBe("?q=a%20b&x%5B%5D=1&plus=a+b&amp=%26");
           expect(url.searchParams.get("q")).toBe("a b");
@@ -663,7 +665,7 @@ describe("[AWS Lambda] Request Utils", () => {
         test("cannot end the query early with a raw `#`", () => {
           const url = new URL(
             awsRequest(
-              albEvent({ queryStringParameters: { a: "1#2", b: "3" } }) as any,
+              albEvent({ queryStringParameters: { a: "1#2", b: "3" } }),
               createMockContext(),
             ).url,
           );
@@ -682,7 +684,7 @@ describe("[AWS Lambda] Request Utils", () => {
                 host: "lb.elb.amazonaws.com",
                 ...(xff === undefined ? {} : { "x-forwarded-for": xff }),
               },
-            }) as any,
+            }),
             createMockContext(),
             trustProxy,
           ).ip;
@@ -710,7 +712,7 @@ describe("[AWS Lambda] Request Utils", () => {
                     "x-forwarded-for": "1.1.1.1",
                     "x-forwarded-proto": "http",
                   },
-                }) as any,
+                }),
                 createMockContext(),
                 trustProxy,
               ).url,
@@ -743,7 +745,7 @@ describe("[AWS Lambda] Request Utils", () => {
                   host: ["lb.elb.amazonaws.com"],
                   "x-forwarded-for": ["1.1.1.1, 2.2.2.2", "3.3.3.3"],
                 },
-              }) as any,
+              }),
               createMockContext(),
               trustProxy,
             ).ip;
@@ -774,7 +776,7 @@ describe("[AWS Lambda] Request Utils", () => {
           isBase64Encoded: false,
         };
 
-        const request = awsRequest(event as any, createMockContext(), true);
+        const request = awsRequest(event, createMockContext(), true);
         const url = new URL(request.url);
 
         expect(url.host).toBe(
@@ -793,7 +795,7 @@ describe("[AWS Lambda] Request Utils", () => {
         for (const httpMethod of ["GET", "HEAD", "get"]) {
           for (const isBase64Encoded of [false, true]) {
             const request = awsRequest(
-              albEvent({ httpMethod, body: "Test", isBase64Encoded }) as any,
+              albEvent({ httpMethod, body: "Test", isBase64Encoded }),
               createMockContext(),
             );
             expect(request.method).toBe(httpMethod.toUpperCase());
@@ -804,7 +806,7 @@ describe("[AWS Lambda] Request Utils", () => {
 
       test("keeps the body of other methods", async () => {
         const request = awsRequest(
-          albEvent({ httpMethod: "POST", body: "Test" }) as any,
+          albEvent({ httpMethod: "POST", body: "Test" }),
           createMockContext(),
         );
         expect(await request.text()).toBe("Test");
@@ -821,7 +823,7 @@ describe("[AWS Lambda] Request Utils", () => {
           isBase64Encoded: false,
         };
 
-        const request = awsRequest(event as any, createMockContext());
+        const request = awsRequest(event, createMockContext());
 
         expect(request.method).toBe("GET");
         expect(request.headers.get("user-agent")).toBe("ELB-HealthChecker/2.0");
@@ -1708,6 +1710,118 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(result.statusCode).toBe(200);
       const request = fetchHandler.mock.calls[0][0] as Request;
       expect(request.method).toBe("GET");
+    });
+
+    // The sample events from the AWS docs, typed as DefinitelyTyped `ALBEvent`
+    // so passing them in also checks that it is assignable to the handler.
+    // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#receive-event-from-load-balancer
+    describe("ALB (`requestContext.elb`)", () => {
+      const requestContext = {
+        elb: {
+          targetGroupArn:
+            "arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a",
+        },
+      };
+
+      const echo = async (req: Request) =>
+        Response.json({
+          method: req.method,
+          url: req.url,
+          ip: (req as ServerRequest).ip,
+          body: req.body ? await req.text() : null,
+        });
+
+      test("single-value sample event", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          queryStringParameters: { query: "1234ABCD" },
+          headers: {
+            accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "accept-encoding": "gzip",
+            "accept-language": "en-US,en;q=0.9",
+            connection: "keep-alive",
+            host: "lambda-alb-123578498.us-east-2.elb.amazonaws.com",
+            "upgrade-insecure-requests": "1",
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36",
+            "x-amzn-trace-id": "Root=1-5c536348-3d683b8b04734faae651f476",
+            "x-forwarded-for": "72.12.164.125",
+            "x-forwarded-port": "80",
+            "x-forwarded-proto": "http",
+            "x-imforwards": "20",
+          },
+          body: "Test",
+          isBase64Encoded: false,
+        };
+
+        const result = (await handleLambdaEvent(echo, event, createMockContext())) as ALBResult;
+
+        expect(result.statusCode).toBe(200);
+        expect(JSON.parse(result.body!)).toEqual({
+          method: "GET",
+          url: "https://lambda-alb-123578498.us-east-2.elb.amazonaws.com/lambda?query=1234ABCD",
+          ip: "72.12.164.125",
+          body: null,
+        });
+      });
+
+      test("multi-value sample event", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            accept: ["*/*"],
+            host: ["alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com"],
+            "user-agent": ["curl/7.79.1"],
+            "x-amzn-trace-id": ["Root=1-62fa9327-21cdd4da4c6db451490a5fb7"],
+            "x-forwarded-for": ["123.123.123.123"],
+            "x-forwarded-port": ["80"],
+            "x-forwarded-proto": ["http"],
+          },
+          body: "Test",
+          isBase64Encoded: false,
+        };
+
+        const handler = toLambdaHandler({ fetch: echo });
+        const result = (await handler(event, createMockContext())) as ALBResult;
+
+        expect(result.statusCode).toBe(200);
+        expect(JSON.parse(result.body!)).toEqual({
+          method: "GET",
+          url: "https://alb-c-loadb-14pofkyclbnsf-1815800096.eu-central-1.elb.amazonaws.com/lambda",
+          ip: "123.123.123.123",
+          body: null,
+        });
+      });
+
+      test("encoded multi-value query and POST body", async () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "POST",
+          path: "/lambda",
+          multiValueQueryStringParameters: { q: ["a%20b", "c%26d"] },
+          multiValueHeaders: {
+            host: ["lb.elb.amazonaws.com"],
+            "content-type": ["text/plain"],
+            "x-forwarded-for": ["10.0.0.1, 123.123.123.123:5555"],
+          },
+          body: Buffer.from("Test").toString("base64"),
+          isBase64Encoded: true,
+        };
+
+        const result = (await handleLambdaEvent(echo, event, createMockContext())) as ALBResult;
+        const seen = JSON.parse(result.body!);
+
+        expect(seen.url).toBe("https://lb.elb.amazonaws.com/lambda?q=a%20b&q=c%26d");
+        expect(new URL(seen.url).searchParams.getAll("q")).toEqual(["a b", "c&d"]);
+        expect(seen.ip).toBe("123.123.123.123");
+        expect(seen.body).toBe("Test");
+      });
     });
   });
 
