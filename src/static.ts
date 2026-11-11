@@ -189,6 +189,33 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
   gzip: () => createGzip(),
 };
 
+// A pathname that is not the canonical URL of the file it would decode to, so
+// serving it would let one file answer at several URLs — and routes or earlier
+// middleware matching on `url.pathname` would see a different path than the one
+// served (`/%61dmin/x` is `admin/x`, but not `startsWith("/admin")`). Matched
+// on the raw pathname, before decoding:
+//
+// - `//`: an empty segment, which `join()` collapses (`//admin` -> `admin`).
+// - An encoded unreserved character (RFC 3986 §2.3: ALPHA, DIGIT, `-._~`),
+//   which a URI should not encode, and whose encoded form is equivalent to the
+//   plain one. Encoded `.` included, so a dotfile has one URL for `dotfiles`.
+// - `%2F`: no file name holds a `/`, so it names no file. Kept encoded, it
+//   would reach a name literally containing `%2F`, whose own URL is `%252F`.
+// - `%5C`: `\` is a separator on Windows, so the same URL would name a
+//   different file per platform. Refused everywhere to keep the mapping fixed.
+//   A raw `\` is refused for the same reason (checked beside the regex: a
+//   single-char `includes` costs a fraction of another alternative here). The
+//   URL parser and `serve()` never let one through, but a hand-built
+//   origin-form `FastURL` in `req._url` keeps it verbatim.
+// - `%00`: a NUL must never reach the filesystem layer.
+//
+// Not rejected by this check: encoded reserved characters (`%23`, `%26`,
+// `%3F`, ...), `%25`, `%20`, and non-ASCII UTF-8 (whose bytes are all >= `%80`),
+// so names such as `café.txt` or `50%.txt` stay reachable. Tested bare: an
+// `includes("%") || includes("//")` prefilter measured slower on every path, as
+// V8's two-char substring search costs more than this regex's whole scan.
+const NON_CANONICAL_PATH_RE = /\/\/|%(?:00|2[d-f]|3\d|4[1-9a-f]|5[\dacf]|6[1-9a-f]|7[\dae])/i;
+
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
 const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
@@ -319,13 +346,18 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       return next();
     }
     const url = (req._url ??= new FastURL(req.url));
+    // An alternate spelling of a file's URL never serves it; it is the app's.
+    if (NON_CANONICAL_PATH_RE.test(url.pathname) || url.pathname.includes("\\")) {
+      return next();
+    }
     let path = url.pathname.slice(1);
     // `/sub/` names a directory, so only its index is probed: serving `sub.html`
     // or a file named `sub` there would mint a second URL for them, with
-    // relative links inside resolving against the wrong base.
+    // relative links inside resolving against the wrong base. (Only one slash:
+    // `/sub//` was refused above as an empty segment.)
     const trailingSlash = path.endsWith("/");
     if (trailingSlash) {
-      path = path.replace(/\/+$/, "");
+      path = path.slice(0, -1);
     }
     if (path.includes("%")) {
       // Decode the wire encoding exactly once, or names a client must encode
