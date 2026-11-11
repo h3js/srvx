@@ -1,6 +1,12 @@
 import type { ServerRequest } from "../../types.ts";
 import type { TrustProxyOption } from "../../_trust-proxy.ts";
-import { resolveClientIP, trustedHops, forwardedHopValue, HOST_RE } from "../../_trust-proxy.ts";
+import {
+  resolveClientIP,
+  trustedHops,
+  forwardedHopValue,
+  forwardedList,
+  HOST_RE,
+} from "../../_trust-proxy.ts";
 import type { ResponseBody } from "../../types.ts";
 import type {
   AWSLambdaContext,
@@ -45,8 +51,7 @@ export function awsRequest(
   // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
   // count once (walking `X-Forwarded-For` right-to-left from it) and pass it
   // down; both the URL and the client IP derivation are hop-aware.
-  const sourceIp = awsEventIP(event);
-  const forwardedFor = headers.get("x-forwarded-for");
+  const { sourceIp, forwardedFor } = awsEventPeer(event, headers);
   const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
   const req = new Request(awsEventURL(event, headers, hops), {
@@ -78,6 +83,43 @@ function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string 
     (event as AWSLambdaProxyEventV2).requestContext?.http?.sourceIp || // v2 (HTTP API)
     (event as AWSLambdaProxyEvent).requestContext?.identity?.sourceIp // v1 (REST API)
   );
+}
+
+// ALB events carry no `sourceIp` (h3js/srvx#314). In the default `append`
+// processing mode the load balancer appends the address it accepted the
+// connection from as the *last* `X-Forwarded-For` entry, which makes that entry
+// the ALB-verified equivalent of `sourceIp`; the entries left of it are what
+// the client (or proxies in front of it) claimed, and go through the same
+// hop-aware trust walk as on API Gateway. This relies on `append`: in
+// `preserve` mode the header is entirely client-controlled, and in `remove`
+// mode it is absent (so is the IP). Health checks carry no `X-Forwarded-For`.
+// https://docs.aws.amazon.com/elasticloadbalancing/latest/application/x-forwarded-headers.html#x-forwarded-for
+function awsEventPeer(
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  headers: Headers,
+): { sourceIp: string | undefined; forwardedFor: string | null } {
+  const forwardedFor = headers.get("x-forwarded-for");
+  if (!isALBEvent(event)) {
+    return { sourceIp: awsEventIP(event), forwardedFor };
+  }
+  const list = forwardedList(forwardedFor);
+  const last = list.pop();
+  return {
+    sourceIp: last ? stripClientPort(last) : undefined,
+    forwardedFor: list.join(", "),
+  };
+}
+
+// With `routing.http.xff_client_port.enabled` ALB appends `1.2.3.4:8080` or
+// `[2001:db8::1]:8080`. A bare IPv6 address has several colons, so only a
+// single colon marks an IPv4 port.
+function stripClientPort(address: string): string {
+  if (address[0] === "[") {
+    const end = address.indexOf("]");
+    return end === -1 ? address : address.slice(1, end);
+  }
+  const colon = address.indexOf(":");
+  return colon !== -1 && colon === address.lastIndexOf(":") ? address.slice(0, colon) : address;
 }
 
 function awsEventURL(

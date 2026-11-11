@@ -16,6 +16,7 @@ import {
   toLambdaHandler,
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
+import type { TrustProxyOption } from "../src/_trust-proxy.ts";
 import type {
   ALBEvent,
   APIGatewayProxyEvent,
@@ -670,6 +671,86 @@ describe("[AWS Lambda] Request Utils", () => {
           expect(url.hash).toBe("");
           expect(url.searchParams.get("a")).toBe("1#2");
           expect(url.searchParams.get("b")).toBe("3");
+        });
+      });
+
+      describe("request.ip", () => {
+        const ipOf = (xff: string | undefined, trustProxy?: TrustProxyOption) =>
+          awsRequest(
+            albEvent({
+              headers: {
+                host: "lb.elb.amazonaws.com",
+                ...(xff === undefined ? {} : { "x-forwarded-for": xff }),
+              },
+            }) as any,
+            createMockContext(),
+            trustProxy,
+          ).ip;
+
+        // ALB appends the address it saw as the last entry (default `append` mode).
+        test("is the last X-Forwarded-For entry by default", () => {
+          expect(ipOf("72.12.164.125")).toBe("72.12.164.125");
+          expect(ipOf("1.1.1.1, 2.2.2.2")).toBe("2.2.2.2");
+        });
+
+        test("walks further left only through trusted hops", () => {
+          expect(ipOf("1.1.1.1, 2.2.2.2", ["2.2.2.2"])).toBe("1.1.1.1");
+          expect(ipOf("1.1.1.1, 2.2.2.2", ["3.3.3.3"])).toBe("2.2.2.2");
+          expect(ipOf("1.1.1.1, 2.2.2.2, 3.3.3.3", ["3.3.3.3", "2.2.2.2"])).toBe("1.1.1.1");
+          expect(ipOf("1.1.1.1, 2.2.2.2", true)).toBe("1.1.1.1");
+        });
+
+        test("only honours X-Forwarded-Proto from a trusted peer", () => {
+          const urlOf = (trustProxy?: TrustProxyOption) =>
+            new URL(
+              awsRequest(
+                albEvent({
+                  headers: {
+                    host: "lb.elb.amazonaws.com",
+                    "x-forwarded-for": "1.1.1.1",
+                    "x-forwarded-proto": "http",
+                  },
+                }) as any,
+                createMockContext(),
+                trustProxy,
+              ).url,
+            );
+
+          expect(urlOf().protocol).toBe("https:");
+          expect(urlOf(["1.1.1.1"]).protocol).toBe("http:");
+        });
+
+        test("strips the client port ALB adds with `xff_client_port`", () => {
+          expect(ipOf("1.2.3.4:8080")).toBe("1.2.3.4");
+          expect(ipOf("[2001:db8::1]:8080")).toBe("2001:db8::1");
+          expect(ipOf("2001:db8::1")).toBe("2001:db8::1");
+          expect(ipOf("::ffff:1.2.3.4")).toBe("::ffff:1.2.3.4");
+          expect(ipOf("1.1.1.1, 2.2.2.2:443", ["2.2.2.2"])).toBe("1.1.1.1");
+        });
+
+        test("is undefined without X-Forwarded-For (health checks)", () => {
+          expect(ipOf(undefined)).toBeUndefined();
+          expect(ipOf(undefined, true)).toBeUndefined();
+          expect(ipOf("")).toBeUndefined();
+        });
+
+        test("reads the chain across multi-value X-Forwarded-For lines", () => {
+          const ipOfLines = (trustProxy?: TrustProxyOption) =>
+            awsRequest(
+              albEvent({
+                headers: undefined,
+                multiValueHeaders: {
+                  host: ["lb.elb.amazonaws.com"],
+                  "x-forwarded-for": ["1.1.1.1, 2.2.2.2", "3.3.3.3"],
+                },
+              }) as any,
+              createMockContext(),
+              trustProxy,
+            ).ip;
+
+          expect(ipOfLines()).toBe("3.3.3.3");
+          expect(ipOfLines(["3.3.3.3"])).toBe("2.2.2.2");
+          expect(ipOfLines(true)).toBe("1.1.1.1");
         });
       });
 
