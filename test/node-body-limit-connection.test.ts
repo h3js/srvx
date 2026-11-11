@@ -702,24 +702,31 @@ describe.skipIf(!!globalThis.Deno || !!globalThis.Bun)(
     // end of the response. (The compat response ends with an empty trailers
     // frame, which Node folds into a final DATA frame with END_STREAM.)
     for (const entry of entries) {
-      for (const empty of [false, true]) {
-        test.concurrent(`${entry}, ${empty ? "empty" : "non-empty"} 413: END_STREAM is sent before RST_STREAM`, async ({
+      // `bare`: the handler throws and the host answers with a bare `res.end()`,
+      // a headers-only response that gets no trailers.
+      for (const kind of ["non-empty", "empty", "bare"] as const) {
+        test.concurrent(`${entry}, ${kind} 413: END_STREAM is sent before RST_STREAM`, async ({
           onTestFinished,
         }) => {
-          const nodeServer = http2.createServer(
-            toNodeHandler(
-              async (request) => {
-                const req = entry === "limitRequestBody" ? limitRequestBody(request, 10) : request;
-                try {
-                  await req.text();
-                  return new Response("ok");
-                } catch {
-                  return new Response(empty ? null : "too large", { status: 413 });
-                }
-              },
-              { maxRequestBodySize: entry === "maxRequestBodySize" ? 10 : undefined },
-            ) as any,
-          );
+          const handler = toNodeHandler(
+            async (request) => {
+              const req = entry === "limitRequestBody" ? limitRequestBody(request, 10) : request;
+              try {
+                await req.text();
+                return new Response("ok");
+              } catch (error) {
+                if (kind === "bare") throw error;
+                return new Response(kind === "empty" ? null : "too large", { status: 413 });
+              }
+            },
+            { maxRequestBodySize: entry === "maxRequestBodySize" ? 10 : undefined },
+          ) as (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => unknown;
+          const nodeServer = http2.createServer((req, res) => {
+            Promise.resolve(handler(req, res)).catch(() => {
+              res.statusCode = 413;
+              res.end();
+            });
+          });
           const sessions = new Set<http2.ServerHttp2Session>();
           nodeServer.on("session", (session) => sessions.add(session));
           await new Promise<void>((resolve) => nodeServer.listen(0, "127.0.0.1", resolve));
@@ -775,7 +782,7 @@ describe.skipIf(!!globalThis.Deno || !!globalThis.Bun)(
             ]),
           );
           await within(reset, GUARD_MS, "RST_STREAM");
-          expect(frames[0]).toBe("HEADERS");
+          expect(frames[0]).toMatch(/^HEADERS/);
           expect(frames.at(-1)).toBe("RST=0");
           // The response ended (END_STREAM) before the reset.
           expect(frames.slice(0, -1).some((f) => f.endsWith("+ES"))).toBe(true);

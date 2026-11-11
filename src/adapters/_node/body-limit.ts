@@ -46,20 +46,10 @@ export function onBodyLimitExceeded(req: NodeServerRequest, res?: NodeServerResp
 
   const stream = (req as Http2ServerRequest).stream as ServerHttp2Stream | undefined;
   if (stream) {
-    // The response ends with its trailers, not its last write: the compat
-    // response always asks for them (`waitForTrailers`), and a reset submitted
-    // before them would cut it short (even the headers of an empty one). Its
-    // `wantTrailers` handler runs first and submits them on a `setImmediate`;
-    // the reset is queued behind that.
-    if (stream.sentTrailers !== undefined) {
-      setImmediate(resetStream, stream);
+    if (stream.writableFinished) {
+      resetAfterResponse(stream);
     } else {
-      stream.once("wantTrailers", () => {
-        if (stream.sentTrailers === undefined) {
-          stream.sendTrailers({}); // What Node does when nobody else answers.
-        }
-        setImmediate(resetStream, stream);
-      });
+      stream.once("finish", () => resetAfterResponse(stream));
     }
     return;
   }
@@ -103,6 +93,35 @@ function closeAfterResponse(req: NodeServerRequest, res: ServerResponse): void {
   if (!req.complete && !res.headersSent) {
     res.shouldKeepAlive = false;
   }
+}
+
+/**
+ * Resets the stream once the response has really ended: END_STREAM sent
+ * (`state.localClose`). The stream's writable `finish` comes earlier. The compat
+ * response asks for trailers (`waitForTrailers`) and ends with them, submitted a
+ * `setImmediate` after `wantTrailers`, which itself follows `finish`; a
+ * headers-only response (bare `res.end()`) ends with its HEADERS frame and gets
+ * no `wantTrailers`. A reset submitted before END_STREAM cuts the response short
+ * (even the headers of an empty one), so poll for it: a turn or two of the event
+ * loop normally, then every 10 ms; past `LINGER_MS` (a client not taking the
+ * response) reset anyway.
+ */
+function resetAfterResponse(stream: ServerHttp2Stream): void {
+  const deadline = Date.now() + LINGER_MS;
+  let turns = 0;
+  const check = () => {
+    if (stream.closed || stream.destroyed) {
+      return;
+    }
+    if (stream.state.localClose || Date.now() > deadline) {
+      resetStream(stream);
+    } else if (++turns < 5) {
+      setImmediate(check);
+    } else {
+      setTimeout(check, 10).unref();
+    }
+  };
+  setImmediate(check);
 }
 
 function resetStream(stream: ServerHttp2Stream): void {
