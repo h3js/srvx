@@ -57,8 +57,8 @@
     "test": "pnpm lint && pnpm typecheck && vitest run --coverage",
     "test:node-compat:deno": "deno run -A npm:vitest run test/node.test",
     "test:node-compat:bun": "bun --bun run vitest run test/node.test.ts",
-    "test:node-adapters:deno": "deno run -A npm:vitest run test/node-adapters.test",
-    "test:node-adapters:bun": "bun --bun run vitest run test/node-adapters.test.ts",
+    "test:node-adapters:deno": "deno run -A npm:vitest run test/node-adapters.test test/node-headers.test",
+    "test:node-adapters:bun": "bun --bun run vitest run test/node-adapters.test.ts test/node-headers.test.ts",
     "typecheck": "tsc --noEmit --skipLibCheck",
     "vitest": "vitest"
   },
