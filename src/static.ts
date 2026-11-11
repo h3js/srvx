@@ -6,7 +6,7 @@ import type { Transform } from "node:stream";
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import { pipeline } from "node:stream";
+import { Readable, pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
@@ -593,7 +593,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           if (parsed) {
             // Node's `end` is inclusive, matching the byte range's own bounds.
             const stream = file.handle.createReadStream({ start: parsed.start, end: parsed.end });
-            return new FastResponse(stream as any, {
+            return new FastResponse(toBody(stream), {
               status: 206,
               headers: {
                 ...headers,
@@ -616,7 +616,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // The stream closes the handle when it ends or errors (`autoClose`).
       const stream = file.handle.createReadStream();
       if (!compressor) {
-        return new FastResponse(stream as any, { headers });
+        return new FastResponse(toBody(stream), { headers });
       }
       // `pipeline` rather than `stream.pipe(encoded)`: `pipe` leaves the source
       // running if the destination errors or is destroyed, so a client that
@@ -626,13 +626,24 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // body — the response headers are long gone by then.
       const encoded = compressor(file.size);
       pipeline(stream, encoded, () => {});
-      return new FastResponse(encoded as any, { headers });
+      return new FastResponse(toBody(encoded), { headers });
     }
     return next();
   };
 };
 
 // --- internal ---
+
+// On Bun, `FastResponse` is the native `Response`, which wraps a Node stream body
+// in a web `ReadableStream` whose cancellation (a client hanging up) never reaches
+// the Node stream. The file then stays open until GC, and Bun treats a `FileHandle`
+// closed by GC as a fatal error. `Readable.toWeb()` returns a stream whose
+// `cancel()` destroys the source, closing the handle. On Node, `FastResponse` pipes
+// the Node stream itself and destroys it on disconnect, so it is passed as-is.
+const isBun = "Bun" in globalThis;
+function toBody(stream: Readable): BodyInit {
+  return (isBun ? Readable.toWeb(stream) : stream) as unknown as BodyInit;
+}
 
 // The `Cache-Control` value, or "" when `maxAge` is unset so the header is
 // omitted entirely. `max-age` takes non-negative integer seconds, so a
