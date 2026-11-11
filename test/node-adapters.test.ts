@@ -439,23 +439,30 @@ describe("adapters", () => {
         name: "setHeader",
         setHeaders: (res) => res.setHeader("Transfer-Encoding", "chunked"),
       },
+      {
+        name: "appendHeader",
+        setHeaders: (res) => res.appendHeader("Transfer-Encoding", "chunked"),
+      },
     ];
 
+    // Express swaps the response's prototype, so the guards must survive it too.
     for (const { name, setHeaders } of cases) {
-      test.skipIf(noBridge)(name, async () => {
-        const handler: NodeHttp1Handler = (_req, res) => {
-          setHeaders(res as any);
-          res.write("hello");
-          res.end("world");
-        };
-        const webHandler = toFetchHandler(handler);
-        const res = await webHandler(new Request("http://localhost/"));
-        expect(res.status).toBe(200);
-        // Body arrives verbatim, without chunk framing.
-        expect(await res.text()).toBe("helloworld");
-        // The hop-by-hop framing header does not leak into the web Response.
-        expect(res.headers.get("transfer-encoding")).toBe(null);
-      });
+      for (const viaExpress of [false, true]) {
+        test.skipIf(noBridge)(viaExpress ? `${name} in an Express app` : name, async () => {
+          const handler: NodeHttp1Handler = (_req, res) => {
+            setHeaders(res as any);
+            res.write("hello");
+            res.end("world");
+          };
+          const webHandler = toFetchHandler(viaExpress ? express().use(handler as any) : handler);
+          const res = await webHandler(new Request("http://localhost/"));
+          expect(res.status).toBe(200);
+          // Body arrives verbatim, without chunk framing.
+          expect(await res.text()).toBe("helloworld");
+          // The hop-by-hop framing header does not leak into the web Response.
+          expect(res.headers.get("transfer-encoding")).toBe(null);
+        });
+      }
     }
   });
 
