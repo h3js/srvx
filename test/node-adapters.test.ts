@@ -821,6 +821,12 @@ describe("adapters", () => {
     const cases: { name: string; fail: (next: (error?: Error) => void) => unknown }[] = [
       { name: "next(err)", fail: (next) => next(new Error("boom")) },
       { name: "rejection", fail: () => Promise.reject(new Error("boom")) },
+      {
+        name: "throw",
+        fail: () => {
+          throw new Error("boom");
+        },
+      },
     ];
     for (const { name, fail } of cases) {
       test.skipIf(noBridge)(name, async () => {
@@ -853,6 +859,17 @@ describe("adapters", () => {
     const webHandler = toFetchHandler(middleware);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws before its head answers 500", async () => {
+    const middleware: NodeHTTP1Middleware = (_req, _res, _next) => {
+      throw new Error("sync boom");
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await toFetchHandler(middleware)(new Request("http://localhost/"));
     expect(res.status).toBe(500);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();

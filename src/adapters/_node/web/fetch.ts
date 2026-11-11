@@ -54,18 +54,21 @@ export async function fetchNodeHandler(
         // Settle on the head, as `toWebResponse()` does, so a streaming middleware is returned before it ends.
         nodeRes.waitForResponseHead().then(resolve, reject);
         nodeRes.once("error", (error) => reject(error));
-        Promise.resolve(
-          (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
-            if (error) {
-              return fail(error);
-            }
-            // `next()` with no downstream handler: finalize the response so
-            // `toWebResponse()` can settle instead of waiting forever.
-            if (!nodeRes.writableEnded) {
-              nodeRes.end();
-            }
-            resolve();
-          }),
+        // The executor turns a synchronous throw into a rejection, so it reaches `fail` too.
+        new Promise((settle) =>
+          settle(
+            (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
+              if (error) {
+                return fail(error);
+              }
+              // `next()` with no downstream handler: finalize the response so
+              // `toWebResponse()` can settle instead of waiting forever.
+              if (!nodeRes.writableEnded) {
+                nodeRes.end();
+              }
+              resolve();
+            }),
+          ),
         ).catch(fail);
       });
     } else {
