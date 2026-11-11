@@ -43,9 +43,14 @@ export async function fetchNodeHandler(
     // A plain `(req, res)` handler keeps its original 2-arg invocation.
     if (handler.length > 2) {
       await new Promise<void>((resolve, reject) => {
-        // Past the head, an error can't change the status, so it fails the body.
-        const fail = (error: Error) =>
-          nodeRes.headersSent ? nodeRes.destroy(error) : reject(error);
+        // Past the head, an error can't change the status, so it fails the body and closes the request.
+        const fail = (error: Error) => {
+          if (!nodeRes.headersSent) {
+            return reject(error);
+          }
+          nodeReq.destroy();
+          nodeRes.destroy(error);
+        };
         // Settle on the head, as `toWebResponse()` does, so a streaming middleware is returned before it ends.
         nodeRes.waitForResponseHead().then(resolve, reject);
         nodeRes.once("error", (error) => reject(error));

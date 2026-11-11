@@ -815,6 +815,35 @@ describe("adapters", () => {
     expect(closed.sort()).toEqual(["req", "res"]);
   });
 
+  // Past the head a failure can't change the status, so it fails the body and
+  // closes the request and response however the middleware reports it.
+  describe("connect-style middleware failing after the head", () => {
+    const cases: { name: string; fail: (next: (error?: Error) => void) => unknown }[] = [
+      { name: "next(err)", fail: (next) => next(new Error("boom")) },
+      { name: "rejection", fail: () => Promise.reject(new Error("boom")) },
+    ];
+    for (const { name, fail } of cases) {
+      test.skipIf(noBridge)(name, async () => {
+        const closed: string[] = [];
+        const middleware: NodeHTTP1Middleware = (req, res, next) => {
+          req.on("close", () => closed.push("req"));
+          res.on("close", () => closed.push("res"));
+          res.writeHead(201);
+          res.write("hello");
+          return fail(next);
+        };
+        const body = new ReadableStream({ pull() {} });
+        const res = await toFetchHandler(middleware)(
+          new Request("http://localhost/", { method: "POST", body, duplex: "half" } as RequestInit),
+        );
+        expect(res.status).toBe(201);
+        await expect(res.text()).rejects.toThrow("boom");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(closed.sort()).toEqual(["req", "res"]);
+      });
+    }
+  });
+
   test("connect-style middleware that throws async propagates as an error", async () => {
     const middleware = (
       _req: NodeServerRequest,
