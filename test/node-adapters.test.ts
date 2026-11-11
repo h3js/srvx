@@ -778,6 +778,43 @@ describe("adapters", () => {
     errorSpy.mockRestore();
   });
 
+  test.skipIf(noBridge)("a failing middleware stops reading the request body", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (++pulls > 8) return controller.close();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        controller.enqueue(new Uint8Array(4096));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    let socket!: NodeServerRequest["socket"];
+    const closed: string[] = [];
+    const middleware: NodeHTTP1Middleware = (req, res, next) => {
+      socket = req.socket;
+      req.on("close", () => closed.push("req"));
+      res.on("close", () => closed.push("res"));
+      req.once("data", () => next(new Error("denied")));
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await toFetchHandler(middleware)(
+      new Request("http://localhost/", { method: "POST", body, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+
+    const pullsAtResponse = pulls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(pulls).toBe(pullsAtResponse);
+    expect(cancelled).toBe(true);
+    expect(socket.destroyed).toBe(true);
+    expect(closed.sort()).toEqual(["req", "res"]);
+  });
+
   test("connect-style middleware that throws async propagates as an error", async () => {
     const middleware = (
       _req: NodeServerRequest,

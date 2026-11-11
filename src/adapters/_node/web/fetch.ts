@@ -68,6 +68,9 @@ export async function fetchNodeHandler(
     }
     return await nodeRes.toWebResponse();
   } catch (error: any) {
+    // The 500 below replaces this response, so stop reading the request body and close both.
+    nodeReq.destroy();
+    nodeRes.destroy();
     // Client aborts / premature socket closes are routine (the client is already
     // gone), so don't log them as errors. See https://github.com/h3js/srvx/issues/208
     const aborted =
