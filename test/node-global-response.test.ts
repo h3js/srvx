@@ -70,6 +70,25 @@ describe("FastResponse as global Response", () => {
     expect(Object.getPrototypeOf(F2)).toBe(Native);
     expect(Object.getPrototypeOf((new F2("x") as any)._response)).toBe(Native.prototype);
   });
+
+  test("Response.redirect() is fast and defers to the native one", async () => {
+    const FastResponse = await loadFastResponse();
+    globalThis.Response = FastResponse as unknown as typeof Response;
+    expect(Response.redirect.length).toBe(1);
+    expect(Response.redirect.name).toBe("redirect");
+
+    const fast = Response.redirect("https://example.com/", 301);
+    expect(fast).toHaveProperty("_toNodeResponse");
+    expect(fast.headers.get("location")).toBe("https://example.com/");
+    expect(Object.getPrototypeOf((fast as any)._response)).toBe(Native.prototype);
+
+    // The fallback must reach the native method, not recurse into the global.
+    expect(() => Response.redirect("/relative")).toThrow(TypeError);
+    expect(() => Response.redirect("https://example.com/", 200)).toThrow(RangeError);
+    expect(Object.getPrototypeOf(Response.redirect("https://example.com/", "302" as any))).toBe(
+      Native.prototype,
+    );
+  });
 });
 
 // `@hono/node-server` replaces `globalThis.Request`/`Response` with lightweight

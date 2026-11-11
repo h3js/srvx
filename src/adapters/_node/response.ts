@@ -42,6 +42,7 @@ export const NodeResponse: {
     data: unknown,
     init?: ResponseInit,
   ): globalThis.Response & { _toNodeResponse: () => PreparedNodeResponse };
+  redirect(url: string | URL, status?: number): globalThis.Response;
 } = /* @__PURE__ */ (() => {
   const NativeResponse = getNativeClass(kNativeResponse, globalThis.Response);
 
@@ -51,6 +52,8 @@ export const NodeResponse: {
     #headers?: Headers;
     #response?: globalThis.Response;
     #contentLength?: number;
+    /** Built by `redirect()`; materializes via native `Response.redirect()`. */
+    #redirect?: boolean;
 
     constructor(body?: ResponseBody | null, init?: ResponseInit) {
       this.#body = body;
@@ -85,6 +88,28 @@ export const NodeResponse: {
       return new NodeResponse(body, init ? withHeaders(init, headers) : { headers });
     }
 
+    // Absolute URL + numeric redirect status stays fast; any other call shape
+    // defers to native, so errors, base-URL resolution and coercions match.
+    static redirect(url: string | URL, status: number = 302) {
+      if (
+        (status === 302 || status === 301 || status === 303 || status === 307 || status === 308) &&
+        (typeof url === "string" || url instanceof URL)
+      ) {
+        let location: string | undefined;
+        try {
+          location = new URL(url).href;
+        } catch {
+          // Relative or invalid: let native resolve or throw.
+        }
+        if (location !== undefined) {
+          const res = new NodeResponse(null, { status, headers: { location } });
+          res.#redirect = true;
+          return res;
+        }
+      }
+      return Reflect.apply(NativeResponse.redirect, NativeResponse, arguments);
+    }
+
     get status(): number {
       return this.#response?.status || this.#init?.status || 200;
     }
@@ -100,6 +125,13 @@ export const NodeResponse: {
     get headers(): Headers {
       if (this.#response) {
         return this.#response.headers;
+      }
+      if (this.#redirect) {
+        // Native redirect headers are immutable, so reading them materializes
+        // the native response. That parses the URL a second time (and builds
+        // both objects), making a redirect whose headers are read ~25% slower
+        // to create than a plain native `Response.redirect()`.
+        return this._response.headers;
       }
       if (this.#headers) {
         return this.#headers;
@@ -123,6 +155,14 @@ export const NodeResponse: {
 
     get _response(): globalThis.Response {
       if (this.#response) {
+        return this.#response;
+      }
+
+      if (this.#redirect) {
+        const { location } = this.#init!.headers as { location: string };
+        this.#response = NativeResponse.redirect(location, this.status);
+        this.#init = undefined;
+        this.#redirect = undefined;
         return this.#response;
       }
 
@@ -264,6 +304,7 @@ export const NodeResponse: {
       this.#response = undefined;
       this.#contentLength = undefined;
       this.#body = undefined;
+      this.#redirect = undefined;
 
       return {
         status,

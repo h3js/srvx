@@ -1526,6 +1526,114 @@ describe("FastResponse keeps the status of a response used as init", () => {
   });
 });
 
+// `FastResponse.redirect()` takes the fast send path for the common call shapes
+// and defers to native otherwise, so it must be indistinguishable from native.
+describe("FastResponse.redirect()", () => {
+  const mutable = (res: Response) => {
+    try {
+      res.headers.set("x-extra", "1");
+      return true;
+    } catch (error: any) {
+      return error.constructor.name;
+    }
+  };
+  const observe = (fn: () => Response) => {
+    let res: Response;
+    try {
+      res = fn();
+    } catch (error: any) {
+      return { error: error.constructor.name, message: error.message };
+    }
+    const { status, statusText, ok, redirected, type, url, body, bodyUsed } = res;
+    const clone = res.clone();
+    return {
+      ...{ status, statusText, ok, redirected, type, url, body, bodyUsed },
+      headers: [...res.headers],
+      mutable: mutable(res),
+      clone: { status: clone.status, headers: [...clone.headers], mutable: mutable(clone) },
+    };
+  };
+
+  const abs = "https://example.com/";
+  const cases: [string, unknown[]][] = [
+    ["absolute URL", [abs]],
+    ["URL needing serialization", ["HTTP://Example.COM:80/a/../b c?q=ä#frag"]],
+    ["URL object", [new URL(abs)]],
+    ["String object", [new String(abs)]],
+    ["object with toString()", [{ toString: () => abs }]],
+    ["data: URL", ["data:,hello", 308]],
+    ["relative path", ["/relative"]],
+    ["invalid URL", ["http://exa mple.com"]],
+    ["undefined URL", [undefined]],
+    ["no arguments", []],
+    ["relative path with status", ["/relative", 301]],
+    ...[undefined, 301, 302, 303, 307, 308].map((s): [string, unknown[]] => [
+      `status ${s}`,
+      [abs, s],
+    ]),
+    ...[200, 300, 304, 309, -1, -0, null, Number.NaN, "302", 302.5, 2 ** 16 + 302].map(
+      (s): [string, unknown[]] => [`status ${JSON.stringify(s)}`, [abs, s]],
+    ),
+    ["init object (Bun)", [abs, { status: 301, headers: { "x-a": "1" } }]],
+  ];
+
+  test.each(cases)("matches native Response.redirect(): %s", (_, args) => {
+    const call = (C: { redirect: Function }) => () => C.redirect(...args);
+    expect(observe(call(FastResponse))).toEqual(observe(call(Response)));
+  });
+
+  test("absolute URLs with a redirect status stay on the fast path", () => {
+    for (const status of [undefined, 301, 302, 303, 307, 308]) {
+      const res = FastResponse.redirect("https://example.com/a b", status) as FastResponse;
+      const prepared = {
+        status: status ?? 302,
+        statusText: "",
+        headers: ["location", "https://example.com/a%20b"],
+      };
+      // Never materialized: no native body object exists, so `body` is undefined.
+      expect(res._toNodeResponse()).toEqual({ ...prepared, body: undefined });
+
+      // Reading headers materializes the native response; it still sends.
+      const read = FastResponse.redirect("https://example.com/a b", status) as FastResponse;
+      void read.headers;
+      expect(read._toNodeResponse()).toEqual({ ...prepared, body: null });
+    }
+  });
+
+  test("sends the same bytes as a native redirect", async () => {
+    const server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const { pathname, searchParams } = new URL(req.url);
+        const C = pathname === "/fast" ? FastResponse : Response;
+        return C.redirect("https://example.com/a b?q=ä", Number(searchParams.get("status")));
+      },
+    });
+    await server.ready();
+    try {
+      const u = new URL(server.url!);
+      const exchange = async (path: string, method: string) => {
+        const head = `${method} ${path} HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`;
+        const raw = await rawExchange(Number(u.port), u.hostname, head);
+        return raw.toString("latin1").replace(/^date: .*\r\n/im, "");
+      };
+      for (const status of [301, 302, 303, 307, 308]) {
+        for (const method of ["GET", "HEAD"]) {
+          const fast = await exchange(`/fast?status=${status}`, method);
+          // The reason phrase is runtime-specific (empty on Node, filled on Bun).
+          expect(fast).toMatch(
+            new RegExp(`^HTTP/1.1 ${status} .*\r\nlocation: \\S+%20b\\?q=%C3%A4\r\n`),
+          );
+          expect(fast).toBe(await exchange(`/native?status=${status}`, method));
+        }
+      }
+    } finally {
+      await server.close(true);
+    }
+  });
+});
+
 // Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
 // decorating a response must be able to mutate `res.headers` without paying for
 // materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
