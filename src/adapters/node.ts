@@ -75,7 +75,7 @@ class NodeServer implements Server {
       // origin server, not a proxy, so `file://`/`ftp://`/`zzz://` targets —
       // which llhttp does deliver — are 400, per RFC 9110 §7.4. The ones that
       // pass are normalized in `NodeRequestURL` (transport scheme wins, the
-      // authority is `HOST_RE`-validated, userinfo is dropped).
+      // authority is `isValidHost`-validated, userinfo is dropped).
       // A raw `\` in the path is rejected too (see `hasBackslashInPath`).
       const reqUrl = nodeReq.url;
       if (

@@ -68,12 +68,42 @@ function isLoopbackAddress(address: string | undefined): boolean {
 }
 
 /**
- * Validates an HTTP Host header value (domain, IPv4, or bracketed IPv6) with
- * optional port. Used to reject spoofed/malformed hosts (e.g. `"localhost:3000/foobar?"`
- * or a forwarded host containing whitespace) across every adapter.
+ * Shape check for an HTTP Host header value (domain, IPv4, or bracketed IPv6)
+ * with optional port. Rejects spoofed/malformed hosts (e.g.
+ * `"localhost:3000/foobar?"` or a forwarded host containing whitespace). The
+ * port must be 0–65535 (leading zeros allowed, up to 5 digits), matching the
+ * WHATWG URL parser. Some hostnames pass this shape check but not the parser,
+ * so it is only used through {@link isValidHost}.
  */
-export const HOST_RE: RegExp =
-  /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:\d{1,5})?$/;
+const HOST_RE: RegExp =
+  /^(\[(?:[A-Fa-f0-9:.]+)\]|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+|(?:\d{1,3}\.){3}\d{1,3})(:(?:\d{1,4}|[0-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5]))?$/;
+
+/** Last host `isValidHost` accepted (exact match; only `true` is cached). */
+let _lastValidHost: string | undefined;
+
+/**
+ * Whether `host` is a well-formed Host header value that also yields a
+ * parseable `http://${host}` URL in the current runtime, so `request.url` never
+ * makes `new URL()` (or the native `Request`) throw downstream. Callers map a
+ * rejected `Host` to `_invalid_` and ignore a rejected forwarded host.
+ *
+ * `HOST_RE` alone is not enough: `256.0.0.1`, `foo.123`, `a.09` or `[::::]`
+ * pass it, and runtimes disagree on others (Bun and Deno reject invalid
+ * punycode such as `xn--a.com`; Bun also rejects e.g. `42949672950x`). So the
+ * current runtime's `URL.canParse` has the final say. A server sees the same
+ * `Host` on nearly every request, so the last accepted value is cached; a
+ * cache hit skips both checks, and it can never accept anything invalid.
+ */
+export function isValidHost(host: string): boolean {
+  if (host === _lastValidHost) {
+    return true;
+  }
+  if (!HOST_RE.test(host) || !URL.canParse(`http://${host}`)) {
+    return false;
+  }
+  _lastValidHost = host;
+  return true;
+}
 
 /** Whether a host value carries an explicit `:port` (handles `[IPv6]:port`). */
 function forwardedHostHasPort(host: string): boolean {
@@ -227,10 +257,11 @@ function applyTrustedProxy(request: ServerRequest, trustProxy: TrustProxyOption)
       url.protocol = `${forwardedProto}:`;
     }
     // Only apply a well-formed forwarded host. Relying on the URL setter to
-    // reject invalid values silently keeps the original host but still runs the
-    // port-reset below, which would drop the real listener port. Validating up
-    // front (same `HOST_RE` as the Node adapter) skips bad values entirely.
-    if (forwardedHost && HOST_RE.test(forwardedHost)) {
+    // reject invalid values silently keeps the original host (or applies the
+    // hostname but not an out-of-range port) and still runs the port-reset
+    // below, mixing forwarded and real parts. Validating up front (same
+    // `isValidHost` as the Node adapter) skips bad values entirely.
+    if (forwardedHost && isValidHost(forwardedHost)) {
       url.host = forwardedHost;
       // The `host` setter only updates the port when the value carries one, so
       // an origin-form host (no port) would inherit the listener's port. The

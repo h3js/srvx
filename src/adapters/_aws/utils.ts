@@ -5,7 +5,7 @@ import {
   trustedHops,
   forwardedHopValue,
   forwardedList,
-  HOST_RE,
+  isValidHost,
 } from "../../_trust-proxy.ts";
 import type { ResponseBody } from "../../types.ts";
 import type {
@@ -156,18 +156,18 @@ function awsEventURL(event: AWSEvent, headers: Headers, hops: number): URL {
 
   // A malformed host must neither inject an authority/path into the URL built
   // below nor throw out of `awsRequest` (which runs before the error
-  // middleware, so a throw fails the whole invocation). Same `HOST_RE` gate and
+  // middleware, so a throw fails the whole invocation). Same `isValidHost` gate and
   // `_invalid_` sentinel as the Node adapter.
   //
   // A `Host` repeated in `multiValueHeaders` is merged into `a, b`, which no
   // host matches; `event.headers` keeps the last one, so that one is used.
   const host =
-    (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
+    (forwardedHost && isValidHost(forwardedHost) ? forwardedHost : undefined) ||
     forwardedList(headers.get("host")).pop() ||
     // ALB has no `domainName`; its events always carry `Host` (health checks
     // excepted, which then get the `_invalid_` sentinel).
     (event as AWSLambdaProxyEvent | AWSLambdaProxyEventV2).requestContext?.domainName;
-  const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
+  const hostname = host && isValidHost(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
   const forwardedProto = forwardedHopValue(headers.get("x-forwarded-proto"), hops);
