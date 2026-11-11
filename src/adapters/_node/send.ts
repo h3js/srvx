@@ -167,10 +167,17 @@ function _sendNodeResponse(
 // response to finish flushing so the returned promise keeps its contract.
 function handleAlreadyEndedResponse(
   nodeRes: NodeServerResponse,
-  webRes: Response | NodeResponse,
+  webRes: Response | NodeResponse | undefined,
   detached: boolean,
 ): Promise<void> | void {
-  disposeResponseBody(webRes);
+  const body = (webRes as NodeResponse | undefined)?._toNodeResponse
+    ? (webRes as NodeResponse)._toNodeResponse().body
+    : (webRes as Response | undefined)?.body;
+  if (body instanceof ReadableStream) {
+    body.cancel().catch(() => {});
+  } else if (body) {
+    destroyNodeBody(body as NodeReadable);
+  }
   if (detached || nodeRes.writableFinished || nodeRes.destroyed) {
     return;
   }
@@ -180,24 +187,13 @@ function handleAlreadyEndedResponse(
   });
 }
 
-function disposeResponseBody(webRes: Response | NodeResponse | undefined): void {
-  if (!webRes) {
-    return;
-  }
-  const body = (webRes as NodeResponse)._toNodeResponse
-    ? (webRes as NodeResponse)._toNodeResponse().body
-    : (webRes as Response).body;
-  if (body instanceof ReadableStream) {
-    body.cancel().catch(() => {});
-    return;
-  }
-  if (!body) {
-    return;
-  }
-  if (typeof (body as NodeReadable).destroy === "function") {
-    (body as NodeReadable).destroy();
+// Duck-typed pipe objects (e.g. React's PipeableStream) expose abort() instead
+// of destroy(). Non-stream bodies (string, Buffer) have neither and are ignored.
+function destroyNodeBody(body: NodeReadable): void {
+  if (typeof body.destroy === "function") {
+    body.destroy();
   } else {
-    (body as { abort?: () => void }).abort?.();
+    (body as unknown as { abort?: () => void }).abort?.();
   }
 }
 
@@ -271,12 +267,7 @@ function pipeBody(
   // event loop. Discard the source up front instead, mirroring streamBody.
   // Headers are still deferred here, so write them before ending.
   if ((nodeRes as NodeHttp.ServerResponse).req?.method === "HEAD") {
-    if (typeof stream.destroy === "function") {
-      stream.destroy();
-    } else {
-      // Duck-typed pipe objects (e.g. React's PipeableStream) expose abort().
-      (stream as unknown as { abort?: () => void }).abort?.();
-    }
+    destroyNodeBody(stream);
     writeHead(nodeRes, status, statusText, headers);
     return endNodeResponse(nodeRes);
   }
