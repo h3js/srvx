@@ -208,7 +208,7 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 //   A raw `\` is refused for the same reason (checked beside the regex: a
 //   single-char `includes` costs a fraction of another alternative here). The
 //   URL parser and `serve()` never let one through, but a hand-built
-//   origin-form `FastURL` in `req._url` keeps it verbatim.
+//   `req._url` can still carry it verbatim.
 // - `%00`: a NUL must never reach the filesystem layer.
 // - An encoded character the URL serializer leaves raw in a path
 //   (`!$&'()*+,:;=@[]|`): decoded, `/%40fs/x` would serve `/@fs/x` past an
