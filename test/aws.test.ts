@@ -603,13 +603,75 @@ describe("[AWS Lambda] Request Utils", () => {
       });
     });
 
-    describe("ALB events", () => {
+    describe("ALB (`requestContext.elb`)", () => {
       const requestContext = {
         elb: {
           targetGroupArn:
             "arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a",
         },
       };
+
+      const albEvent = (overrides: Partial<ALBEvent> = {}): ALBEvent => ({
+        requestContext,
+        httpMethod: "GET",
+        path: "/lambda",
+        headers: { host: "lb.elb.amazonaws.com" },
+        body: null,
+        isBase64Encoded: false,
+        ...overrides,
+      });
+
+      describe("query", () => {
+        const searchOf = (overrides: Partial<ALBEvent>) =>
+          new URL(awsRequest(albEvent(overrides) as any, createMockContext()).url).search;
+
+        // ALB passes keys and values still percent-encoded (h3js/srvx#314).
+        test("keeps single-value params as they arrived on the wire", () => {
+          const event = albEvent({
+            queryStringParameters: { q: "a%20b", "x%5B%5D": "1", plus: "a+b", amp: "%26" },
+          });
+          const url = new URL(awsRequest(event as any, createMockContext()).url);
+
+          expect(url.search).toBe("?q=a%20b&x%5B%5D=1&plus=a+b&amp=%26");
+          expect(url.searchParams.get("q")).toBe("a b");
+          expect(url.searchParams.get("x[]")).toBe("1");
+          expect(url.searchParams.get("plus")).toBe("a b");
+          expect(url.searchParams.get("amp")).toBe("&");
+        });
+
+        test("expands multi-value params with repeated keys", () => {
+          expect(
+            searchOf({
+              headers: undefined,
+              multiValueHeaders: { host: ["lb.elb.amazonaws.com"] },
+              multiValueQueryStringParameters: { tag: ["a%2Cb", "c"], q: ["x%20y"] },
+            }),
+          ).toBe("?tag=a%2Cb&tag=c&q=x%20y");
+        });
+
+        test("keeps a valueless param bare, and an empty-named one with `=`", () => {
+          expect(searchOf({ queryStringParameters: { foo: "", page: "1" } })).toBe("?foo&page=1");
+          expect(searchOf({ queryStringParameters: { a: "1", "": "" } })).toBe("?a=1&=");
+        });
+
+        test("emits no query for empty params", () => {
+          expect(searchOf({ queryStringParameters: {} })).toBe("");
+          expect(searchOf({ multiValueQueryStringParameters: {} })).toBe("");
+        });
+
+        test("cannot end the query early with a raw `#`", () => {
+          const url = new URL(
+            awsRequest(
+              albEvent({ queryStringParameters: { a: "1#2", b: "3" } }) as any,
+              createMockContext(),
+            ).url,
+          );
+
+          expect(url.hash).toBe("");
+          expect(url.searchParams.get("a")).toBe("1#2");
+          expect(url.searchParams.get("b")).toBe("3");
+        });
+      });
 
       test("multi-value mode (no `headers` field) does not throw", () => {
         const event: ALBEvent = {

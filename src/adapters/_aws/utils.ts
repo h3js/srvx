@@ -125,11 +125,31 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
   if (typeof (event as AWSLambdaProxyEventV2).rawQueryString === "string") {
     return (event as AWSLambdaProxyEventV2).rawQueryString;
   }
+  if (isALBEvent(event)) {
+    // "If the query parameters are URL-encoded, the load balancer does not
+    // decode them" — keys and values arrive percent-encoded as on the wire, so
+    // they are joined as-is (encoding them again turned `?q=a%20b` into
+    // `?q=a%2520b`, h3js/srvx#314). Multi-value mode sends only
+    // `multiValueQueryStringParameters`, single-value mode only
+    // `queryStringParameters` (last value wins for a repeated key).
+    // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#receive-event-from-load-balancer
+    return stringifyQuery(
+      { ...(event.multiValueQueryStringParameters || event.queryStringParameters) },
+      true,
+    );
+  }
   const queryObj = {
     ...event.queryStringParameters,
     ...(event as AWSLambdaProxyEvent).multiValueQueryStringParameters,
   };
   return stringifyQuery(queryObj);
+}
+
+// ALB events carry `requestContext.elb` instead of API Gateway's `identity`/`http`.
+function isALBEvent(
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+): event is AWSLambdaProxyEvent {
+  return !!(event as AWSLambdaProxyEvent).requestContext?.elb;
 }
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
@@ -445,20 +465,34 @@ function toBuffer(data: ReadableStream): Promise<Buffer> {
 // is invisible to anything re-parsing the query but not to route rules, cache
 // keys, canonical URLs or a signature computed over `request.url`, so a bare key
 // is emitted for empty values instead.
-function stringifyQuery(obj: Record<string, unknown>) {
+//
+// `encoded` is for params that are still percent-encoded as on the wire (ALB),
+// which are joined verbatim instead of being encoded a second time.
+function stringifyQuery(obj: Record<string, unknown>, encoded?: boolean) {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
     for (const item of Array.isArray(value) ? value : [value]) {
-      // Encode through `URLSearchParams` to keep escaping identical, then drop
-      // the trailing `=` it always appends for an empty value.
-      const pair = new URLSearchParams([[key, item == null ? "" : String(item)]]).toString();
-      // `pair` is always `key=`; drop the `=` for a valueless param — unless the
-      // key is empty too (`"="`), where dropping it would erase the param.
-      const bare = (item == null || item === "") && key !== "";
+      const str = item == null ? "" : String(item);
+      // Encode through `URLSearchParams` to keep escaping identical.
+      const pair = encoded
+        ? `${escapeRawQuery(key)}=${escapeRawQuery(str)}`
+        : new URLSearchParams([[key, str]]).toString();
+      // An empty value yields `key=`; drop the `=` for a valueless param —
+      // unless the key is empty too (`"="`), where dropping it would erase the
+      // param.
+      const bare = str === "" && key !== "";
       parts.push(bare ? pair.slice(0, -1) : pair);
     }
   }
   return parts.join("&");
+}
+
+// A raw query component is appended after `?` and parsed by `new URL`, where
+// only `#` can end the query early (it starts the fragment, silently dropping
+// the rest of the query). A request-target never carries a literal `#`, so this
+// is purely defensive and costs nothing for real traffic.
+function escapeRawQuery(value: string): string {
+  return value.includes("#") ? value.replace(/#/g, "%23") : value;
 }
 
 // Reverse: Web Request => AWS Event (v1/v2 compatible)
