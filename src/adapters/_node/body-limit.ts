@@ -46,12 +46,20 @@ export function onBodyLimitExceeded(req: NodeServerRequest, res?: NodeServerResp
 
   const stream = (req as Http2ServerRequest).stream as ServerHttp2Stream | undefined;
   if (stream) {
-    // `Http2ServerResponse` only emits `finish` once the stream closes, which a
-    // half-read upload never lets happen — wait on the stream's own writable side.
-    if (stream.writableFinished) {
-      resetStream(stream);
+    // The response ends with its trailers, not its last write: the compat
+    // response always asks for them (`waitForTrailers`), and a reset submitted
+    // before them would cut it short (even the headers of an empty one). Its
+    // `wantTrailers` handler runs first and submits them on a `setImmediate`;
+    // the reset is queued behind that.
+    if (stream.sentTrailers !== undefined) {
+      setImmediate(resetStream, stream);
     } else {
-      stream.once("finish", () => resetStream(stream));
+      stream.once("wantTrailers", () => {
+        if (stream.sentTrailers === undefined) {
+          stream.sendTrailers({}); // What Node does when nobody else answers.
+        }
+        setImmediate(resetStream, stream);
+      });
     }
     return;
   }
@@ -172,13 +180,17 @@ export function settleRequestBody(
   if ((req as any)[kLingering]) {
     return decideClose(req, res, now);
   }
-  // No limit; fully arrived; being (or already) read by someone; or HTTP/2.
+  // No limit; fully arrived; HTTP/2; or being (or already) read by someone. A
+  // paused stream alone (`readableFlowing === false`) is not a reader: a host
+  // server may pause it before handing it over.
   if (
     maxRequestBodySize === undefined ||
     req.complete ||
-    req.readableFlowing !== null ||
     req.destroyed ||
-    "stream" in req
+    "stream" in req ||
+    req.readableDidRead ||
+    req.listenerCount("data") > 0 ||
+    req.listenerCount("readable") > 0
   ) {
     return;
   }
@@ -208,6 +220,7 @@ export function settleRequestBody(
     }
   };
   req.on("data", onData).once("end", cleanup).once("close", cleanup);
+  req.resume(); // In case the host paused it.
 }
 
 function decideClose(

@@ -63,9 +63,10 @@ async function startServer(
     /**
      * Mount on a plain `node:http` server with `toNodeHandler()` instead of
      * `serve()`; the host answers a handler failure with a 500. `"no-res-req"`
-     * also hides `res.req`, as some frameworks' response objects lack it.
+     * also hides `res.req`, as some frameworks' response objects lack it;
+     * `"paused"` pauses the request before handing it over.
      */
-    toNodeHandler?: true | "no-res-req";
+    toNodeHandler?: true | "no-res-req" | "paused";
   } = {},
 ): Promise<TestServer> {
   const read = opts.read ?? "text";
@@ -117,6 +118,7 @@ async function startServer(
         res.end();
       };
       try {
+        if (opts.toNodeHandler === "paused") req.pause();
         Promise.resolve(handler(req, response)).catch(fail);
       } catch {
         fail();
@@ -511,6 +513,7 @@ describe("node: toNodeHandler settles an unread body on every path", () => {
     ["a handler that throws", { read: "throw" }],
     ["a handler that rejects", { read: "reject" }],
     ["a response object without `req`", { read: "none", toNodeHandler: "no-res-req" }],
+    ["a request the host paused", { read: "none", toNodeHandler: "paused" }],
   ] as const;
   for (const [name, opts] of cases) {
     test.concurrent(`${name}: Content-Length over the limit gets Connection: close and a capped drain`, async (ctx) => {
@@ -536,23 +539,25 @@ describe("node: toNodeHandler settles an unread body on every path", () => {
     });
   }
 
-  test.concurrent("a response object without `req`: a chunked unread body is drained only up to the limit", async (ctx) => {
-    const { port, firstClose } = await startServer(ctx, "maxRequestBodySize", {
-      toNodeHandler: "no-res-req",
-      read: "none",
+  for (const variant of ["no-res-req", "paused"] as const) {
+    test.concurrent(`${variant}: a chunked unread body is drained only up to the limit`, async (ctx) => {
+      const { port, firstClose } = await startServer(ctx, "maxRequestBodySize", {
+        toNodeHandler: variant,
+        read: "none",
+      });
+      const client = connect(port);
+      await client.write(requestHead("chunked"));
+      void (async () => {
+        const chunk = frame("chunked", Buffer.alloc(256 * 1024, 97));
+        for (let i = 0; i < 256 && !client.socket.destroyed; i++) {
+          await client.write(chunk).catch(() => {});
+        }
+      })();
+      const { bytesRead } = await within(firstClose, GUARD_MS, "server closing the connection");
+      client.socket.destroy();
+      expect(bytesRead).toBeLessThan(LIMIT + LINGER_BYTES + 512 * 1024);
     });
-    const client = connect(port);
-    await client.write(requestHead("chunked"));
-    void (async () => {
-      const chunk = frame("chunked", Buffer.alloc(256 * 1024, 97));
-      for (let i = 0; i < 256 && !client.socket.destroyed; i++) {
-        await client.write(chunk).catch(() => {});
-      }
-    })();
-    const { bytesRead } = await within(firstClose, GUARD_MS, "server closing the connection");
-    client.socket.destroy();
-    expect(bytesRead).toBeLessThan(LIMIT + LINGER_BYTES + 512 * 1024);
-  });
+  }
 });
 
 describe("node: maxRequestBodySize with a body the handler never reads", () => {
@@ -689,6 +694,91 @@ describe.skipIf(!!globalThis.Deno || !!globalThis.Bun)(
           } finally {
             session.destroy();
           }
+        });
+      }
+    }
+
+    // Frame by frame, on a raw h2c connection: the reset must not overtake the
+    // end of the response. (The compat response ends with an empty trailers
+    // frame, which Node folds into a final DATA frame with END_STREAM.)
+    for (const entry of entries) {
+      for (const empty of [false, true]) {
+        test.concurrent(`${entry}, ${empty ? "empty" : "non-empty"} 413: END_STREAM is sent before RST_STREAM`, async ({
+          onTestFinished,
+        }) => {
+          const nodeServer = http2.createServer(
+            toNodeHandler(
+              async (request) => {
+                const req = entry === "limitRequestBody" ? limitRequestBody(request, 10) : request;
+                try {
+                  await req.text();
+                  return new Response("ok");
+                } catch {
+                  return new Response(empty ? null : "too large", { status: 413 });
+                }
+              },
+              { maxRequestBodySize: entry === "maxRequestBodySize" ? 10 : undefined },
+            ) as any,
+          );
+          const sessions = new Set<http2.ServerHttp2Session>();
+          nodeServer.on("session", (session) => sessions.add(session));
+          await new Promise<void>((resolve) => nodeServer.listen(0, "127.0.0.1", resolve));
+          const socket = net.connect((nodeServer.address() as net.AddressInfo).port, "127.0.0.1");
+          onTestFinished(async () => {
+            socket.destroy();
+            for (const session of sessions) session.destroy();
+            await new Promise((resolve) => nodeServer.close(resolve));
+          });
+          const h2Frame = (type: number, flags: number, id: number, payload = Buffer.alloc(0)) => {
+            const head = Buffer.alloc(9);
+            head.writeUIntBE(payload.length, 0, 3);
+            head[3] = type;
+            head[4] = flags;
+            head.writeUInt32BE(id, 5);
+            return Buffer.concat([head, payload]);
+          };
+          // Stream 1's frames, in order: HEADERS / DATA (`+ES` = END_STREAM), RST=<code>.
+          const frames: string[] = [];
+          const reset = new Promise<void>((resolve) => {
+            let pending = Buffer.alloc(0);
+            socket.on("data", (chunk: Buffer) => {
+              pending = Buffer.concat([pending, chunk]);
+              while (pending.length >= 9) {
+                const length = pending.readUIntBE(0, 3);
+                if (pending.length < length + 9) break;
+                const type = pending[3];
+                const flags = pending[4];
+                const id = pending.readUInt32BE(5) & 0x7f_ff_ff_ff;
+                const payload = pending.subarray(9, 9 + length);
+                pending = pending.subarray(length + 9);
+                if (id !== 1) continue;
+                if (type === 3) {
+                  frames.push(`RST=${payload.readUInt32BE(0)}`);
+                  resolve();
+                } else if (type === 0 || type === 1) {
+                  frames.push(`${type === 0 ? "DATA" : "HEADERS"}${flags & 1 ? "+ES" : ""}`);
+                }
+              }
+            });
+          });
+          // POST / (HPACK static table), http, localhost; 64 body bytes, upload left open.
+          const headers = Buffer.concat([
+            Buffer.from([0x83, 0x84, 0x86, 0x01, 0x09]),
+            Buffer.from("localhost"),
+          ]);
+          socket.write(
+            Buffer.concat([
+              Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"),
+              h2Frame(4, 0, 0),
+              h2Frame(1, 4, 1, headers),
+              h2Frame(0, 0, 1, Buffer.alloc(64, 97)),
+            ]),
+          );
+          await within(reset, GUARD_MS, "RST_STREAM");
+          expect(frames[0]).toBe("HEADERS");
+          expect(frames.at(-1)).toBe("RST=0");
+          // The response ended (END_STREAM) before the reset.
+          expect(frames.slice(0, -1).some((f) => f.endsWith("+ES"))).toBe(true);
         });
       }
     }
