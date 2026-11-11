@@ -3,6 +3,7 @@ import { describe, test, expect } from "vitest";
 import { FastURL } from "../src/_url.ts";
 import { serve } from "../src/adapters/node.ts";
 import { NodeRequestURL } from "../src/adapters/_node/url.ts";
+import { isValidHost } from "../src/_trust-proxy.ts";
 
 const urlTests = await import("./wpt/url_tests.json", {
   with: { type: "json" },
@@ -330,6 +331,66 @@ describe("FastURL", () => {
         }
       });
     }
+  });
+
+  describe("Host header validation", () => {
+    // `request.url` must always be parseable: a host the WHATWG parser rejects
+    // (port > 65535, invalid IPv4/IPv6, numeric last label) becomes `_invalid_`
+    // instead of making `new URL()` / the native Request throw downstream (500).
+    const cases = [
+      // [Host, expected URL host]
+      ["localhost:0", "localhost:0"],
+      ["localhost:65535", "localhost:65535"],
+      ["localhost:080", "localhost"],
+      ["localhost:00080", "localhost"],
+      ["localhost:08080", "localhost:8080"],
+      ["127.0.0.1:3000", "127.0.0.1:3000"],
+      ["255.255.255.255", "255.255.255.255"],
+      ["01.02.03.04", "1.2.3.4"],
+      ["1.2.3", "1.2.0.3"],
+      ["0x7f.1", "127.0.0.1"],
+      ["foo.0xg", "foo.0xg"],
+      ["web1.example", "web1.example"],
+      ["[::1]:3000", "[::1]:3000"],
+      // out-of-range port
+      ["localhost:65536", "_invalid_"],
+      ["localhost:65540", "_invalid_"],
+      ["localhost:65600", "_invalid_"],
+      ["localhost:66000", "_invalid_"],
+      ["localhost:70000", "_invalid_"],
+      ["localhost:99999", "_invalid_"],
+      ["127.0.0.1:99999", "_invalid_"],
+      ["[::1]:99999", "_invalid_"],
+      // passes `HOST_RE`, rejected by the WHATWG parser
+      ["256.0.0.1", "_invalid_"],
+      ["999.999.999.999", "_invalid_"],
+      ["foo.123", "_invalid_"],
+      ["a.09", "_invalid_"],
+      ["foo.0x", "_invalid_"],
+      ["foo.0x1:3000", "_invalid_"],
+      ["99999999999", "_invalid_"],
+      ["[::::]", "_invalid_"],
+      ["[1.2.3]", "_invalid_"],
+    ] as const;
+
+    for (const [host, expected] of cases) {
+      test(`Host: ${host} => ${expected}`, () => {
+        expect(isValidHost(host), "isValidHost").toBe(expected !== "_invalid_");
+        const url = new NodeRequestURL({ req: { url: "/x", headers: { host } } as any });
+        expect(new URL(url.href).host).toBe(expected);
+        void url.hostname; // deopt
+        expect(url.host).toBe(expected);
+      });
+    }
+
+    // Punycode validity differs per runtime (Bun/Deno reject `xn--a`, Node
+    // does not), so `isValidHost` defers to the current runtime's parser.
+    test.each(["xn--a.com", "XN--zz", "foo.xn--a:8080", "a--b.com", "xn--bcher-kva.example"])(
+      "isValidHost(%j) agrees with URL.canParse",
+      (host) => {
+        expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+      },
+    );
   });
 
   describe("absolute URI in request line", () => {

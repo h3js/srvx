@@ -962,17 +962,25 @@ describe("[AWS Lambda] Request Utils", () => {
       expect(new URL(request.url).host).toBe("api.example.com");
     });
 
-    test.each(["bad host", "a.com/foo?", "api.example.com:3000/zzz", "evil.com:99999999"])(
-      "malformed Host %j becomes `_invalid_` without throwing",
-      (host) => {
-        const request = awsRequest(
-          v2EventWith({ rawPath: "/x", headers: { host } }),
-          createMockContext(),
-        );
+    test.each([
+      "bad host",
+      "a.com/foo?",
+      "api.example.com:3000/zzz",
+      "evil.com:99999999",
+      "evil.com:99999",
+      "evil.com:65536",
+      "[::1]:99999",
+      "256.0.0.1",
+      "foo.123",
+      "[::::]",
+    ])("malformed Host %j becomes `_invalid_` without throwing", (host) => {
+      const request = awsRequest(
+        v2EventWith({ rawPath: "/x", headers: { host } }),
+        createMockContext(),
+      );
 
-        expect(new URL(request.url).host).toBe("_invalid_");
-      },
-    );
+      expect(new URL(request.url).host).toBe("_invalid_");
+    });
 
     test("a malformed Host does not fail the invocation", async () => {
       const fetchHandler = vi.fn().mockResolvedValue(new Response("ok"));

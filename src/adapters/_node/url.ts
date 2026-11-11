@@ -1,5 +1,5 @@
 import type { NodeServerRequest } from "../../types.ts";
-import { HOST_RE, forwardedHopValue } from "../../_trust-proxy.ts";
+import { HOST_RE, forwardedHopValue, isValidHost } from "../../_trust-proxy.ts";
 import { FastURL } from "../../_url.ts";
 
 export { HOST_RE };
@@ -20,10 +20,10 @@ export class NodeRequestURL extends FastURL {
     const forwardedHost = forwardedHopValue(req.headers["x-forwarded-host"], hops);
 
     let host =
-      (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
+      (forwardedHost && isValidHost(forwardedHost) ? forwardedHost : undefined) ||
       req.headers.host ||
       (req.headers[":authority"] as string);
-    if (host && !HOST_RE.test(host)) {
+    if (host && !isValidHost(host)) {
       host = "_invalid_";
     } else if (!host) {
       if (req.socket) {
@@ -63,7 +63,7 @@ export class NodeRequestURL extends FastURL {
       // srvx is not a proxy, so it must not become a way around the guarantees
       // above. The transport-derived `protocol` stays authoritative (a client
       // must never be able to claim `https:` on a plaintext socket, or `http:`
-      // on TLS), the request-line authority is `HOST_RE`-validated exactly like
+      // on TLS), the request-line authority is `isValidHost`-validated exactly like
       // a `Host` header, and userinfo is dropped (`new Request()` throws on a
       // URL that includes credentials — see `_request` in ./request.ts, which
       // would otherwise turn any such target into an unauthenticated 500).
@@ -82,7 +82,7 @@ export class NodeRequestURL extends FastURL {
         const targetPath = target.pathname;
         super({
           protocol,
-          host: targetHost ? (HOST_RE.test(targetHost) ? targetHost : "_invalid_") : host,
+          host: targetHost ? (isValidHost(targetHost) ? targetHost : "_invalid_") : host,
           pathname: targetPath ? (targetPath[0] === "/" ? targetPath : `/${targetPath}`) : "/",
           search: target.search,
         });
