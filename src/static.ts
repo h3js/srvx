@@ -201,8 +201,8 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 // - An encoded unreserved character (RFC 3986 §2.3: ALPHA, DIGIT, `-._~`),
 //   which a URI should not encode, and whose encoded form is equivalent to the
 //   plain one. Encoded `.` included, so a dotfile has one URL for `dotfiles`.
-// - `%2F`: no file name holds a `/`, so it names no file. Kept encoded, it
-//   would reach a name literally containing `%2F`, whose own URL is `%252F`.
+// - `%2F`: no file name holds a `/`, so it names no file. Decoded, it would
+//   become a separator; a name literally containing `%2F` is at `%252F`.
 // - `%5C`: `\` is a separator on Windows, so the same URL would name a
 //   different file per platform. Refused everywhere to keep the mapping fixed.
 //   A raw `\` is refused for the same reason (checked beside the regex: a
@@ -213,7 +213,8 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 //
 // Not rejected by this check: encoded reserved characters (`%23`, `%26`,
 // `%3F`, ...), `%25`, `%20`, and non-ASCII UTF-8 (whose bytes are all >= `%80`),
-// so names such as `café.txt` or `50%.txt` stay reachable. Tested bare: an
+// so names such as `release#1.txt`, `café.txt` or `50%.txt` stay reachable.
+// Tested bare: an
 // `includes("%") || includes("//")` prefilter measured slower on every path, as
 // V8's two-char substring search costs more than this regex's whole scan.
 const NON_CANONICAL_PATH_RE = /\/\/|%(?:00|2[d-f]|3\d|4[1-9a-f]|5[\dacf]|6[1-9a-f]|7[\dae])/i;
@@ -362,11 +363,16 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       path = path.slice(0, -1);
     }
     if (path.includes("%")) {
-      // The query and fragment are already separated from this pathname.
-      // Preserve encoded slashes while decoding filename characters once.
-      // Containment and dotfile checks below also apply to decoded names.
+      // Decode the wire encoding exactly once, or names a client must encode
+      // (`café.txt`, `release#1.txt`) are unreachable. Every character is
+      // decoded (`decodeURIComponent`, not `decodeURI`): the query and fragment
+      // are already split off, so a decoded `?`/`#` is just a name character,
+      // and `NON_CANONICAL_PATH_RE` already refused `%2F`/`%5C`/`%00`, so no
+      // separator or NUL can surface here. Containment does not rely on the
+      // pathname arriving normalized: `join()` + `startsWith(dir)` below
+      // re-check whatever reaches them.
       try {
-        path = decodeURIComponent(path.replace(/%(2f)/gi, "%25$1"));
+        path = decodeURIComponent(path);
       } catch {
         // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static.
         return new FastResponse("Bad Request", { status: 400 });

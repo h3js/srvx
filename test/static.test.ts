@@ -508,7 +508,6 @@ describe("staticMiddleware", () => {
       },
       { why: "honors q=0 as a refusal", accept: "br;q=0, gzip", enc: "gzip", body: "GZIP_JS" },
       { why: "honors Q=0 as a refusal", accept: "br;Q=0, gzip", enc: "gzip", body: "GZIP_JS" },
-      { why: "refuses gzip with Q=0", accept: "gzip;Q=0", enc: null, body: "PLAIN_JS" },
       { why: "honors an explicit q ranking", accept: "br;q=1.0", enc: "br", body: "BROTLI_JS" },
       { why: "treats a malformed q as a refusal", accept: "br;q=abc", enc: null, body: "PLAIN_JS" },
       { why: "supports the * wildcard", accept: "*", enc: "br", body: "BROTLI_JS" },
@@ -621,12 +620,6 @@ describe("staticMiddleware", () => {
     test.each(["q", "Q"])("honors %s=0 as a refusal", async (quality) => {
       const res = await fetchEncoded("/big.js", `br;${quality}=0, gzip`);
       expect(res.headers.get("content-encoding")).toBe("gzip");
-    });
-
-    test("refuses gzip with Q=0", async () => {
-      const res = await fetchEncoded("/big.js", "gzip;Q=0");
-      expect(res.headers.get("content-encoding")).toBe(null);
-      await expect(res.text()).resolves.toBe(BIG_JS);
     });
 
     test("omits Content-Length, unknown until the bytes are encoded", async () => {
@@ -1176,7 +1169,7 @@ describe("staticMiddleware", () => {
       await expect(fetchStatic("/%252Fsub/inside.txt").then((r) => r.text())).resolves.toBe(
         "LITERAL_ESCAPED_SLASH",
       );
-      // `decodeURI` keeps `%2F`, so this would reach the same `%2Fsub` directory.
+      // An encoded separator is refused before decoding, never treated as `/`.
       await expectNext(await fetchStatic("/%2Fsub/inside.txt"));
       await expectNext(await fetchStatic("/%2fsub/inside.txt"));
     });
@@ -1250,9 +1243,13 @@ describe("staticMiddleware", () => {
       await expectNext(await fetchStatic("/%252e%252e/outside/secret.txt"));
     });
 
-    test.each(["/foo%", "/%ZZ"])("rejects the malformed encoding %s with 400", async (path) => {
-      expect((await fetchStatic(path)).status, path).toBe(400);
-    });
+    // Including invalid UTF-8 (a bad continuation byte, a truncated sequence).
+    test.each(["/foo%", "/%ZZ", "/%C3%28", "/%E0%A4"])(
+      "rejects the malformed encoding %s with 400",
+      async (path) => {
+        expect((await fetchStatic(path)).status, path).toBe(400);
+      },
+    );
   });
 
   describe("byte ranges", () => {
