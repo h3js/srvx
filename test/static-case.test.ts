@@ -15,7 +15,9 @@ import type { ServerRequest } from "../src/types.ts";
 //
 // That models APFS and NTFS, which keep each name as created. With `hfs` set,
 // `realpath` also returns every name decomposed (NFD), as HFS+ stores them.
-const fixture = { root: "", hfs: false, stats: [] as string[] };
+// With `foldFrom` set, only lookups inside that directory fold, as on Windows,
+// where case sensitivity is a per-directory setting.
+const fixture = { root: "", foldFrom: "", hfs: false, lstats: [] as string[] };
 
 const foldName = (s: string) => s.normalize("NFC").toLowerCase();
 
@@ -31,7 +33,11 @@ const resolveFolded = (path: string): string => {
       lstatSync(exact);
       found = exact;
     } catch {
+      const foldFrom = fixture.foldFrom || fixture.root;
       try {
+        if (current !== foldFrom && !current.startsWith(foldFrom + sep)) {
+          throw new Error("case-sensitive directory");
+        }
         const match = readdirSync(current).find((e) => foldName(e) === foldName(segment));
         found = match === undefined ? undefined : join(current, match);
       } catch {
@@ -49,10 +55,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: ((path: string, ...rest: [never]) =>
       actual.open(resolveFolded(path), ...rest)) as typeof actual.open,
-    stat: ((path: string, ...rest: [never]) => {
-      fixture.stats.push(path);
-      return actual.stat(resolveFolded(path), ...rest);
-    }) as typeof actual.stat,
+    stat: ((path: string, ...rest: [never]) =>
+      actual.stat(resolveFolded(path), ...rest)) as typeof actual.stat,
+    lstat: ((path: string, ...rest: [never]) => {
+      fixture.lstats.push(path);
+      return actual.lstat(resolveFolded(path), ...rest);
+    }) as typeof actual.lstat,
     realpath: (async (path: string, ...rest: [never]) => {
       const real = await actual.realpath(resolveFolded(path), ...rest);
       return fixture.hfs ? real.normalize("NFD") : real;
@@ -61,7 +69,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const { staticMiddleware } = await import("../src/static.ts");
-const { isSpellingAlias, swapPathCase } = await import("../src/_static-alias.ts");
+const { departingPrefix, isSpellingAlias } = await import("../src/_static-alias.ts");
 type Options = Parameters<typeof staticMiddleware>[0];
 
 let tmp: string;
@@ -97,6 +105,8 @@ beforeAll(async () => {
   // In-root links: one to a file, one to a directory.
   await symlink(join(dir, "admin", "x.txt"), join(dir, "link.txt"));
   await symlink(join(dir, "admin"), join(dir, "admin-link"));
+  await writeFile(join(dir, "README.txt"), "README");
+  await symlink(join(dir, "README.txt"), join(dir, "Readme.txt"));
   await symlink(join(dir, ".env"), join(dir, "env-alias.txt"));
   await mkdir(join(tmp, "outside"), { recursive: true });
   await writeFile(join(tmp, "outside", "secret.txt"), "TOPSECRET");
@@ -134,20 +144,34 @@ describe("static on a case-insensitive filesystem", () => {
     await handle.close();
   });
 
-  test("probes the root's case folding once per middleware", async () => {
-    const middleware = staticMiddleware({ dir });
-    const probe = join(tmp, "PUBLIC");
-    fixture.stats.length = 0;
-    const get = () =>
-      middleware(
-        new Request("http://localhost/admin/x.txt") as unknown as ServerRequest,
-        () => new Response("next()", { status: 404 }),
-      ) as Promise<Response>;
-    for (const res of await Promise.all([get(), get(), get()])) {
-      await expectServed(res, "ADMIN_X");
+  test("a hit at the on-disk case adds no syscall", async () => {
+    fixture.lstats.length = 0;
+    await expectServed(await fetchStatic("/admin/x.txt"), "ADMIN_X");
+    await expectServed(await fetchStatic("/link.txt"), "ADMIN_X");
+    expect(fixture.lstats).toEqual([]);
+  });
+
+  test("falls through when only the served root folds case, not its parent", async () => {
+    fixture.foldFrom = dir;
+    try {
+      await expectServed(await fetchStatic("/admin/x.txt"), "ADMIN_X");
+      await expectNext(await fetchStatic("/ADMIN/x.txt"));
+    } finally {
+      fixture.foldFrom = "";
     }
-    await expectServed(await get(), "ADMIN_X");
-    expect(fixture.stats.filter((p) => p === probe)).toHaveLength(1);
+  });
+
+  test("tells a case-only link from an alias per directory", async () => {
+    // The root is case-sensitive and holds `Readme.txt` -> `README.txt`; only
+    // `admin/` folds case.
+    fixture.foldFrom = join(dir, "admin");
+    try {
+      await expectServed(await fetchStatic("/Readme.txt"), "README");
+      await expectServed(await fetchStatic("/README.txt"), "README");
+      await expectNext(await fetchStatic("/admin/X.TXT"));
+    } finally {
+      fixture.foldFrom = "";
+    }
   });
 
   test("serves a file at its on-disk case", async () => {
@@ -284,17 +308,17 @@ describe("isSpellingAlias", () => {
   });
 });
 
-describe("swapPathCase", () => {
+describe("departingPrefix", () => {
   test.each([
-    ["/srv/www/public", "/", "/srv/www/PUBLIC"],
-    ["/srv/www/Public-2", "/", "/srv/www/pUBLIC-2"],
-    ["/srv/www/2024", "/", "/srv/WWW/2024"],
-    ["/srv/caf\u00e9", "/", "/srv/CAF\u00e9"], // ASCII letters only
-    ["/1/2", "/", undefined],
-    ["/", "/", undefined],
-    ["C:\\Users\\me\\site", "\\", "C:\\Users\\me\\SITE"],
-    ["C:\\", "\\", "c:\\"],
-  ] as const)("%j (sep %j) -> %j", (path, sep, swapped) => {
-    expect(swapPathCase(path, sep)).toBe(swapped);
+    // [real, lex, sep, prefix]
+    ["admin/x.txt", "ADMIN/x.txt", "/", "ADMIN"],
+    ["admin/x.txt", "admin/X.txt", "/", "admin/X.txt"],
+    ["sub/inside.txt", "SUB/inside.txt", "/", "SUB"],
+    ["sub/x.txt", "v~1.txt", "/", "v~1.txt"],
+    ["admin/x.txt", "admin/x.txt", "/", undefined],
+    ["administrator\\x.txt", "ADMINI~1\\x.txt", "\\", "ADMINI~1"],
+    ["docs\\readme.md", "docs\\README.md", "\\", "docs\\README.md"],
+  ] as const)("%j vs %j (sep %j) -> %j", (real, lex, sep, prefix) => {
+    expect(departingPrefix(real, lex, sep)).toBe(prefix);
   });
 });

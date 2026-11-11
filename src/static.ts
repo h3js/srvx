@@ -5,12 +5,12 @@ import type { Transform } from "node:stream";
 
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
-import { isSpellingAlias, swapPathCase } from "./_static-alias.ts";
+import { departingPrefix, isSpellingAlias } from "./_static-alias.ts";
 
 export interface StaticMiddlewareOptions {
   /**
@@ -311,40 +311,31 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // Symlink-resolved `dir` for containment checks — `dir` itself may
   // legitimately be a symlink. Resolved lazily and cached only on success, so
   // a `dir` created after the first request is still picked up.
-  //
-  // Resolved alongside it, once: whether the filesystem holding it folds case,
-  // which is the only place a differently cased URL can open a file. The root
-  // is looked up again with the ASCII letters of its last lettered segment
-  // swapped (`public` -> `PUBLIC`); reaching the same inode means it folds.
-  // On a case-sensitive filesystem a case-only symlink (`readme.md` ->
-  // `README.md`) is a deliberate second name, so `isSpellingAlias` is skipped
-  // there. A root path with no ASCII letter cannot be probed and keeps the
-  // check, which there only costs such case-only links.
-  type Root = { path: string; foldsCase: boolean };
-  let rootPromise: Promise<Root | null> | undefined;
-  const resolveRoot = async (): Promise<Root | null> => {
-    const resolved = await realpath(dir).catch(() => null);
-    if (resolved === null) {
-      return null;
+  let realDir: string | undefined;
+  const getRealDir = async (): Promise<string> => {
+    if (realDir === undefined) {
+      const resolved = await realpath(dir).catch(() => null);
+      if (resolved === null) {
+        return dir;
+      }
+      realDir = asPrefix(resolved);
     }
-    const swapped = swapPathCase(resolved, sep);
-    let foldsCase = true;
-    if (swapped !== undefined) {
-      const [a, b] = await Promise.all([
-        stat(resolved).catch(() => null),
-        stat(swapped).catch(() => null),
-      ]);
-      foldsCase = a !== null && b !== null && a.ino === b.ino && a.dev === b.dev;
-    }
-    return { path: asPrefix(resolved), foldsCase };
+    return realDir;
   };
-  const getRoot = async (): Promise<Root> => {
-    const root = await (rootPromise ??= resolveRoot());
-    if (root === null) {
-      rootPromise = undefined;
-      return { path: dir, foldsCase: true };
-    }
-    return root;
+
+  // Whether the first segment where the request's spelling `lex` departs from
+  // the resolved `real` is a symlink: a case-only link (`readme.md` ->
+  // `README.md`, kept for old URLs) is a separate name a case-sensitive
+  // directory can hold, not the alias a case-insensitive one makes. Asked only
+  // once `isSpellingAlias` has flagged the pair, so a normal hit pays nothing;
+  // and per path rather than per root, as case sensitivity can differ between
+  // directories (Windows sets it per directory). In a case-insensitive
+  // directory the departing segment cannot be such a link: everything before
+  // it matched, so the link would resolve onto its own name and loop.
+  const departsAtSymlink = async (real: string, lex: string): Promise<boolean> => {
+    const prefix = departingPrefix(real, lex, sep);
+    const linkStat = prefix === undefined ? null : await lstat(dir + prefix).catch(() => null);
+    return linkStat?.isSymbolicLink() === true;
   };
 
   const statFile = async (candidate: string): Promise<Stats | null> => {
@@ -364,9 +355,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // check-then-`createReadStream(path)` sequence, a symlink swap in between
   // would serve a file the checks never saw.
   //
-  // On a filesystem that folds case, the resolved path must also not be the
-  // same file under another letter case than the request named (see
-  // `isSpellingAlias`). `candidate` always starts
+  // The resolved path must also not be the same file under another letter case
+  // than the request named (see `isSpellingAlias`), unless a case-only symlink
+  // explains the difference (see `departsAtSymlink`). `candidate` always starts
   // with `dir` (the handler's pre-filter), so both sides are root-relative and a
   // `dir` option spelled in another case than the folder on disk still serves.
   // Its last `suffixLength` characters were added here, not by the URL.
@@ -382,14 +373,15 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       const fileStat = await handle.stat();
       const realPath = fileStat.isFile() ? await realpath(candidate).catch(() => null) : null;
       if (realPath !== null) {
-        const root = await getRoot();
-        const realRel = realPath.slice(root.path.length);
+        const root = await getRealDir();
+        const realRel = realPath.slice(root.length);
+        const lex = candidate.slice(dir.length);
         if (
-          realPath.startsWith(root.path) &&
+          realPath.startsWith(root) &&
           !isDeniedDotPath(realRel) &&
           !(
-            root.foldsCase &&
-            isSpellingAlias(realRel, candidate.slice(dir.length), suffixLength, sep)
+            isSpellingAlias(realRel, lex, suffixLength, sep) &&
+            !(await departsAtSymlink(realRel, lex))
           )
         ) {
           const realStat = await stat(realPath).catch(() => null);
