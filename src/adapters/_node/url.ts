@@ -95,29 +95,99 @@ export class NodeRequestURL extends FastURL {
 }
 
 /**
- * Whether a request-target contains a raw `\` before its first `?`.
+ * Whether the path of a request-target (before its first `?`) contains a raw `\`
+ * or a complete `.` / `..` segment, in any spelling (`%2e`, `%2E`, `.%2e`, ...).
  *
- * A raw `\` is not valid in a request-target (RFC 3986 §3.3, RFC 9112 §3.2), but
- * llhttp and nghttp2 deliver it verbatim, and it is the only character WHATWG URL
- * parsing rewrites into a path separator for http(s) URLs. So
- * `/public\..\admin/secret` would reach the fetch handler as `/admin/secret` while
- * the raw `req.url` (seen by Node middleware) still routes under `/public`.
- * `serve()` and `toNodeHandler()` answer 400 instead. A percent-encoded
- * `%5C` stays encoded and a `\` in the query is left alone.
+ * WHATWG URL parsing rewrites both for http(s) URLs: `\` becomes a path separator
+ * and dot segments are resolved (`%2e` counts as a dot). llhttp and nghttp2 deliver
+ * them verbatim, so `/public/../admin/secret` (or `/public\..\admin/secret`) would
+ * reach the fetch handler as `/admin/secret` while the raw `req.url`, seen by Node
+ * middleware, still routes under `/public`. `serve()` and `toNodeHandler()` answer
+ * 400 instead, so one request has one path in every layer. Browsers, `fetch()` and
+ * curl resolve dot segments before sending (RFC 3986 §5.2.4), and a raw `\` is not
+ * valid in a request-target (RFC 3986 §3.3), so normal clients never hit this.
  *
- * This only covers `\`: dot segments (`/a/../b`, `/a/%2e%2e/b`) still normalize
- * as before. The scan stops at `?` only, so a `\` after a `#` (itself invalid in
- * a request-target) but before any `?` is rejected too.
+ * Left alone: dots inside a segment (`/.well-known`, `/a/...`, `/a/..b`, `/a.b`),
+ * a percent-encoded `%5C`, and anything in the query. The dot-segment definition
+ * matches `FastURL`'s origin-form check (`_originFormNeedsNormRE` in `src/_url.ts`);
+ * a segment also ends at `#`. Only `?` ends the path here, so a `\` or dot segment
+ * after a `#` (itself invalid in a request-target) but before any `?` is rejected.
  *
- * The common case (no `\` at all) is a single `indexOf`.
+ * Hot path: three single-char `indexOf` scans (`\`, `.`, `%`); a target with none
+ * of them returns right away. A `.` / `%` found is checked in place, and since a
+ * dot segment must follow a `/`, the next candidate is only searched for after
+ * the next `/`. These scans run over the whole target, query included, and `?`
+ * is looked up only after a match, to tell path from query. This is intentional:
+ * the scan stays linear, and an upfront `?` lookup (or a regex, a char loop or a
+ * two-char `indexOf`) measured slower on common paths.
  */
-export function hasBackslashInPath(target: string): boolean {
-  const backslashIndex = target.indexOf("\\");
-  if (backslashIndex === -1) {
+export function hasAmbiguousPath(target: string): boolean {
+  const backslash = target.indexOf("\\");
+  let dot = target.indexOf(".");
+  let percent = target.indexOf("%");
+  if (backslash === -1 && dot === -1 && percent === -1) {
+    return false;
+  }
+  // Earliest offending index anywhere in the target (`length` = none).
+  let first = backslash === -1 ? target.length : backslash;
+  while (dot !== -1 && dot < first && !_isDotSegmentAt(target, dot)) {
+    dot = _nextAfterSlash(target, dot, ".");
+  }
+  if (dot !== -1 && dot < first) {
+    first = dot;
+  }
+  while (percent !== -1 && percent < first && !_isDotSegmentAt(target, percent)) {
+    percent = _nextAfterSlash(target, percent, "%");
+  }
+  if (percent !== -1 && percent < first) {
+    first = percent;
+  }
+  if (first === target.length) {
     return false;
   }
   const queryIndex = target.indexOf("?");
-  return queryIndex === -1 || backslashIndex < queryIndex;
+  return queryIndex === -1 || first < queryIndex;
+}
+
+// Next `char` after the first `/` past `i` (`-1` if none).
+function _nextAfterSlash(target: string, i: number, char: string): number {
+  const slash = target.indexOf("/", i + 1);
+  return slash === -1 ? -1 : target.indexOf(char, slash + 1);
+}
+
+// Whether a `/`-preceded segment starting at `i` is exactly one or two dots
+// (`.` or `%2e`/`%2E` each), ended by `/`, `?`, `#` or the end of `target`.
+function _isDotSegmentAt(target: string, i: number): boolean {
+  if (target.charCodeAt(i - 1) !== 47 /* / */) {
+    return false;
+  }
+  let dots = 0;
+  for (;;) {
+    const c = target.charCodeAt(i);
+    if (c === 46 /* . */) {
+      i += 1;
+    } else if (
+      c === 37 /* % */ &&
+      target.charCodeAt(i + 1) === 50 /* 2 */ &&
+      (target.charCodeAt(i + 2) | 0x20) === 101 /* e or E */
+    ) {
+      i += 3;
+    } else {
+      break;
+    }
+    if (++dots > 2) {
+      return false;
+    }
+  }
+  if (dots === 0) {
+    return false;
+  }
+  if (i >= target.length) {
+    return true;
+  }
+  // `/`, `?` or `#`
+  const c = target.charCodeAt(i);
+  return c === 47 || c === 63 || c === 35;
 }
 
 /**
