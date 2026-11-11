@@ -5,11 +5,12 @@ import type { Transform } from "node:stream";
 
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
+import { departingPrefix, isSpellingAlias } from "./_static-alias.ts";
 
 export interface StaticMiddlewareOptions {
   /**
@@ -322,6 +323,21 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     return realDir;
   };
 
+  // Whether the first segment where the request's spelling `lex` departs from
+  // the resolved `real` is a symlink: a case-only link (`readme.md` ->
+  // `README.md`, kept for old URLs) is a separate name a case-sensitive
+  // directory can hold, not the alias a case-insensitive one makes. Asked only
+  // once `isSpellingAlias` has flagged the pair, so a normal hit pays nothing;
+  // and per path rather than per root, as case sensitivity can differ between
+  // directories (Windows sets it per directory). In a case-insensitive
+  // directory the departing segment cannot be such a link: everything before
+  // it matched, so the link would resolve onto its own name and loop.
+  const departsAtSymlink = async (real: string, lex: string): Promise<boolean> => {
+    const prefix = departingPrefix(real, lex, sep);
+    const linkStat = prefix === undefined ? null : await lstat(dir + prefix).catch(() => null);
+    return linkStat?.isSymbolicLink() === true;
+  };
+
   const statFile = async (candidate: string): Promise<Stats | null> => {
     const fileStat = await stat(candidate).catch(() => null);
     return fileStat?.isFile() ? fileStat : null;
@@ -338,7 +354,17 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // comparison pins that fd to the path that passed the checks — with a
   // check-then-`createReadStream(path)` sequence, a symlink swap in between
   // would serve a file the checks never saw.
-  const openServable = async (candidate: string): Promise<ServableFile | null> => {
+  //
+  // The resolved path must also not be the same file under another letter case
+  // than the request named (see `isSpellingAlias`), unless a case-only symlink
+  // explains the difference (see `departsAtSymlink`). `candidate` always starts
+  // with `dir` (the handler's pre-filter), so both sides are root-relative and a
+  // `dir` option spelled in another case than the folder on disk still serves.
+  // Its last `suffixLength` characters were added here, not by the URL.
+  const openServable = async (
+    candidate: string,
+    suffixLength: number,
+  ): Promise<ServableFile | null> => {
     const handle = await open(candidate, OPEN_FLAGS).catch(() => null);
     if (handle === null) {
       return null;
@@ -348,7 +374,16 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       const realPath = fileStat.isFile() ? await realpath(candidate).catch(() => null) : null;
       if (realPath !== null) {
         const root = await getRealDir();
-        if (realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length))) {
+        const realRel = realPath.slice(root.length);
+        const lex = candidate.slice(dir.length);
+        if (
+          realPath.startsWith(root) &&
+          !isDeniedDotPath(realRel) &&
+          !(
+            isSpellingAlias(realRel, lex, suffixLength, sep) &&
+            !(await departsAtSymlink(realRel, lex))
+          )
+        ) {
           const realStat = await stat(realPath).catch(() => null);
           if (realStat && realStat.ino === fileStat.ino && realStat.dev === fileStat.dev) {
             return { handle, size: fileStat.size, mtimeMs: fileStat.mtimeMs };
@@ -430,6 +465,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     let rangeRequest: string | undefined;
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
+      // What this middleware appended to the URL's path (`index.html`, `.html`),
+      // whose case on disk is not the URL's to check.
+      const suffixLength = candidate.length - path.length;
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
       // guarantees `slice(dir.length)` yields an actual relative path.
       if (!filePath.startsWith(dir) || isDeniedDotPath(filePath.slice(dir.length))) {
@@ -475,7 +513,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           }
           // An unservable variant (escapes the root, or resolves onto a denied
           // dot path) is skipped, not fatal: the identity file can still serve.
-          const variant = await openServable(variantPath);
+          const variant = await openServable(variantPath, suffixLength + spec.ext.length);
           if (variant) {
             encoding = spec.name;
             servePath = variantPath;
@@ -485,7 +523,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
         }
       }
       // Only the bytes actually sent need checking; a winning variant already was.
-      file ??= await openServable(filePath);
+      file ??= await openServable(filePath, suffixLength);
       if (!file) {
         continue;
       }
