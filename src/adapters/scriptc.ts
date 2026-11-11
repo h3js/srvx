@@ -25,7 +25,21 @@ import { errorPlugin } from "../_plugins.ts";
 import { fmtURL, isNullBodyStatus, printListening, resolvePortAndHost } from "../_utils.ts";
 
 export const FastURL: typeof globalThis.URL = URL;
-export const FastResponse: typeof globalThis.Response = Response;
+
+// `new` through a binding that holds the native `Response` class throws under
+// scriptc ("constructor is not a constructor"; `URL` is fine), so this is a
+// factory returning a native `Response`. `instanceof FastResponse` is false;
+// check `instanceof Response`.
+export const FastResponse: typeof globalThis.Response = /* @__PURE__ */ (() => {
+  type Args = ConstructorParameters<typeof Response>;
+  function FastResponse(body?: Args[0], init?: Args[1]): Response {
+    return new Response(body, init);
+  }
+  FastResponse.json = (data: unknown, init?: ResponseInit) => Response.json(data, init);
+  FastResponse.redirect = (url: string | URL, status?: number) => Response.redirect(url, status);
+  FastResponse.error = () => Response.error();
+  return FastResponse as unknown as typeof globalThis.Response;
+})();
 
 /**
  * Create a server for scriptc native executables (experimental).

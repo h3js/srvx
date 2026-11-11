@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { request as httpRequest } from "node:http";
 import { execa, type ResultPromise } from "execa";
 import { getRandomPort } from "get-port-please";
-import { serve } from "../src/adapters/scriptc.ts";
+import { FastResponse, serve } from "../src/adapters/scriptc.ts";
 import type { Server, ServerOptions } from "../src/types.ts";
 import { waitForServer } from "./_utils.ts";
 
@@ -136,6 +136,17 @@ describe("scriptc adapter (node)", () => {
     expect(server.runtime).toBe("scriptc");
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
     expect(typeof server.waitUntil).toBe("function");
+  });
+
+  test("FastResponse constructs a native Response", async () => {
+    const res = new FastResponse("body", { status: 201, headers: { "x-a": "1" } });
+    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(201);
+    expect(res.headers.get("x-a")).toBe("1");
+    expect(await res.text()).toBe("body");
+    const json = FastResponse.json({ a: 1 });
+    expect(json).toBeInstanceOf(Response);
+    expect(await json.json()).toEqual({ a: 1 });
   });
 
   test("GET text", async () => {
@@ -392,10 +403,17 @@ describe.skipIf(!scriptc)("scriptc adapter (native executable)", () => {
   test("thrown error answers 500", async () => {
     expect((await fetch(`${base}/throw`)).status).toBe(500);
   });
+
+  test("FastResponse", async () => {
+    const res = await fetch(`${base}/fast`);
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe("fast");
+    expect(await (await fetch(`${base}/fast-json`)).json()).toEqual({ fast: true });
+  });
 });
 
 const scriptcApp = /* ts */ `
-import { serve } from "srvx/scriptc";
+import { FastResponse, serve } from "srvx/scriptc";
 
 serve({
   hostname: "127.0.0.1",
@@ -434,6 +452,10 @@ serve({
       }
       case "/throw":
         throw new Error("boom");
+      case "/fast":
+        return new FastResponse("fast", { status: 201 });
+      case "/fast-json":
+        return FastResponse.json({ fast: true });
     }
     return new Response("ok");
   },
