@@ -4,6 +4,7 @@ import { FastURL } from "../src/_url.ts";
 import { serve } from "../src/adapters/node.ts";
 import { NodeRequestURL } from "../src/adapters/_node/url.ts";
 import { isValidHost } from "../src/_trust-proxy.ts";
+import { HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
 
 const urlTests = await import("./wpt/url_tests.json", {
   with: { type: "json" },
@@ -383,14 +384,14 @@ describe("FastURL", () => {
       });
     }
 
-    // Punycode validity differs per runtime (Bun/Deno reject `xn--a`, Node
-    // does not), so `isValidHost` defers to the current runtime's parser.
-    test.each(["xn--a.com", "XN--zz", "foo.xn--a:8080", "a--b.com", "xn--bcher-kva.example"])(
-      "isValidHost(%j) agrees with URL.canParse",
-      (host) => {
-        expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
-      },
-    );
+    // Runtimes disagree on some hosts (Bun/Deno reject invalid punycode such
+    // as `xn--a`, Bun rejects `42949672950x`; Node accepts both), so
+    // `isValidHost` defers to the current runtime's parser.
+    test.each(HOST_PARSER_AGREEMENT_CASES)("isValidHost(%j) agrees with URL.canParse", (host) => {
+      expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+      // a second call is answered from the one-entry cache
+      expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+    });
   });
 
   describe("absolute URI in request line", () => {

@@ -3,7 +3,8 @@ import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
 import http2 from "node:http2";
 import { describe, expect, test, vi } from "vitest";
-import { getTLSCert } from "./_utils.ts";
+import { getTLSCert, HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
+import { isValidHost } from "../src/_trust-proxy.ts";
 
 import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
 import {
@@ -2335,3 +2336,12 @@ function parseHttpResponses(buf: Buffer): { headers: string; body: Buffer }[] {
   }
   return responses;
 }
+
+// CI also runs this file under Bun and Deno, whose URL parsers differ from
+// Node's; the trust-proxy plugin and the Node adapter both rely on this.
+describe("isValidHost agrees with the runtime's URL parser", () => {
+  test.each(HOST_PARSER_AGREEMENT_CASES)("%s", (host) => {
+    expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+    expect(isValidHost(host)).toBe(URL.canParse(`http://${host}`));
+  });
+});

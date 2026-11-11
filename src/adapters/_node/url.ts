@@ -1,8 +1,6 @@
 import type { NodeServerRequest } from "../../types.ts";
-import { HOST_RE, forwardedHopValue, isValidHost } from "../../_trust-proxy.ts";
+import { forwardedHopValue, isValidHost } from "../../_trust-proxy.ts";
 import { FastURL } from "../../_url.ts";
-
-export { HOST_RE };
 
 export class NodeRequestURL extends FastURL {
   constructor({ req, hops = 0 }: { req: NodeServerRequest; hops?: number }) {
@@ -19,13 +17,14 @@ export class NodeRequestURL extends FastURL {
     const trusted = hops > 0;
     const forwardedHost = forwardedHopValue(req.headers["x-forwarded-host"], hops);
 
-    let host =
-      (forwardedHost && isValidHost(forwardedHost) ? forwardedHost : undefined) ||
-      req.headers.host ||
-      (req.headers[":authority"] as string);
-    if (host && !isValidHost(host)) {
-      host = "_invalid_";
-    } else if (!host) {
+    let host = forwardedHost && isValidHost(forwardedHost) ? forwardedHost : undefined;
+    if (!host) {
+      host = req.headers.host || (req.headers[":authority"] as string);
+      if (host && !isValidHost(host)) {
+        host = "_invalid_";
+      }
+    }
+    if (!host) {
       if (req.socket) {
         host = `${req.socket.localFamily === "IPv6" ? "[" + req.socket.localAddress + "]" : req.socket.localAddress}:${req.socket?.localPort || "80"}`;
       } else {

@@ -9,6 +9,29 @@ import { addTests } from "./_tests.ts";
 
 const testDir = fileURLToPath(new URL(".", import.meta.url));
 
+/**
+ * Hosts that pass the `HOST_RE` shape check but where runtimes' URL parsers
+ * disagree or reject: `isValidHost` must match `URL.canParse` on each of them
+ * in whatever runtime runs the test.
+ */
+export const HOST_PARSER_AGREEMENT_CASES: string[] = [
+  "xn--a.com", // invalid punycode: Bun/Deno reject, Node accepts
+  "XN--zz",
+  "foo.xn--a:8080",
+  "xn--bcher-kva.example", // valid punycode
+  "a--b.com",
+  "42949672950x", // Bun rejects, Node/Deno accept
+  "10000000000X",
+  "255.42949672950x7f",
+  "0x7f.42949672950X:0",
+  "4294967295x",
+  "256.0.0.1", // rejected everywhere
+  "foo.123",
+  "[::::]",
+  "localhost:3000", // accepted everywhere
+  "[::1]:3000",
+];
+
 // Output that tests deliberately provoke and runtimes print to stderr. These
 // are expected and only add noise to the vitest output, so they are filtered
 // out (unless TEST_DEBUG is set). See `test/_utils.ts` stderr forwarding.
