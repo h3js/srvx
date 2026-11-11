@@ -1,6 +1,7 @@
 import { PassThrough, Readable as NodeReadable, Writable as NodeWritable } from "node:stream";
 
 import { getNativeClass, lazyInherit } from "../../_inherit.ts";
+import { isNullBodyStatus } from "../../_utils.ts";
 import type { ResponseBody } from "../../types.ts";
 
 export const kNativeResponse: symbol = /* @__PURE__ */ Symbol.for("srvx.nativeResponse");
@@ -24,6 +25,25 @@ export interface PreparedNodeResponse {
  */
 function withHeaders(init: ResponseInit | undefined, headers: HeadersInit): ResponseInit {
   return { status: init?.status, statusText: init?.statusText, headers };
+}
+
+/**
+ * Releases a body that will never be read: streams are cancelled/destroyed so
+ * their source is freed. Duck-typed pipe objects (e.g. React's PipeableStream)
+ * expose `abort()` instead of `destroy()`. Non-stream bodies are ignored.
+ *
+ * @internal
+ */
+export function disposeBody(body: unknown): void {
+  if (body instanceof ReadableStream) {
+    body.cancel().catch(() => {});
+  } else if (typeof (body as NodeReadable | undefined)?.pipe === "function") {
+    if (typeof (body as NodeReadable).destroy === "function") {
+      (body as NodeReadable).destroy();
+    } else {
+      (body as { abort?: () => void }).abort?.();
+    }
+  }
 }
 
 /**
@@ -129,7 +149,13 @@ export const NodeResponse: {
       // Undici accepts standard Response body or async iterators (which Node Readable implements too).
       // Pipeable objects, like React's renderToPipeableStream, do not implement async iterators.
       let body: ResponseBody | null | undefined = this.#body;
-      if (
+      if (body != null && isNullBodyStatus(this.status)) {
+        // Same as `_toNodeResponse()`: ignore the body instead of throwing. Only
+        // 204/205/304 get here: native `Response` still throws a `RangeError`
+        // for any 1xx status, so those only work on the `_toNodeResponse()` path.
+        disposeBody(body);
+        body = null;
+      } else if (
         body &&
         typeof (body as unknown as NodeReadable).pipe === "function" &&
         !(body instanceof NodeReadable)
@@ -181,6 +207,13 @@ export const NodeResponse: {
         if (!this.#response.bodyUsed) {
           contentLength = this.#contentLength;
         }
+      } else if (this.#body != null && isNullBodyStatus(status)) {
+        // A body on a null-body status (1xx, 204, 205, 304). Native `Response`
+        // throws for it; `FastResponse` skips that check (like its other
+        // constructor validation, kept out for speed), so ignore the body as if
+        // it were `null`: no body bytes and no derived content-type/length
+        // (RFC 9110 §8.6). Explicit headers, e.g. a 304's content-length, are kept.
+        disposeBody(this.#body);
       } else if (this.#body != null) {
         // `!= null` (not a truthy check): an empty-string body is falsy but must
         // still receive the implicit `text/plain` content-type and a

@@ -1571,6 +1571,179 @@ describe("FastResponse keeps the status of a response used as init", () => {
   });
 });
 
+// RFC 9110 §8.6: no Content-Length on 1xx/204, and on 304 only the length a 200
+// would have had (never the length of an ignored body). Native `Response` rejects
+// a body on a null-body status; `FastResponse` skips that check, so the body is
+// ignored instead, as if it were `null`.
+describe("FastResponse ignores the body of a null-body status", () => {
+  async function rawGet(fetch: () => Response): Promise<{ head: string; rest: string }> {
+    const server = serve({ port: 0, hostname: "127.0.0.1", fetch });
+    await server.ready();
+    try {
+      const u = new URL(server.url!);
+      const raw = await rawExchange(
+        Number(u.port),
+        u.hostname,
+        `GET / HTTP/1.1\r\nHost: ${u.hostname}\r\nConnection: close\r\n\r\n`,
+      );
+      const [head, ...rest] = raw.toString("latin1").split("\r\n\r\n");
+      return { head: head.toLowerCase(), rest: rest.join("\r\n\r\n") };
+    } finally {
+      await server.close(true);
+    }
+  }
+
+  const bodies: [string, () => BodyInit][] = [
+    ["string", () => "hello"],
+    ["empty string", () => ""],
+    ["Uint8Array", () => new TextEncoder().encode("hello")],
+    ["Blob", () => new Blob(["hello"], { type: "text/css" })],
+    ["URLSearchParams", () => new URLSearchParams("hello=1")],
+  ];
+
+  describe.each([204, 205, 304])("%s", (status) => {
+    test.each(bodies)("%s body sends no derived headers and no body bytes", async (_, body) => {
+      const { head, rest } = await rawGet(() => new FastResponse(body(), { status }));
+      expect(head).toMatch(new RegExp(`^http/1.1 ${status} `));
+      expect(head).not.toContain("content-length:");
+      expect(head).not.toContain("content-type:");
+      expect(rest).not.toContain("hello");
+    });
+
+    test("ReadableStream body is cancelled, not sent", async () => {
+      let cancelled = false;
+      let pulls = 0;
+      const { head, rest } = await rawGet(
+        () =>
+          new FastResponse(
+            new ReadableStream({
+              pull(controller) {
+                // Bounded so a regression fails below instead of pumping an
+                // ignored body forever (Node's no-op `write()` never backpressures).
+                if (++pulls > 64) return controller.close();
+                controller.enqueue(new TextEncoder().encode("hello"));
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+            { status },
+          ),
+      );
+      expect(head).not.toContain("content-length:");
+      expect(rest).not.toContain("hello");
+      expect(cancelled).toBe(true);
+    });
+
+    test("Node Readable body is destroyed, not sent", async () => {
+      let readable!: Readable;
+      const { head, rest } = await rawGet(() => {
+        // Never ends: an ignored body must be destroyed up front, not piped
+        // into a response that can then never finish.
+        readable = new Readable({ read() {} });
+        readable.push("hello");
+        return new FastResponse(readable as unknown as BodyInit, { status });
+      });
+      expect(head).not.toContain("content-length:");
+      expect(rest).not.toContain("hello");
+      expect(readable.destroyed).toBe(true);
+    });
+
+    test("materializing drops the body instead of throwing", async () => {
+      const res = new FastResponse("hello", { status, headers: { "x-custom": "1" } });
+      expect(res.body).toBeNull();
+      expect(await res.text()).toBe("");
+      expect(res.status).toBe(status);
+      expect(res.headers.get("x-custom")).toBe("1");
+      expect(res.headers.get("content-length")).toBeNull();
+    });
+  });
+
+  test.each([101, 103])("%s gets no derived content-length", (status) => {
+    const { headers, body } = new FastResponse("hello", { status })._toNodeResponse();
+    expect(headers).not.toContain("content-length");
+    expect(headers).not.toContain("content-type");
+    expect(body).toBeUndefined();
+  });
+
+  test("a numeric string status is recognized", async () => {
+    const { head, rest } = await rawGet(
+      () => new FastResponse("hello", { status: "204" as unknown as number }),
+    );
+    expect(head).toMatch(/^http\/1.1 204 /);
+    expect(head).not.toContain("content-length:");
+    expect(rest).toBe("");
+  });
+
+  // Over HTTP/2 a body or content-length on 204/205 is a protocol error: the
+  // stream was reset with `NGHTTP2_PROTOCOL_ERROR` instead of answering.
+  describe.skipIf(skipHttp2)("http2", () => {
+    async function h2Get(fetch: () => Response) {
+      const tls = await getTLSCert();
+      const server = serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        silent: true,
+        tls,
+        node: { http2: true, allowHTTP1: false } as any,
+        fetch,
+      });
+      await server.ready();
+      const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+      client.on("error", () => {});
+      try {
+        const stream = client.request({ ":method": "GET", ":path": "/" });
+        const chunks: Buffer[] = [];
+        stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+        const [headers, error] = await Promise.all([
+          new Promise<http2.IncomingHttpHeaders | undefined>((resolve) => {
+            stream.once("response", resolve);
+            stream.once("close", () => resolve(undefined));
+          }),
+          new Promise<Error | undefined>((resolve) => {
+            stream.once("end", () => resolve(undefined));
+            stream.once("error", resolve);
+          }),
+        ]);
+        return { headers, error, body: Buffer.concat(chunks).toString() };
+      } finally {
+        client.destroy();
+        await server.close(true);
+      }
+    }
+
+    test.each([204, 205, 304])("%s with a string body", async (status) => {
+      const { headers, error, body } = await h2Get(() => new FastResponse("hello", { status }));
+      expect(error).toBeUndefined();
+      expect(headers?.[":status"]).toBe(status);
+      expect(headers?.["content-length"]).toBeUndefined();
+      expect(headers?.["content-type"]).toBeUndefined();
+      expect(body).toBe("");
+    });
+  });
+
+  test("an explicit content-length on a 304 is kept", async () => {
+    const { head, rest } = await rawGet(
+      () =>
+        new FastResponse("hello", {
+          status: 304,
+          headers: { "content-length": "42", etag: '"abc"' },
+        }),
+    );
+    expect(head).toMatch(/^http\/1.1 304 /);
+    expect(head).toContain("content-length: 42");
+    expect(head).toContain('etag: "abc"');
+    expect(head).not.toContain("content-type:");
+    expect(rest).toBe("");
+  });
+
+  test("a 200 still gets the derived headers", async () => {
+    const { head, rest } = await rawGet(() => new FastResponse("hello"));
+    expect(head).toContain("content-length: 5");
+    expect(rest).toBe("hello");
+  });
+});
+
 // Documented in docs/1.guide/08.node.md#adding-headers-to-a-response: a middleware
 // decorating a response must be able to mutate `res.headers` without paying for
 // materialization. Frameworks build on this instead of `new FastResponse(res.body, ...)`,
