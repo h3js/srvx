@@ -1,5 +1,6 @@
 import { sendErrorResponse, sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
+import { settleRequestBody } from "./_node/body-limit.ts";
 import { hasBackslashInPath, isValidAbsoluteForm } from "./_node/url.ts";
 import {
   fmtURL,
@@ -87,10 +88,11 @@ class NodeServer implements Server {
         nodeRes.end();
         return;
       }
+      const maxRequestBodySize = this.options.maxRequestBodySize;
       const request = new NodeRequest({
         req: nodeReq,
         res: nodeRes,
-        maxRequestBodySize: this.options.maxRequestBodySize,
+        maxRequestBodySize,
         trustProxy: this.options.trustProxy,
       });
       request.waitUntil = this.#wait?.waitUntil;
@@ -100,18 +102,27 @@ class NodeServer implements Server {
       } catch (error) {
         // Sync throw with no `error` option: answer 500 instead of letting it
         // escape as an `uncaughtException` (see sendErrorResponse).
-        return sendErrorResponse(nodeRes, error, this.options.silent);
+        return sendSettled(nodeReq, nodeRes, maxRequestBodySize, this.options.silent, true, error);
       }
       // node:http ignores the listener's return value — use the detached
       // variant to skip the per-response end-tracking Promise.
       return typeof (res as Promise<Response>)?.then === "function"
         ? (res as Promise<Response>).then(
-            (resolvedRes) => sendNodeResponseDetached(nodeRes, resolvedRes, this.options.silent),
+            (resolvedRes) =>
+              sendSettled(
+                nodeReq,
+                nodeRes,
+                maxRequestBodySize,
+                this.options.silent,
+                false,
+                resolvedRes,
+              ),
             // Rejection handler (not `.catch`) so send failures, which
             // `sendNodeResponseDetached` already answers, aren't handled twice.
-            (error) => sendErrorResponse(nodeRes, error, this.options.silent),
+            (error) =>
+              sendSettled(nodeReq, nodeRes, maxRequestBodySize, this.options.silent, true, error),
           )
-        : sendNodeResponseDetached(nodeRes, res as Response, this.options.silent);
+        : sendSettled(nodeReq, nodeRes, maxRequestBodySize, this.options.silent, false, res);
     };
 
     this.node = { handler, server: undefined };
@@ -277,4 +288,34 @@ class NodeServer implements Server {
       }),
     ]);
   }
+}
+
+/**
+ * Sends the handler's response (or, when it `failed`, the error response for
+ * it) once `settleRequestBody()` lets the head go out (see `_node/body-limit.ts`).
+ */
+function sendSettled(
+  nodeReq: NodeServerRequest,
+  nodeRes: NodeServerResponse,
+  maxRequestBodySize: number | undefined,
+  silent: boolean | undefined,
+  failed: boolean,
+  value: unknown,
+): Promise<void> | void {
+  const settled = settleRequestBody(nodeReq, nodeRes, maxRequestBodySize);
+  if (settled) {
+    return settled.then(() => sendNow(nodeRes, silent, failed, value));
+  }
+  return sendNow(nodeRes, silent, failed, value);
+}
+
+function sendNow(
+  nodeRes: NodeServerResponse,
+  silent: boolean | undefined,
+  failed: boolean,
+  value: unknown,
+): Promise<void> | void {
+  return failed
+    ? sendErrorResponse(nodeRes, value, silent)
+    : sendNodeResponseDetached(nodeRes, value as Response, silent);
 }

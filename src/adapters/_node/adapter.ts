@@ -10,6 +10,7 @@ import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
 import { handleSendError, sendNodeResponse } from "./send.ts";
 import { hasBackslashInPath } from "./url.ts";
+import { settleRequestBody } from "./body-limit.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -36,22 +37,47 @@ export function toNodeHandler(
       nodeRes.end();
       return;
     }
+    const maxRequestBodySize = options?.maxRequestBodySize;
     const request = new NodeRequest({
       req: nodeReq,
       res: nodeRes,
-      maxRequestBodySize: options?.maxRequestBodySize,
+      maxRequestBodySize,
       trustProxy: options?.trustProxy,
     });
-    const res = handler(request);
-    return typeof (res as Promise<Response>)?.then === "function"
-      ? (res as Promise<Response>).then((resolvedRes) => send(nodeRes, resolvedRes))
-      : send(nodeRes, res as Response);
+    let res: Response | Promise<Response>;
+    try {
+      res = handler(request);
+    } catch (error) {
+      // The host server answers the error; the body still needs settling first.
+      settleRequestBody(nodeReq, nodeRes, maxRequestBodySize, true);
+      throw error;
+    }
+    if (typeof (res as Promise<Response>)?.then === "function") {
+      return (res as Promise<Response>).then(
+        (resolvedRes) => sendSettled(nodeReq, nodeRes, resolvedRes, maxRequestBodySize),
+        (error) => {
+          settleRequestBody(nodeReq, nodeRes, maxRequestBodySize, true);
+          throw error;
+        },
+      );
+    }
+    return sendSettled(nodeReq, nodeRes, res as Response, maxRequestBodySize);
   }
 
   (convertedNodeHandler as AdapterMeta).__fetchHandler = handler;
   assignFnName(convertedNodeHandler, handler, " (converted to Node handler)");
 
   return convertedNodeHandler;
+}
+
+function sendSettled(
+  nodeReq: NodeServerRequest,
+  nodeRes: NodeServerResponse,
+  webRes: Response,
+  maxRequestBodySize: number | undefined,
+): Promise<void> {
+  const settled = settleRequestBody(nodeReq, nodeRes, maxRequestBodySize);
+  return settled ? settled.then(() => send(nodeRes, webRes)) : send(nodeRes, webRes);
 }
 
 /**
