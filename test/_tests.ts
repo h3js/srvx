@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
 
 export function addTests(opts: {
   url: (path: string) => string;
@@ -373,24 +374,36 @@ export function addTests(opts: {
         client.close();
       }
     } else {
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        const req = http.request({
-          method: "GET",
-          path: "/foo/../bar/baz",
-          hostname: "localhost",
-          port: _url.port,
-        });
-        req.end();
-        req.on("response", resolve);
-        req.on("error", reject);
+      // A raw request line: an HTTP client may resolve the dot segments itself
+      // before sending (Deno 2.7's `node:http` client does), and then the
+      // server would never see them.
+      const raw = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(Number(_url.port), _url.hostname.replace(/^\[|\]$/g, ""));
+        socket.on("connect", () =>
+          socket.write(
+            "GET /foo/../bar/baz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+          ),
+        );
+        let data = "";
+        socket.on("data", (chunk) => (data += chunk.toString("latin1")));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
       });
-      statusCode = res.statusCode;
-      body = await new Promise<string>((resolve, reject) => {
-        const chunks: Uint8Array[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-        res.on("error", reject);
-      });
+      const headEnd = raw.indexOf("\r\n\r\n");
+      const head = raw.slice(0, headEnd);
+      statusCode = Number(head.split(" ")[1]);
+      body = raw.slice(headEnd + 4);
+      if (/^transfer-encoding:\s*chunked/im.test(head)) {
+        let decoded = "";
+        for (let i = 0; ;) {
+          const lineEnd = body.indexOf("\r\n", i);
+          const size = Number.parseInt(body.slice(i, lineEnd), 16);
+          if (!size) break;
+          decoded += body.slice(lineEnd + 2, lineEnd + 2 + size);
+          i = lineEnd + 2 + size + 2;
+        }
+        body = decoded;
+      }
     }
 
     // The Node adapter refuses dot segments (see `hasAmbiguousPath`); native
