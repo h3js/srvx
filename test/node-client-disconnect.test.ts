@@ -163,6 +163,45 @@ describe("node client disconnect before a body read (#293)", () => {
   });
 });
 
+/** Fails as an assertion (not a suite timeout) if `promise` never settles. */
+function within<T>(promise: Promise<T>, label: string, ms = 3000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Runs `fn` against an HTTP/2 (TLS) server and a connected client session,
+ * tearing both down afterwards.
+ */
+async function withHttp2(
+  fetch: (request: ServerRequest) => Response | Promise<Response>,
+  fn: (client: http2.ClientHttp2Session) => Promise<void>,
+): Promise<void> {
+  const tls = await getTLSCert();
+  const server = serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    silent: true,
+    tls,
+    node: { http2: true, allowHTTP1: false } as any,
+    fetch,
+  });
+  await server.ready();
+  const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
+  client.on("error", () => {});
+  try {
+    await fn(client);
+  } finally {
+    client.destroy();
+    await server.close(true);
+  }
+}
+
 /**
  * The HTTP/2 counterpart of `readAfterDisconnect()`: one request whose client
  * promises more body than it delivers and then destroys the stream.
@@ -185,17 +224,12 @@ async function readAfterDisconnectHttp2(
   read: (request: ServerRequest) => Promise<unknown>,
   waitFor: "disconnect" | "none" = "disconnect",
 ): Promise<ReadOutcome> {
-  const tls = await getTLSCert();
   let settle!: (outcome: ReadOutcome) => void;
   const outcome = new Promise<ReadOutcome>((resolve) => (settle = resolve));
+  let result!: ReadOutcome;
 
-  const server = serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    silent: true,
-    tls,
-    node: { http2: true, allowHTTP1: false } as any,
-    async fetch(request) {
+  await withHttp2(
+    async (request) => {
       const req = request.runtime!.node!.req;
       if (waitFor === "disconnect") {
         // `aborted` is the only flag that moves on HTTP/2 (see the table above).
@@ -211,28 +245,18 @@ async function readAfterDisconnectHttp2(
       }
       return new Response("ok");
     },
-  });
-  await server.ready();
-
-  const client = http2.connect(server.url!, { ca: tls.ca, servername: "localhost" });
-  client.on("error", () => {});
-  try {
-    const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 100 });
-    stream.on("error", () => {});
-    stream.resume();
-    stream.write("partial");
-    // Not on the same tick as the headers: an immediate RST is dropped before the
-    // server ever dispatches a request, so there would be no handler to observe.
-    setTimeout(() => stream.destroy(), 40);
-    // A read that hangs must fail as an assertion, not as a suite timeout.
-    return await Promise.race([
-      outcome,
-      new Promise<ReadOutcome>((resolve) => setTimeout(() => resolve({ timedOut: true }), 3000)),
-    ]);
-  } finally {
-    client.destroy();
-    await server.close(true);
-  }
+    async (client) => {
+      const stream = client.request({ ":method": "POST", ":path": "/", "content-length": 100 });
+      stream.on("error", () => {});
+      stream.resume();
+      stream.write("partial");
+      // Not on the same tick as the headers: an immediate RST is dropped before the
+      // server ever dispatches a request, so there would be no handler to observe.
+      setTimeout(() => stream.destroy(), 40);
+      result = await within(outcome, "read").catch(() => ({ timedOut: true }) as const);
+    },
+  );
+  return result;
 }
 
 // https://github.com/h3js/srvx/issues/293 — the HTTP/2 half.
@@ -313,5 +337,131 @@ describe.skipIf(skipHttp2)("http2 client disconnect before a body read (#293)", 
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("AbortError");
     expect(aborted).toBe(true);
+  });
+});
+
+// On HTTP/2 a client cancels a single request with RST_STREAM (or drops the
+// whole session) instead of closing a socket. `request.signal` must abort for
+// both. This also guards the `close` handler in `_abortController`: once a
+// reset destroys the stream, `Http2ServerResponse#writableFinished` reads
+// `true`, so keying "the response completed" off it (instead of
+// `writableEnded`) would silently stop aborting cancelled handlers.
+describe.skipIf(skipHttp2)("http2 request.signal on client cancel", () => {
+  const cancels = {
+    RST_STREAM: (stream: http2.ClientHttp2Stream) => stream.close(http2.constants.NGHTTP2_CANCEL),
+    "session destroy": (stream: http2.ClientHttp2Stream) => stream.session!.destroy(),
+  };
+  for (const [name, cancel] of Object.entries(cancels)) {
+    test(`${name} while the handler is pending aborts the signal`, async () => {
+      let entered!: () => void;
+      const handlerEntered = new Promise<void>((resolve) => (entered = resolve));
+      let onAbort!: () => void;
+      const aborted = new Promise<void>((resolve) => (onAbort = resolve));
+
+      await withHttp2(
+        async (request) => {
+          request.signal.addEventListener("abort", () => onAbort());
+          entered();
+          await aborted;
+          return new Response("unreachable");
+        },
+        async (client) => {
+          const stream = client.request({ ":path": "/" });
+          stream.on("error", () => {});
+          await within(handlerEntered, "handler");
+          cancel(stream);
+          await within(aborted, "abort event");
+        },
+      );
+    });
+  }
+
+  test("signal first read after RST_STREAM reports aborted", async () => {
+    let entered!: () => void;
+    const handlerEntered = new Promise<void>((resolve) => (entered = resolve));
+    let settle!: (aborted: boolean) => void;
+    const outcome = new Promise<boolean>((resolve) => (settle = resolve));
+
+    await withHttp2(
+      async (request) => {
+        // `signal` is untouched until the stream is gone, so the controller is
+        // created after the `close` it should have listened for.
+        const res = request.runtime!.node!.res!;
+        const closed = new Promise((resolve) => res.once("close", resolve));
+        entered();
+        await closed;
+        settle(request.signal.aborted);
+        return new Response("unreachable");
+      },
+      async (client) => {
+        const stream = client.request({ ":path": "/" });
+        stream.on("error", () => {});
+        await within(handlerEntered, "handler");
+        stream.close(http2.constants.NGHTTP2_CANCEL);
+        expect(await within(outcome, "handler to observe the reset")).toBe(true);
+      },
+    );
+  });
+
+  test("RST_STREAM mid streaming response aborts the signal", async () => {
+    let onAbort!: () => void;
+    const aborted = new Promise<void>((resolve) => (onAbort = resolve));
+
+    await withHttp2(
+      (request) => {
+        request.signal.addEventListener("abort", () => onAbort());
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first"));
+          },
+          // Never produces the rest: the response stays mid-flight until reset.
+          // `aborted` settles only on abort, which lets the stream unwind.
+          pull: () => aborted,
+        });
+        return new Response(body);
+      },
+      async (client) => {
+        const stream = client.request({ ":path": "/" });
+        stream.on("error", () => {});
+        await within(
+          new Promise((resolve) => stream.once("data", resolve)),
+          "first response chunk",
+        );
+        stream.close(http2.constants.NGHTTP2_CANCEL);
+        await within(aborted, "abort event");
+      },
+    );
+  });
+
+  test("a completed request does not abort the signal", async () => {
+    // Two requests: one wires `signal` up front (live `close` listener), the
+    // other first reads it only after the response closed, which must not
+    // report aborted either.
+    const outcomes: Record<string, Promise<boolean>> = {};
+
+    await withHttp2(
+      (request) => {
+        const res = request.runtime!.node!.res!;
+        const path = new URL(request.url).pathname;
+        if (path === "/early") {
+          request.signal.addEventListener("abort", () => {});
+        }
+        outcomes[path] = new Promise((resolve) =>
+          res.once("close", () => resolve(request.signal.aborted)),
+        );
+        return new Response("ok");
+      },
+      async (client) => {
+        for (const path of ["/early", "/late"]) {
+          const stream = client.request({ ":path": path });
+          stream.setEncoding("utf8");
+          let body = "";
+          stream.on("data", (chunk) => (body += chunk));
+          await within(new Promise((resolve) => stream.once("end", resolve)), `${path} response`);
+          expect(body).toBe("ok");
+          expect(await within(outcomes[path]!, `${path} server-side close`)).toBe(false);
+        }
+      },
+    );
   });
 });
