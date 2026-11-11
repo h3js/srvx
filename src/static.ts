@@ -210,14 +210,18 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 //   URL parser and `serve()` never let one through, but a hand-built
 //   origin-form `FastURL` in `req._url` keeps it verbatim.
 // - `%00`: a NUL must never reach the filesystem layer.
+// - An encoded character the URL serializer leaves raw in a path
+//   (`!$&'()*+,:;=@[]|`): decoded, `/%40fs/x` would serve `/@fs/x` past an
+//   earlier `startsWith("/@fs")` check.
 //
-// Not rejected by this check: encoded reserved characters (`%23`, `%26`,
-// `%3F`, ...), `%25`, `%20`, and non-ASCII UTF-8 (whose bytes are all >= `%80`),
-// so names such as `release#1.txt`, `café.txt` or `50%.txt` stay reachable.
-// Tested bare: an
-// `includes("%") || includes("//")` prefilter measured slower on every path, as
-// V8's two-char substring search costs more than this regex's whole scan.
-const NON_CANONICAL_PATH_RE = /\/\/|%(?:00|2[d-f]|3\d|4[1-9a-f]|5[\dacf]|6[1-9a-f]|7[\dae])/i;
+// Not rejected by this check: characters a URL always carries encoded in a path
+// (`%20`, `%22`, `%23`, `%3C`, `%3E`, `%3F`, `%5E`, `%60`, `%7B`, `%7D`, other
+// controls), `%25`, and non-ASCII UTF-8 (whose bytes are all >= `%80`), so names
+// such as `release#1.txt`, `café.txt` or `50%.txt` stay reachable. Tested bare:
+// an `includes("%") || includes("//")` prefilter measured slower on every path,
+// as V8's two-char substring search costs more than this regex's whole scan.
+const NON_CANONICAL_PATH_RE =
+  /\/\/|%(?:00|2[146-9a-f]|3[\dabd]|4[\da-f]|5[\da-df]|6[1-9a-f]|7[\dace])/i;
 
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
@@ -367,8 +371,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // (`café.txt`, `release#1.txt`) are unreachable. Every character is
       // decoded (`decodeURIComponent`, not `decodeURI`): the query and fragment
       // are already split off, so a decoded `?`/`#` is just a name character,
-      // and `NON_CANONICAL_PATH_RE` already refused `%2F`/`%5C`/`%00`, so no
-      // separator or NUL can surface here. Containment does not rely on the
+      // and `NON_CANONICAL_PATH_RE` already refused `%2F`/`%5C`/`%00` and every
+      // character that could also arrive raw, so no separator, NUL or second
+      // spelling of a name can surface here. Containment does not rely on the
       // pathname arriving normalized: `join()` + `startsWith(dir)` below
       // re-check whatever reaches them.
       try {

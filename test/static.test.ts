@@ -117,8 +117,11 @@ beforeAll(async () => {
   await writeFile(join(dir, "café.txt"), "UNICODE_NAME");
   await writeFile(join(dir, "50%.txt"), "PERCENT_NAME");
   await writeFile(join(dir, "release#1.txt"), "HASH_NAME");
-  await writeFile(join(dir, "Q&A.txt"), "AMPERSAND_NAME");
   await writeFile(join(dir, "release%231.txt"), "LITERAL_HASH_ESCAPE");
+  // Characters a URL carries raw in a path (`*`, `:`, `|` are invalid on Windows).
+  await writeFile(join(dir, "!$&'()+,;=@[].txt"), "RAW_PUNCT_NAME");
+  await mkdir(join(dir, "@fs"), { recursive: true });
+  await writeFile(join(dir, "@fs", "secret.txt"), "AT_FS_SECRET");
   if (sep !== "\\") {
     await writeFile(join(dir, "question?.txt"), "QUESTION_NAME");
   }
@@ -1135,12 +1138,38 @@ describe("staticMiddleware", () => {
       ["/caf%C3%A9.txt", "UNICODE_NAME"],
       ["/50%25.txt", "PERCENT_NAME"],
       ["/release%231.txt", "HASH_NAME"],
-      ["/Q%26A.txt", "AMPERSAND_NAME"],
       ["/release%25231.txt", "LITERAL_HASH_ESCAPE"],
     ])("decodes %s exactly once for the lookup", async (path, contents) => {
       const res = await fetchStatic(path!);
       expect(res.status).toBe(200);
       await expect(res.text()).resolves.toBe(contents);
+    });
+
+    test("serves characters a URL keeps raw only at their raw spelling", async () => {
+      // `new URL()` leaves all of these raw in a path, so this is their one URL.
+      await expect(fetchStatic("/!$&'()+,;=@[].txt").then((r) => r.text())).resolves.toBe(
+        "RAW_PUNCT_NAME",
+      );
+      await expect(fetchStatic("/@fs/secret.txt").then((r) => r.text())).resolves.toBe(
+        "AT_FS_SECRET",
+      );
+    });
+
+    test.each([
+      // Decoded, each would be a second URL for a file served at its raw
+      // spelling, which an earlier `startsWith("/@fs")` check would miss.
+      "/%40fs/secret.txt",
+      "/%21%24%26%27%28%29%2B%2C%3B%3D%40%5B%5D.txt",
+      "/%21$&'()+,;=@[].txt",
+      "/!$%26'()+,;=@[].txt",
+      "/!$&'()%2b,;=@[].txt",
+      "/!$&'()+,;=@%5b].txt",
+      // The rest of the set, with no fixture: refused before any lookup.
+      "/a%2Ab",
+      "/a%3Ab",
+      "/a%7Cb",
+    ])("serves nothing at the encoded spelling %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
     });
 
     test.skipIf(sep === "\\")("decodes a question mark in a filename", async () => {
@@ -1244,7 +1273,7 @@ describe("staticMiddleware", () => {
     });
 
     // Including invalid UTF-8 (a bad continuation byte, a truncated sequence).
-    test.each(["/foo%", "/%ZZ", "/%C3%28", "/%E0%A4"])(
+    test.each(["/foo%", "/%ZZ", "/%C3%20", "/%E0%A4"])(
       "rejects the malformed encoding %s with 400",
       async (path) => {
         expect((await fetchStatic(path)).status, path).toBe(400);
