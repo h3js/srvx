@@ -243,6 +243,7 @@ export interface Server<Handler = ServerHandler> {
     | "cloudflare"
     | "service-worker"
     | "aws-lambda"
+    | "scriptc"
     | "generic";
 
   /**
