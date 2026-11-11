@@ -590,10 +590,21 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // `304` but any other configured method with `412` (precondition failed).
       // `If-Modified-Since` is a GET/HEAD-only validator (RFC 9110 §13.1.3), so
       // it is never evaluated for the other methods.
+      //
+      // Before both, `If-Match` (or, when it is absent, `If-Unmodified-Since`)
+      // answers any method with `412` when it fails (RFC 9110 §13.2.2), so a
+      // client resuming a range never splices bytes of a changed file.
       const conditionalGet = req.method === "GET" || req.method === "HEAD";
       let conditionalStatus = 0;
+      const ifMatch = req.headers.get("if-match");
       const ifNoneMatch = req.headers.get("if-none-match");
-      if (ifNoneMatch !== null) {
+      if (
+        ifMatch !== null
+          ? !matchesIfMatch(ifMatch)
+          : lastModified && isModifiedSince(req.headers.get("if-unmodified-since"), lastModifiedMs)
+      ) {
+        conditionalStatus = 412;
+      } else if (ifNoneMatch !== null) {
         if (matchesIfNoneMatch(ifNoneMatch, etagValue)) {
           conditionalStatus = conditionalGet ? 304 : 412;
         }
@@ -760,6 +771,25 @@ function matchesIfModifiedSince(header: string | null, lastModifiedMs: number): 
   }
   const since = Date.parse(header);
   return !Number.isNaN(since) && lastModifiedMs <= since;
+}
+
+// RFC 9110 §13.1.1 — `If-Match` uses a strong comparison, which our weak tags
+// can never pass (nor can a missing one, with `etag` off), so only `*` matches
+// the current representation.
+function matchesIfMatch(header: string): boolean {
+  return header.trim() === "*";
+}
+
+// RFC 9110 §13.1.4 — whether an `If-Unmodified-Since` fails because the file
+// changed after that date. A missing or invalid date is ignored, so it never
+// fails the precondition. `lastModifiedMs` is floored to the second like the
+// `Last-Modified` we send, so echoing it back passes.
+function isModifiedSince(header: string | null, lastModifiedMs: number): boolean {
+  if (!header) {
+    return false;
+  }
+  const since = Date.parse(header);
+  return !Number.isNaN(since) && lastModifiedMs > since;
 }
 
 // RFC 9110 §13.1.5 — whether an `If-Range` lets the range apply. The entity-tag

@@ -1005,6 +1005,53 @@ describe("staticMiddleware", () => {
       }
     });
 
+    test("answers a failed If-Match with 412", async () => {
+      // `If-Match` needs a strong comparison (RFC 9110 §13.1.1), so our weak
+      // tags never match and only `*` passes.
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      for (const ifMatch of [etag, etag.slice(2), 'W/"stale"', '"stale"']) {
+        const res = await fetchStatic("/app.js", {}, { headers: { "if-match": ifMatch } });
+        expect(res.status, ifMatch).toBe(412);
+        expect(res.headers.get("content-length")).toBe(null);
+        await expect(res.text()).resolves.toBe("");
+      }
+      const res = await fetchStatic("/app.js", {}, { headers: { "if-match": "*" } });
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("answers a stale If-Unmodified-Since with 412", async () => {
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      const before = new Date(Date.parse(lastModified) - 1000).toUTCString();
+      const statusOf = async (headers: Record<string, string>) =>
+        (await fetchStatic("/app.js", {}, { headers })).status;
+      expect(await statusOf({ "if-unmodified-since": lastModified })).toBe(200);
+      expect(await statusOf({ "if-unmodified-since": before })).toBe(412);
+      expect(await statusOf({ "if-unmodified-since": "not a date" })).toBe(200);
+      // Ignored when `If-Match` is present (RFC 9110 §13.1.4).
+      expect(await statusOf({ "if-match": "*", "if-unmodified-since": before })).toBe(200);
+      // Like `If-Modified-Since`, it is not honored with `lastModified: false`.
+      const res = await fetchStatic(
+        "/app.js",
+        { lastModified: false },
+        { headers: { "if-unmodified-since": before } },
+      );
+      expect(res.status).toBe(200);
+    });
+
+    test("lets a failed If-Match 412 win over If-None-Match and Range", async () => {
+      const etag = (await fetchStatic("/range.txt")).headers.get("etag")!;
+      const res = await fetchStatic(
+        "/range.txt",
+        { maxAge: 600 },
+        { headers: { "if-match": '"stale"', "if-none-match": etag, range: "bytes=0-4" } },
+      );
+      expect(res.status).toBe(412);
+      expect(res.headers.get("content-range")).toBe(null);
+      expect(res.headers.get("cache-control")).toBe(null);
+      await expect(res.text()).resolves.toBe("");
+    });
+
     test("answers a conditional HEAD with 304", async () => {
       const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
       const res = await fetchStatic(
