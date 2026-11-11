@@ -23,7 +23,7 @@ export interface PreparedNodeResponse {
  * `status` and `statusText` are prototype getters that an object spread drops.
  */
 function withHeaders(init: ResponseInit | undefined, headers: HeadersInit): ResponseInit {
-  return { ...init, status: init?.status, statusText: init?.statusText, headers };
+  return { status: init?.status, statusText: init?.statusText, headers };
 }
 
 /**
