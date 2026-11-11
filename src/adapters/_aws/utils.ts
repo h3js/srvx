@@ -38,16 +38,20 @@ export function awsRequest(
   context: AWSLambdaContext,
   trustProxy?: TrustProxyOption,
 ): ServerRequest {
+  // Headers are merged once (see `awsEventHeaders`) and every derivation below
+  // reads from them, so lookups are case-insensitive and see repeated lines.
+  const headers = awsEventHeaders(event);
+
   // The gateway-verified `sourceIp` is the nearest hop. Resolve the trusted hop
   // count once (walking `X-Forwarded-For` right-to-left from it) and pass it
   // down; both the URL and the client IP derivation are hop-aware.
   const sourceIp = awsEventIP(event);
-  const forwardedFor = awsForwardedFor(event);
+  const forwardedFor = headers.get("x-forwarded-for");
   const hops = trustedHops(trustProxy, sourceIp, forwardedFor);
 
-  const req = new Request(awsEventURL(event, hops), {
+  const req = new Request(awsEventURL(event, headers, hops), {
     method: awsEventMethod(event),
-    headers: awsEventHeaders(event),
+    headers,
     body: awsEventBody(event),
   }) as ServerRequest;
 
@@ -59,10 +63,6 @@ export function awsRequest(
   req.ip = resolveClientIP(trustProxy, sourceIp, forwardedFor);
 
   return req;
-}
-
-function awsForwardedFor(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string | undefined {
-  return event.headers["X-Forwarded-For"] || event.headers["x-forwarded-for"];
 }
 
 function awsEventMethod(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string {
@@ -80,7 +80,11 @@ function awsEventIP(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): string 
   );
 }
 
-function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: number): URL {
+function awsEventURL(
+  event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2,
+  headers: Headers,
+  hops: number,
+): URL {
   const rawPath =
     (event as AWSLambdaProxyEvent).path || (event as AWSLambdaProxyEventV2).rawPath || "/";
 
@@ -98,10 +102,7 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   // Only honor client-supplied `X-Forwarded-*` headers when the peer is trusted
   // (`hops > 0`); otherwise any client could spoof the host or protocol. `hops`
   // selects the outermost trusted proxy's entry from a comma-joined chain.
-  const forwardedHost = forwardedHopValue(
-    event.headers["X-Forwarded-Host"] || event.headers["x-forwarded-host"],
-    hops,
-  );
+  const forwardedHost = forwardedHopValue(headers.get("x-forwarded-host"), hops);
 
   // A malformed host must neither inject an authority/path into the URL built
   // below nor throw out of `awsRequest` (which runs before the error
@@ -109,16 +110,12 @@ function awsEventURL(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2, hops: n
   // `_invalid_` sentinel as the Node adapter.
   const host =
     (forwardedHost && HOST_RE.test(forwardedHost) ? forwardedHost : undefined) ||
-    event.headers.host ||
-    event.headers.Host ||
+    headers.get("host") ||
     event.requestContext?.domainName;
   const hostname = host && HOST_RE.test(host) ? host : "_invalid_";
 
   // Assume `https` when untrusted (Lambda is always TLS-terminated at the gateway).
-  const forwardedProto = forwardedHopValue(
-    event.headers["X-Forwarded-Proto"] || event.headers["x-forwarded-proto"],
-    hops,
-  );
+  const forwardedProto = forwardedHopValue(headers.get("x-forwarded-proto"), hops);
   const protocol = forwardedProto === "http" ? "http" : "https";
 
   return new URL(`${protocol}://${hostname}${path}${query ? `?${query}` : ""}`);
@@ -137,11 +134,47 @@ function awsEventQuery(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2) {
 
 function awsEventHeaders(event: AWSLambdaProxyEvent | AWSLambdaProxyEventV2): Headers {
   const headers = new Headers();
-  for (const [key, value] of Object.entries(event.headers)) {
-    if (value) {
+
+  // API Gateway v1 puts only the last value of a repeated header in `headers`
+  // and every value in `multiValueHeaders`, so the latter is the source of truth
+  // (h3js/srvx#313). ALB with multi-value headers enabled renames the field to
+  // `multiValueHeaders` and sends no `headers` at all (h3js/srvx#314).
+  // https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html#api-gateway-simple-proxy-for-lambda-input-format
+  // https://docs.aws.amazon.com/elasticloadbalancing/latest/application/lambda-functions.html#multi-value-headers
+  const multiValueHeaders = (event as AWSLambdaProxyEvent).multiValueHeaders;
+  const fromMultiValue = new Set<string>();
+  // Repeated `Cookie` lines (one array entry each on ALB) form one cookie-string
+  // joined by `; ` (RFC 6265 §5.4), not the generic `, ` list separator.
+  const cookieLines: string[] = [];
+  if (multiValueHeaders) {
+    for (const [key, values] of Object.entries(multiValueHeaders)) {
+      const name = key.toLowerCase();
+      for (const value of values || []) {
+        if (!value) {
+          continue;
+        }
+        fromMultiValue.add(name);
+        if (name === "cookie") {
+          cookieLines.push(value);
+        } else {
+          headers.append(name, value);
+        }
+      }
+    }
+  }
+  if (cookieLines.length > 0) {
+    headers.set("cookie", cookieLines.join("; "));
+  }
+
+  // Fill in whatever `multiValueHeaders` lacks (or everything, when it is
+  // absent as on payload 2.0), compared case-insensitively so mixed-case keys
+  // do not duplicate a value.
+  for (const [key, value] of Object.entries(event.headers || {})) {
+    if (value && !fromMultiValue.has(key.toLowerCase())) {
       headers.set(key, value);
     }
   }
+
   // Payload 2.0 (HTTP API / Function URL) may carry the same cookies in both
   // `headers.cookie` and the parsed `cookies[]` array. The array is the source
   // of truth when non-empty, so drop the header instead of appending on top of

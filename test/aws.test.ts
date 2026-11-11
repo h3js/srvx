@@ -17,6 +17,7 @@ import {
   type AWSLambdaHandler,
 } from "../src/adapters/aws-lambda.ts";
 import type {
+  ALBEvent,
   APIGatewayProxyEvent,
   APIGatewayProxyEventV2,
   APIGatewayProxyResult,
@@ -539,6 +540,129 @@ describe("[AWS Lambda] Request Utils", () => {
 
       expect(url.protocol).toBe("http:");
       expect(url.host).toBe("forwarded.example");
+    });
+
+    describe("multiValueHeaders", () => {
+      const v1Event = (
+        headers: APIGatewayProxyEvent["headers"],
+        multiValueHeaders: APIGatewayProxyEvent["multiValueHeaders"],
+      ): APIGatewayProxyEvent => ({
+        httpMethod: "GET",
+        path: "/",
+        headers,
+        multiValueHeaders,
+        body: null,
+        isBase64Encoded: false,
+        multiValueQueryStringParameters: null,
+        queryStringParameters: null,
+        pathParameters: null,
+        stageVariables: null,
+        requestContext: { identity: { sourceIp: "10.0.0.3" } } as any,
+        resource: "",
+      });
+
+      // h3js/srvx#313: `headers` only carries the last value of each repeated header.
+      const repeated = v1Event(
+        {
+          Host: "api.example.com",
+          Accept: "application/json",
+          "X-Forwarded-For": "10.0.0.2",
+        },
+        {
+          Host: ["api.example.com"],
+          Accept: ["text/html", "application/json"],
+          "X-Forwarded-For": ["10.0.0.1", "10.0.0.2"],
+        },
+      );
+
+      test("keeps every value of a repeated header", () => {
+        const request = awsRequest(repeated, createMockContext());
+
+        expect(request.headers.get("accept")).toBe("text/html, application/json");
+        expect(request.headers.get("x-forwarded-for")).toBe("10.0.0.1, 10.0.0.2");
+        expect(new URL(request.url).host).toBe("api.example.com");
+      });
+
+      test("resolves request.ip across the merged X-Forwarded-For chain", () => {
+        expect(awsRequest(repeated, createMockContext(), true).ip).toBe("10.0.0.1");
+        expect(awsRequest(repeated, createMockContext(), ["10.0.0.3"]).ip).toBe("10.0.0.2");
+      });
+
+      test("fills in keys only present in headers, case-insensitively", () => {
+        const request = awsRequest(
+          v1Event(
+            { host: "api.example.com", "X-Only-Flat": "flat", accept: "application/json" },
+            { Accept: ["text/html", "application/json"] },
+          ),
+          createMockContext(),
+        );
+
+        expect(request.headers.get("x-only-flat")).toBe("flat");
+        expect(request.headers.get("host")).toBe("api.example.com");
+        expect(request.headers.get("accept")).toBe("text/html, application/json");
+      });
+    });
+
+    describe("ALB events", () => {
+      const requestContext = {
+        elb: {
+          targetGroupArn:
+            "arn:aws:elasticloadbalancing:us-east-2:123456789012:targetgroup/lambda-279XGJDqGZ5rsrHC2Fjr/49e9d65c45c6791a",
+        },
+      };
+
+      test("multi-value mode (no `headers` field) does not throw", () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/lambda",
+          multiValueQueryStringParameters: {},
+          multiValueHeaders: {
+            accept: ["*/*"],
+            cookie: ["name1=value1", "name2=value2"],
+            host: ["alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com"],
+            "user-agent": ["curl/7.79.1"],
+            "x-amzn-trace-id": ["Root=1-62fa9327-21cdd4da4c6db451490a5fb7"],
+            "x-forwarded-for": ["123.123.123.123"],
+            "x-forwarded-port": ["80"],
+            "x-forwarded-proto": ["http"],
+          },
+          // The AWS docs sample carries `body: "Test"` on this GET, which
+          // `new Request()` rejects; that is a body-handling concern.
+          body: null,
+          isBase64Encoded: false,
+        };
+
+        const request = awsRequest(event as any, createMockContext(), true);
+        const url = new URL(request.url);
+
+        expect(url.host).toBe(
+          "alb-c-LoadB-14POFKYCLBNSF-1815800096.eu-central-1.elb.amazonaws.com".toLowerCase(),
+        );
+        expect(url.protocol).toBe("http:");
+        expect(url.pathname).toBe("/lambda");
+        expect(request.headers.get("user-agent")).toBe("curl/7.79.1");
+        // Two `Cookie` lines must form one cookie-string, not a `, ` list.
+        expect(request.headers.get("cookie")).toBe("name1=value1; name2=value2");
+      });
+
+      test("health check event does not throw", () => {
+        const event: ALBEvent = {
+          requestContext,
+          httpMethod: "GET",
+          path: "/",
+          queryStringParameters: {},
+          headers: { "user-agent": "ELB-HealthChecker/2.0" },
+          body: "",
+          isBase64Encoded: false,
+        };
+
+        const request = awsRequest(event as any, createMockContext());
+
+        expect(request.method).toBe("GET");
+        expect(request.headers.get("user-agent")).toBe("ELB-HealthChecker/2.0");
+        expect(request.body).toBeNull();
+      });
     });
 
     test("should handle path parameters in URL construction", () => {
