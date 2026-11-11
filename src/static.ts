@@ -223,6 +223,20 @@ const COMPRESSORS: Record<string, (sizeHint: number) => Transform> = {
 const NON_CANONICAL_PATH_RE =
   /\/\/|%(?:00|2[146-9a-f]|3[\dabd]|4[\da-f]|5[\da-df]|6[1-9a-f]|7[\dace])/i;
 
+// Names Windows resolves to a different file than they spell, matched on the
+// decoded path. Win32 drops a trailing `.` or space from each segment, and `:`
+// opens an NTFS stream (`index.html::$DATA` is `index.html`'s own bytes). Each
+// gives a file a second name whose extension no longer reads `.html`, so it
+// would be served raw, without `renderHTML`. A trailing `.`/space is refused on
+// every platform to keep the URL-to-file mapping fixed; `:` only on Windows,
+// where no file name can hold one, so POSIX names like `12:00.log` still serve.
+// The `.` and `..` segments are left to `join()`, which resolves them; `...`
+// and longer are refused, as Windows strips those too.
+const TRAILING_DOT_OR_SPACE = String.raw`(?:[^/.]\.+|\.{3,}| )(?:\/|$)`;
+const ALIASED_NAME_RE = new RegExp(
+  sep === "\\" ? `:|${TRAILING_DOT_OR_SPACE}` : TRAILING_DOT_OR_SPACE,
+);
+
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
 const asPrefix = (path: string): string => (path.endsWith(sep) ? path : path + sep);
@@ -382,6 +396,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
         // Malformed encoding (`/foo%`, `/%ZZ`): reject like nginx/serve-static.
         return new FastResponse("Bad Request", { status: 400 });
       }
+    }
+    if (ALIASED_NAME_RE.test(path)) {
+      return next();
     }
     let paths: string[];
     if (path === "") {

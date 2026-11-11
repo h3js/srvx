@@ -82,6 +82,8 @@ beforeAll(async () => {
   await writeFile(join(dir, "big.js"), BIG_JS);
   await writeFile(join(dir, "big-gz.js"), BIG_JS);
   await writeFile(join(dir, "big-gz.js.gz"), BIG_GZ_MARKER);
+  // An upper-case extension is still a compressible type.
+  await writeFile(join(dir, "big-upper.JS"), BIG_JS);
 
   // The two size bounds, from either side. `truncate` extends `huge.js` with
   // zeros sparsely, so a 10 MiB size costs neither the write nor the disk.
@@ -124,6 +126,10 @@ beforeAll(async () => {
   await writeFile(join(dir, "@fs", "secret.txt"), "AT_FS_SECRET");
   if (sep !== "\\") {
     await writeFile(join(dir, "question?.txt"), "QUESTION_NAME");
+    // Names Windows cannot hold (or would strip back to `trailing`).
+    await writeFile(join(dir, "trailing."), "TRAILING_DOT");
+    await writeFile(join(dir, "trailing "), "TRAILING_SPACE");
+    await writeFile(join(dir, "12:00.log"), "COLON_NAME");
   }
 
   // Every unreserved punctuation character (RFC 3986 §2.3), in one name.
@@ -613,6 +619,13 @@ describe("staticMiddleware", () => {
       const body = Buffer.from(await res.arrayBuffer());
       expect(decode[enc]!(body).toString()).toBe(BIG_JS);
       expect(body.length).toBeLessThan(BIG_JS.length);
+    });
+
+    test("encodes a file with an upper-case extension", async () => {
+      const res = await fetchEncoded("/big-upper.JS", "br");
+      expect(res.headers.get("content-encoding")).toBe("br");
+      expect(res.headers.get("vary")).toBe("Accept-Encoding");
+      expect(brotliDecompressSync(Buffer.from(await res.arrayBuffer())).toString()).toBe(BIG_JS);
     });
 
     test("prefers brotli over gzip", async () => {
@@ -1247,6 +1260,39 @@ describe("staticMiddleware", () => {
     test("serves nothing for a raw backslash", async () => {
       // `sub\inside.txt` on Windows, where `\` is a separator.
       await expectNext(await fetchRaw("/sub\\inside.txt"));
+    });
+
+    test.each([
+      // Windows drops a trailing `.`/space, so each opens `index.html` there,
+      // but under an extension that is not `.html`: served raw, not rendered.
+      "/index.html.",
+      "/index.html..",
+      "/index.html%20",
+      "/index.html.%20.",
+      "/sub./inside.txt",
+      "/sub%20/inside.txt",
+      "/sub/.../inside.txt",
+    ])("serves nothing at the Windows alias %s", async (path) => {
+      await expectNext(await fetchStatic(path), path);
+    });
+
+    test.skipIf(sep === "\\")("serves no POSIX name ending in `.` or a space", async () => {
+      // Valid names here, but Windows would serve `trailing` for both URLs:
+      // refused on every platform, so a URL maps to the same file everywhere.
+      await expectNext(await fetchStatic("/trailing."));
+      await expectNext(await fetchStatic("/trailing%20"));
+    });
+
+    test.skipIf(sep === "\\")("serves a POSIX name holding a `:`", async () => {
+      // No Windows name can hold one, so it aliases nothing and is only refused there.
+      await expect(fetchStatic("/12:00.log").then((r) => r.text())).resolves.toBe("COLON_NAME");
+    });
+
+    test.runIf(sep === "\\")("serves nothing through an NTFS stream", async () => {
+      // `index.html::$DATA` is `index.html`'s own bytes, under a non-HTML extension.
+      await expectNext(await fetchStatic("/index.html::$DATA"));
+      await expectNext(await fetchStatic("/index.html::$data"));
+      await expectNext(await fetchStatic("/index.html:stream"));
     });
 
     test("never serves an encoded dot, whatever the dotfile policy", async () => {
