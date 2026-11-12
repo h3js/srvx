@@ -21,7 +21,7 @@ import { WebServerResponse } from "./response.ts";
  * @experimental Behavior might be unstable.
  */
 export async function fetchNodeHandler(
-  handler: NodeHttpHandler,
+  handler: NodeHttpHandler | NodeHTTPMiddleware,
   req: ServerRequest,
 ): Promise<Response> {
   // Direct pass through if coming from a Node server handler
@@ -43,28 +43,42 @@ export async function fetchNodeHandler(
     // A plain `(req, res)` handler keeps its original 2-arg invocation.
     if (handler.length > 2) {
       await new Promise<void>((resolve, reject) => {
-        nodeRes.once("finish", () => resolve());
-        nodeRes.once("close", () => resolve());
+        // Past the head, an error can't change the status, so it fails the body and closes the request.
+        const fail = (error: Error) => {
+          if (!nodeRes.headersSent) {
+            return reject(error);
+          }
+          nodeReq.destroy();
+          nodeRes.destroy(error);
+        };
+        // Settle on the head, as `toWebResponse()` does, so a streaming middleware is returned before it ends.
+        nodeRes.waitForResponseHead().then(resolve, reject);
         nodeRes.once("error", (error) => reject(error));
-        Promise.resolve(
-          (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
-            if (error) {
-              return reject(error);
-            }
-            // `next()` with no downstream handler: finalize the response so
-            // `toWebResponse()` can settle instead of waiting forever.
-            if (!nodeRes.writableEnded) {
-              nodeRes.end();
-            }
-            resolve();
-          }),
-        ).catch((error) => reject(error));
+        // The executor turns a synchronous throw into a rejection, so it reaches `fail` too.
+        new Promise((settle) =>
+          settle(
+            (handler as NodeHTTPMiddleware)(nodeReq as any, nodeRes as any, (error) => {
+              if (error) {
+                return fail(error);
+              }
+              // `next()` with no downstream handler: finalize the response so
+              // `toWebResponse()` can settle instead of waiting forever.
+              if (!nodeRes.writableEnded) {
+                nodeRes.end();
+              }
+              resolve();
+            }),
+          ),
+        ).catch(fail);
       });
     } else {
-      await handler(nodeReq as any, nodeRes as any);
+      await (handler as NodeHttpHandler)(nodeReq as any, nodeRes as any);
     }
     return await nodeRes.toWebResponse();
   } catch (error: any) {
+    // The 500 below replaces this response, so stop reading the request body and close both.
+    nodeReq.destroy();
+    nodeRes.destroy();
     // Client aborts / premature socket closes are routine (the client is already
     // gone), so don't log them as errors. See https://github.com/h3js/srvx/issues/208
     const aborted =

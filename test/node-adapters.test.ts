@@ -6,7 +6,12 @@ import { describe, expect, test, vi } from "vitest";
 import { getTLSCert, HOST_PARSER_AGREEMENT_CASES } from "./_utils.ts";
 import { isValidHost } from "../src/_trust-proxy.ts";
 
-import type { NodeHttp1Handler, NodeServerRequest, NodeServerResponse } from "../src/types.ts";
+import type {
+  NodeHttp1Handler,
+  NodeHTTP1Middleware,
+  NodeServerRequest,
+  NodeServerResponse,
+} from "../src/types.ts";
 import {
   fetchNodeHandler,
   FastResponse,
@@ -434,23 +439,30 @@ describe("adapters", () => {
         name: "setHeader",
         setHeaders: (res) => res.setHeader("Transfer-Encoding", "chunked"),
       },
+      {
+        name: "appendHeader",
+        setHeaders: (res) => res.appendHeader("Transfer-Encoding", "chunked"),
+      },
     ];
 
+    // Express swaps the response's prototype, so the guards must survive it too.
     for (const { name, setHeaders } of cases) {
-      test.skipIf(noBridge)(name, async () => {
-        const handler: NodeHttp1Handler = (_req, res) => {
-          setHeaders(res as any);
-          res.write("hello");
-          res.end("world");
-        };
-        const webHandler = toFetchHandler(handler);
-        const res = await webHandler(new Request("http://localhost/"));
-        expect(res.status).toBe(200);
-        // Body arrives verbatim, without chunk framing.
-        expect(await res.text()).toBe("helloworld");
-        // The hop-by-hop framing header does not leak into the web Response.
-        expect(res.headers.get("transfer-encoding")).toBe(null);
-      });
+      for (const viaExpress of [false, true]) {
+        test.skipIf(noBridge)(viaExpress ? `${name} in an Express app` : name, async () => {
+          const handler: NodeHttp1Handler = (_req, res) => {
+            setHeaders(res as any);
+            res.write("hello");
+            res.end("world");
+          };
+          const webHandler = toFetchHandler(viaExpress ? express().use(handler as any) : handler);
+          const res = await webHandler(new Request("http://localhost/"));
+          expect(res.status).toBe(200);
+          // Body arrives verbatim, without chunk framing.
+          expect(await res.text()).toBe("helloworld");
+          // The hop-by-hop framing header does not leak into the web Response.
+          expect(res.headers.get("transfer-encoding")).toBe(null);
+        });
+      }
     }
   });
 
@@ -696,7 +708,7 @@ describe("adapters", () => {
       res.writeHead(201, { "content-type": "text/plain" });
       res.end("middleware ok");
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(201);
     expect(await res.text()).toBe("middleware ok");
@@ -712,7 +724,7 @@ describe("adapters", () => {
       // No downstream handler: finalize with the current response state.
       next();
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const settled = await Promise.race([
       Promise.resolve(webHandler(new Request("http://localhost/"))).then((r) => ({
         status: r.status,
@@ -725,6 +737,59 @@ describe("adapters", () => {
     expect(settled).toMatchObject({ status: 200, header: "1" });
   });
 
+  // An SSE middleware neither ends the response nor calls `next()`, so the
+  // Response must settle on the head, as for a plain handler (#248).
+  test.skipIf(noBridge)("connect-style middleware streams before res.end()", async () => {
+    let pushChunk!: () => void;
+    let fail!: () => void;
+    const middleware: NodeHTTP1Middleware = (_req, res, next) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      pushChunk = () => res.write("data: 2\n\n");
+      fail = () => next(new Error("stream failed"));
+    };
+    const res = await Promise.race([
+      toFetchHandler(middleware)(new Request("http://localhost/")),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("streaming middleware hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    expect(decoder.decode((await reader.read()).value)).toBe("data: 1\n\n");
+    pushChunk();
+    expect(decoder.decode((await reader.read()).value)).toBe("data: 2\n\n");
+    // Past the head, `next(err)` can no longer change the status, so it fails the body.
+    fail();
+    await expect(reader.read()).rejects.toThrow("stream failed");
+  });
+
+  // Express swaps the response's prototype, so the head must still be noticed without it.
+  test.skipIf(noBridge)("an Express app streams before res.end()", async () => {
+    let endStream!: () => void;
+    const app = express().get("/", (_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: 1\n\n");
+      endStream = () => res.end();
+    });
+    const res = await Promise.race([
+      toFetchHandler(app)(new Request("http://localhost/")),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error("Express stream hung until finish")), 3000),
+      ),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+
+    const reader = res.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("data: 1\n\n");
+    endStream();
+    expect((await reader.read()).done).toBe(true);
+  });
+
   test("connect-style middleware calling next(err) propagates as an error", async () => {
     const error = new Error("boom");
     const middleware = (
@@ -734,7 +799,7 @@ describe("adapters", () => {
     ) => {
       next(error);
     };
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     // Silence the expected error log from fetchNodeHandler's catch.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
@@ -743,18 +808,219 @@ describe("adapters", () => {
     errorSpy.mockRestore();
   });
 
+  test.skipIf(noBridge)("a failing middleware stops reading the request body", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (++pulls > 8) return controller.close();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        controller.enqueue(new Uint8Array(4096));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    let socket!: NodeServerRequest["socket"];
+    const closed: string[] = [];
+    const middleware: NodeHTTP1Middleware = (req, res, next) => {
+      socket = req.socket;
+      req.on("close", () => closed.push("req"));
+      res.on("close", () => closed.push("res"));
+      req.once("data", () => next(new Error("denied")));
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await toFetchHandler(middleware)(
+      new Request("http://localhost/", { method: "POST", body, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+
+    const pullsAtResponse = pulls;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(pulls).toBe(pullsAtResponse);
+    expect(cancelled).toBe(true);
+    expect(socket.destroyed).toBe(true);
+    expect(closed.sort()).toEqual(["req", "res"]);
+  });
+
+  // Past the head a failure can't change the status, so it fails the body and
+  // closes the request and response however the middleware reports it.
+  describe("connect-style middleware failing after the head", () => {
+    const cases: { name: string; fail: (next: (error?: Error) => void) => unknown }[] = [
+      { name: "next(err)", fail: (next) => next(new Error("boom")) },
+      { name: "rejection", fail: () => Promise.reject(new Error("boom")) },
+      {
+        name: "throw",
+        fail: () => {
+          throw new Error("boom");
+        },
+      },
+    ];
+    for (const { name, fail } of cases) {
+      test.skipIf(noBridge)(name, async () => {
+        const closed: string[] = [];
+        const middleware: NodeHTTP1Middleware = (req, res, next) => {
+          req.on("close", () => closed.push("req"));
+          res.on("close", () => closed.push("res"));
+          res.writeHead(201);
+          res.write("hello");
+          return fail(next);
+        };
+        const body = new ReadableStream({ pull() {} });
+        const res = await toFetchHandler(middleware)(
+          new Request("http://localhost/", { method: "POST", body, duplex: "half" } as RequestInit),
+        );
+        expect(res.status).toBe(201);
+        await expect(res.text()).rejects.toThrow("boom");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(closed.sort()).toEqual(["req", "res"]);
+      });
+    }
+  });
+
   test("connect-style middleware that throws async propagates as an error", async () => {
     const middleware = (
       _req: NodeServerRequest,
       _res: NodeServerResponse,
       _next: (error?: Error) => void,
     ) => Promise.reject(new Error("async boom"));
-    const webHandler = toFetchHandler(middleware as any);
+    const webHandler = toFetchHandler(middleware);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await webHandler(new Request("http://localhost/"));
     expect(res.status).toBe(500);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  test("connect-style middleware that throws before its head answers 500", async () => {
+    const middleware: NodeHTTP1Middleware = (_req, _res, _next) => {
+      throw new Error("sync boom");
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await toFetchHandler(middleware)(new Request("http://localhost/"));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  // `node:http` calls the round-tripped middleware without `next`, so it gets one
+  // where `next()` answers 404 and `next(err)` 500, while an Express app comes back
+  // as is and answers with its own final handler (an Express router has none, so it
+  // gets the same `next` as middleware); Express passes its own `next`, which must
+  // reach the next route.
+  test("toNodeHandler(toFetchHandler()) with connect-style middleware", async () => {
+    const middleware = (
+      req: NodeServerRequest,
+      res: NodeServerResponse,
+      next: (error?: Error) => void,
+    ) => {
+      if (req.url === "/self") {
+        // @ts-expect-error http1/http2 union
+        res.writeHead(201, { "content-type": "text/plain" });
+        return res.end("middleware ok");
+      }
+      res.setHeader("x-mw", "1");
+      next(req.url === "/error" ? new Error("boom") : undefined);
+    };
+    expect(toNodeHandler(toFetchHandler(middleware)).name).toBe(middleware.name);
+    const server = createServer(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const url = `http://localhost:${(server.address() as AddressInfo).port}`;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const self = await fetch(`${url}/self`);
+    expect(self.status).toBe(201);
+    expect(await self.text()).toBe("middleware ok");
+
+    const next = await fetch(`${url}/next`);
+    expect(next.status).toBe(404);
+    expect(next.headers.get("x-mw")).toBe("1");
+
+    const error = await fetch(`${url}/error`);
+    expect(error.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    const helloApp = express()
+      .get("/hello", (req, res) => res.send("hello"))
+      .get("/invalid", (req, res) => {
+        res.status(400);
+        throw new Error("invalid");
+      });
+    expect(toNodeHandler(toFetchHandler(helloApp))).toBe(helloApp);
+    const helloServer = createServer(toNodeHandler(toFetchHandler(helloApp)) as NodeHttp1Handler);
+    await new Promise<void>((resolve) => helloServer.listen(0, resolve));
+    const helloUrl = `http://localhost:${(helloServer.address() as AddressInfo).port}`;
+
+    const hello = await fetch(`${helloUrl}/hello`);
+    expect(hello.status).toBe(200);
+    expect(await hello.text()).toBe("hello");
+    expect((await fetch(`${helloUrl}/invalid`)).status).toBe(400);
+    expect((await fetch(`${helloUrl}/missing`)).status).toBe(404);
+
+    await new Promise<void>((resolve) => helloServer.close(() => resolve()));
+
+    const router = express.Router().get("/route", (req, res) => res.end("route"));
+    // A router's Express-typed `req` fails the types, but untyped code converts one too.
+    const routerServer = createServer(
+      toNodeHandler(toFetchHandler(router as any)) as NodeHttp1Handler,
+    );
+    await new Promise<void>((resolve) => routerServer.listen(0, resolve));
+    const routerUrl = `http://localhost:${(routerServer.address() as AddressInfo).port}`;
+
+    const route = await fetch(`${routerUrl}/route`, { signal: AbortSignal.timeout(3000) });
+    expect(await route.text()).toBe("route");
+    const routeMissing = await fetch(`${routerUrl}/missing`, { signal: AbortSignal.timeout(3000) });
+    expect(routeMissing.status).toBe(404);
+
+    await new Promise<void>((resolve) => routerServer.close(() => resolve()));
+
+    const errorHandler = (err: Error, req: any, res: any, next: any) =>
+      res.status(418).send(err.message);
+    const app = express()
+      .use(toNodeHandler(toFetchHandler(middleware)) as NodeHttp1Handler)
+      .get("/next", (req, res) => res.send("next route"))
+      // The types reject an error handler, but untyped code that converts every middleware passes one.
+      .use(toNodeHandler(toFetchHandler(errorHandler as any)) as NodeHttp1Handler);
+    const appServer = createServer(app);
+    await new Promise<void>((resolve) => appServer.listen(0, resolve));
+    const appUrl = `http://localhost:${(appServer.address() as AddressInfo).port}`;
+
+    const appNext = await fetch(`${appUrl}/next`);
+    expect(appNext.headers.get("x-mw")).toBe("1");
+    expect(await appNext.text()).toBe("next route");
+
+    const appError = await fetch(`${appUrl}/error`);
+    expect(appError.status).toBe(418);
+    expect(await appError.text()).toBe("boom");
+
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
+
+    // Express 5 sends a rejected promise from a handler to its error handler.
+    const asyncMiddleware = async (
+      _req: NodeServerRequest,
+      _res: NodeServerResponse,
+      _next: (error?: Error) => void,
+    ) => {
+      throw new Error("async boom");
+    };
+    const asyncApp = express()
+      .use(toNodeHandler(toFetchHandler(asyncMiddleware)) as NodeHttp1Handler)
+      .use((err: Error, req: any, res: any, next: any) => res.status(418).send(err.message));
+    const asyncServer = createServer(asyncApp);
+    await new Promise<void>((resolve) => asyncServer.listen(0, resolve));
+    const asyncRes = await fetch(
+      `http://localhost:${(asyncServer.address() as AddressInfo).port}/`,
+      { signal: AbortSignal.timeout(3000) },
+    );
+    expect(asyncRes.status).toBe(418);
+    expect(await asyncRes.text()).toBe("async boom");
+
+    await new Promise<void>((resolve) => asyncServer.close(() => resolve()));
   });
 });
 

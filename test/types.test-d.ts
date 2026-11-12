@@ -1,7 +1,8 @@
 import { describe, test, expectTypeOf } from "vitest";
 import type { PeerCertificate } from "node:tls";
-import type { ServerRequest } from "../src/types.ts";
+import type { NodeHTTPMiddleware, ServerRequest } from "../src/types.ts";
 import type { MTLSPluginOptions } from "../src/mtls.ts";
+import { fetchNodeHandler, toFetchHandler } from "../src/adapters/node.ts";
 
 // `CloudflareEnv` is the augmentation point for Workers bindings.
 declare module "../src/types.ts" {
@@ -35,6 +36,17 @@ describe("types", () => {
         requestCert?: boolean;
         ca?: string | string[];
       }>();
+    });
+  });
+
+  // Connect-style `(req, res, next)` middleware is invoked with a bridged `next`.
+  describe("node handler", () => {
+    const middleware = {} as NodeHTTPMiddleware;
+    test("fetchNodeHandler accepts middleware", () => {
+      expectTypeOf(fetchNodeHandler).toBeCallableWith(middleware, new Request("http://_"));
+    });
+    test("toFetchHandler accepts middleware", () => {
+      expectTypeOf(toFetchHandler).toBeCallableWith(middleware);
     });
   });
 });
