@@ -201,7 +201,7 @@ describe("adapters", () => {
       const { pathname } = new URL(request.url);
       return new Response(pathname, { headers: { "content-length": String(pathname.length) } });
     };
-    const nodeHandler = toNodeHandler(webHandler) as NodeHttp1Handler;
+    const nodeHandler = toNodeHandler(webHandler);
     const plain = createServer(nodeHandler);
     // Mounted under express: `/public/` matches the raw target and the mounted
     // `req.url` becomes `/\..\admin/secret`, which resolves to `/admin/secret`.

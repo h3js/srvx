@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { serve, toNodeHandler } from "../src/adapters/node.ts";
-import type { FetchHandler, NodeHttp1Handler } from "../src/types.ts";
+import type { FetchHandler } from "../src/types.ts";
 
 const NativePromise = Promise;
 afterEach(() => vi.unstubAllGlobals());
@@ -38,7 +38,7 @@ for (const adapter of ["serve", "toNodeHandler"] as const) {
             await server.close(true);
           }
         } else {
-          const server = createServer(toNodeHandler(handler) as NodeHttp1Handler);
+          const server = createServer(toNodeHandler(handler));
           server.listen(0, "127.0.0.1");
           await once(server, "listening");
           try {
