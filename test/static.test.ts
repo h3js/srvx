@@ -805,6 +805,59 @@ describe("staticMiddleware", () => {
   });
 
   describe("caching validators", () => {
+    test("rejects If-Match validators that cannot strongly match the weak ETag", async () => {
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      for (const value of [etag, etag.slice(2), '"stale"']) {
+        const res = await fetchStatic("/app.js", {}, { headers: { "if-match": value } });
+        expect(res.status).toBe(412);
+        await expect(res.text()).resolves.toBe("");
+      }
+    });
+
+    test("accepts If-Match: * for an existing file", async () => {
+      const res = await fetchStatic("/app.js", {}, { headers: { "if-match": "*" } });
+      expect(res.status).toBe(200);
+      await expect(res.text()).resolves.toBe("PLAIN_JS");
+    });
+
+    test("rejects a failed If-Match before a matching If-None-Match", async () => {
+      const etag = (await fetchStatic("/app.js")).headers.get("etag")!;
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { headers: { "if-match": '"stale"', "if-none-match": etag } },
+      );
+      expect(res.status).toBe(412);
+    });
+
+    test("rejects a stale If-Unmodified-Since before evaluating a range", async () => {
+      const res = await fetchStatic(
+        "/range.txt",
+        {},
+        { headers: { "if-unmodified-since": new Date(0).toUTCString(), range: "bytes=0-4" } },
+      );
+      expect(res.status).toBe(412);
+      expect(res.headers.get("content-range")).toBe(null);
+    });
+
+    test("accepts a current If-Unmodified-Since and ignores an invalid date", async () => {
+      const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
+      for (const value of [lastModified, "not a date"]) {
+        const res = await fetchStatic("/app.js", {}, { headers: { "if-unmodified-since": value } });
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("PLAIN_JS");
+      }
+    });
+
+    test("If-Match presence suppresses If-Unmodified-Since", async () => {
+      const res = await fetchStatic(
+        "/app.js",
+        {},
+        { headers: { "if-match": "*", "if-unmodified-since": new Date(0).toUTCString() } },
+      );
+      expect(res.status).toBe(200);
+    });
+
     test("sets a weak ETag and Last-Modified by default", async () => {
       const res = await fetchStatic("/app.js");
       expect(res.headers.get("etag")).toMatch(/^W\/".+"$/);
