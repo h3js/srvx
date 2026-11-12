@@ -1,5 +1,7 @@
 import type {
   FetchHandler,
+  NodeHttp1Handler,
+  NodeHttp2Handler,
   NodeHttpHandler,
   NodeServerRequest,
   NodeServerResponse,
@@ -18,13 +20,18 @@ export type AdapterMeta = {
 
 /**
  * Converts a Fetch API handler to a Node.js HTTP handler.
+ *
+ * The returned handler accepts both HTTP/1 and HTTP/2 requests, so it can be passed to
+ * `node:http`, `node:https` and `node:http2` servers.
  */
 export function toNodeHandler(
   handler: FetchHandler & AdapterMeta,
   options?: { maxRequestBodySize?: number; trustProxy?: TrustProxyOption },
-): NodeHttpHandler & AdapterMeta {
+): NodeHttp1Handler & NodeHttp2Handler & AdapterMeta {
   if (handler.__nodeHandler) {
-    return handler.__nodeHandler;
+    // Round trip of `toFetchHandler()`: the original handler is returned as-is,
+    // so it supports whichever protocols it was written for.
+    return handler.__nodeHandler as NodeHttp1Handler & NodeHttp2Handler;
   }
 
   function convertedNodeHandler(nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) {

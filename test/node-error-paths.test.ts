@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, test } from "vitest";
 import { FastResponse, sendNodeResponse, serve, toNodeHandler } from "../src/adapters/node.ts";
-import type { NodeHttp1Handler, NodeServerResponse, ServerRequest } from "../src/types.ts";
+import type { NodeServerResponse, ServerRequest } from "../src/types.ts";
 import { addExecUnhandledThrowTests } from "./_error-tests.ts";
 
 // Shared by the suites below: each captures process-level errors to assert that
@@ -154,7 +154,7 @@ describe("node adapter malformed responses (#290)", () => {
     const captured = captureProcessErrors("unhandledRejection");
 
     const server = createServer(
-      toNodeHandler(() => new FastResponse("x", { status: 99 })) as NodeHttp1Handler,
+      toNodeHandler(() => new FastResponse("x", { status: 99 })),
     );
     // Intentional failure: silence the adapter's diagnostic for this test.
     const consoleError = console.error;
@@ -206,7 +206,7 @@ describe("node adapter already-ended response", () => {
   test("toNodeHandler() does not write after end", async () => {
     const captured = captureProcessErrors("uncaughtException");
 
-    const server = createServer(toNodeHandler(handler) as NodeHttp1Handler);
+    const server = createServer(toNodeHandler(handler));
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
       const { port } = server.address() as { port: number };
