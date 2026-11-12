@@ -842,12 +842,20 @@ describe("staticMiddleware", () => {
 
     test("accepts a current If-Unmodified-Since and ignores an invalid date", async () => {
       const lastModified = (await fetchStatic("/app.js")).headers.get("last-modified")!;
-      for (const value of [lastModified, "not a date"]) {
+      for (const value of [lastModified, "not a date", "2000-01-01T00:00:00.000Z"]) {
         const res = await fetchStatic("/app.js", {}, { headers: { "if-unmodified-since": value } });
         expect(res.status).toBe(200);
         await expect(res.text()).resolves.toBe("PLAIN_JS");
       }
     });
+
+    test.each(["Thursday, 01-Jan-70 00:00:00 GMT", "Thu Jan  1 00:00:00 1970"])(
+      "accepts obsolete HTTP-date form %s for If-Unmodified-Since",
+      async (value) => {
+        const res = await fetchStatic("/app.js", {}, { headers: { "if-unmodified-since": value } });
+        expect(res.status).toBe(412);
+      },
+    );
 
     test("If-Match presence suppresses If-Unmodified-Since", async () => {
       const res = await fetchStatic(

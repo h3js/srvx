@@ -600,7 +600,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       } else {
         const ifUnmodifiedSince = req.headers.get("if-unmodified-since");
         if (ifUnmodifiedSince !== null) {
-          const since = Date.parse(ifUnmodifiedSince);
+          const since = isHttpDate(ifUnmodifiedSince) ? Date.parse(ifUnmodifiedSince) : Number.NaN;
           if (!Number.isNaN(since) && lastModifiedMs > since) conditionalStatus = 412;
         }
       }
@@ -771,6 +771,13 @@ function matchesIfNoneMatch(header: string, etag: string): boolean {
   }
   const bare = etag.replace(/^W\//, "");
   return header.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === bare);
+}
+
+// Accept all three HTTP-date forms while rejecting dates outside HTTP syntax.
+function isHttpDate(value: string): boolean {
+  return /^(?:[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]+, \d{2}-[A-Z][a-z]{2}-\d{2} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})$/.test(
+    value,
+  );
 }
 
 // The file is unchanged if its mtime is at or before the client's copy.
