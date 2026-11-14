@@ -303,6 +303,25 @@ describe("limitRequestBody", () => {
     },
   );
 
+  test("formData() parses a multipart body within the limit", async () => {
+    const form = new FormData();
+    form.append("file", new File(["hello"], "hello.txt", { type: "text/plain" }));
+    const request = new Request("http://localhost/", { method: "POST", body: form });
+    const parsed = await limitRequestBody(request, 1024).formData();
+    const file = parsed.get("file") as File;
+    expect(file.name).toBe("hello.txt");
+    expect(await file.text()).toBe("hello");
+  });
+
+  test("blob() keeps the request content-type", async () => {
+    const request = new Request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "hi",
+    });
+    expect((await limitRequestBody(request, 8).blob()).type).toBe("text/plain");
+  });
+
   test("clone() stays limited (buffered body)", async () => {
     const limited = limitRequestBody(bodyRequest("0123456789"), 8);
     const clone = limited.clone();
