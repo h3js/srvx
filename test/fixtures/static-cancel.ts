@@ -26,8 +26,14 @@ const adapters = {
 
 const dir = await mkdtemp(join(tmpdir(), "srvx-static-cancel-"));
 // Large enough that the response is still streaming when the client hangs up;
-// `.txt` is compressible, so `Accept-Encoding` takes the on-the-fly path.
-await writeFile(join(dir, "big.txt"), "x".repeat(4 * 1024 * 1024));
+// `.txt` is compressible, so `Accept-Encoding` takes the on-the-fly path. Random
+// letters keep the gzip output large, so it is still streaming too.
+const letters = new Uint8Array(4 * 1024 * 1024);
+for (let i = 0, seed = 1; i < letters.length; i++) {
+  seed = (seed * 1_103_515_245 + 12_345) & 0x7f_ff_ff_ff;
+  letters[i] = 97 + ((seed >>> 16) % 26);
+}
+await writeFile(join(dir, "big.txt"), letters);
 await writeFile(join(dir, "big.bin"), new Uint8Array(4 * 1024 * 1024));
 
 const requests = [
@@ -36,12 +42,17 @@ const requests = [
   "GET /big.txt HTTP/1.1\r\nHost: localhost\r\nAccept-Encoding: gzip\r\n\r\n",
 ];
 
-// A client that hangs up right after sending the request.
-const abortedRequest = (port: number, raw: string) =>
+// A client that hangs up right after sending the request, or once the first
+// bytes of the response arrive.
+const abortedRequest = (port: number, raw: string, afterData: boolean) =>
   new Promise<void>((resolve) => {
     const socket = connect(port, "127.0.0.1", () => {
       socket.write(raw);
-      socket.destroy();
+      if (afterData) {
+        socket.once("data", () => socket.destroy());
+      } else {
+        socket.destroy();
+      }
     });
     socket.on("error", () => {});
     socket.once("close", () => resolve());
@@ -75,7 +86,8 @@ try {
       }
       for (let i = 0; i < 10; i++) {
         for (const raw of requests) {
-          await abortedRequest(port, raw);
+          await abortedRequest(port, raw, false);
+          await abortedRequest(port, raw, true);
         }
       }
       for (let i = 0; i < 3; i++) {
