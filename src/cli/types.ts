@@ -35,6 +35,8 @@ export type CLIOptions = {
 
   /** Run in production mode (no watch, no debug) */
   prod?: boolean;
+  /** Cluster mode: number of worker processes (true = CPU count), production only */
+  cluster?: boolean | number;
   /** Serve static files from the specified directory (default: "public") */
   static?: string;
   /** ES module to preload */
