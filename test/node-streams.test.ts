@@ -918,6 +918,29 @@ describe("sendNodeResponse node readable bodies", () => {
     });
   });
 
+  test("source failing to destroy after its end does not throw", async () => {
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    const handler: Handler = (res) => {
+      stream = new Readable({
+        read() {
+          this.push("ab");
+          this.push(null);
+        },
+        destroy(_error, callback) {
+          setTimeout(() => callback(new Error("destroy failed")), 50);
+        },
+      });
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      expect(await send("http/1.1", port)).toBe("ab");
+      expect(await settles(sent)).toBe(true);
+      await vi.waitFor(() => expect(stream.closed).toBe(true));
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
   test("respects backpressure from a slow client", async () => {
     let produced = 0;
     let stream!: Readable;

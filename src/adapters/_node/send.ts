@@ -333,11 +333,14 @@ function pipeBody(
       nodeRes.on("close", onPipeDone);
       stream.pipe(nodeRes as NodeHttp.ServerResponse);
     }
+    let pipeDone = false;
     // `pipe()` neither forwards source errors to the response nor destroys the
     // source when the response closes early.
     function onPipeDone(error?: Error) {
-      stream.off("error", onPipeDone);
-      stream.off("close", onSourceClose);
+      if (pipeDone) {
+        return;
+      }
+      pipeDone = true;
       nodeRes.off("error", onPipeDone);
       nodeRes.off("finish", onPipeDone);
       nodeRes.off("close", onPipeDone);
@@ -345,18 +348,17 @@ function pipeBody(
       if (error) {
         nodeRes.destroy(error);
       }
-      if (!stream.readableEnded && !stream.closed) {
-        // A pending source error, or one from a failing `_destroy()`, would
-        // otherwise surface as an `uncaughtException`.
-        const ignoreError = () => {};
-        stream.on("error", ignoreError);
-        stream.once("close", () => stream.off("error", ignoreError));
+      if (!stream.readableEnded) {
         stream.destroy();
       }
       resolve();
     }
+    // The source listeners stay until the source closes, so an error from its
+    // teardown is still handled after the response is done.
     function onSourceClose() {
-      if (!stream.readableEnded) {
+      stream.off("error", onPipeDone);
+      stream.off("close", onSourceClose);
+      if (!pipeDone && !stream.readableEnded) {
         nodeRes.destroy();
         onPipeDone();
       }
