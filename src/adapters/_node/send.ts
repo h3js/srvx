@@ -327,6 +327,7 @@ function pipeBody(
       }
       writeHead(nodeRes, status, statusText, headers);
       stream.on("error", onPipeDone);
+      stream.on("close", onSourceClose);
       nodeRes.on("error", onPipeDone);
       nodeRes.on("finish", onPipeDone);
       nodeRes.on("close", onPipeDone);
@@ -336,6 +337,7 @@ function pipeBody(
     // source when the response closes early.
     function onPipeDone(error?: Error) {
       stream.off("error", onPipeDone);
+      stream.off("close", onSourceClose);
       nodeRes.off("error", onPipeDone);
       nodeRes.off("finish", onPipeDone);
       nodeRes.off("close", onPipeDone);
@@ -352,6 +354,12 @@ function pipeBody(
         stream.destroy();
       }
       resolve();
+    }
+    function onSourceClose() {
+      if (!stream.readableEnded) {
+        nodeRes.destroy();
+        onPipeDone();
+      }
     }
     // An ended stream with nothing buffered emits 'end' without 'readable'.
     function onEnd() {

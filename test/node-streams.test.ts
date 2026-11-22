@@ -891,6 +891,33 @@ describe("sendNodeResponse node readable bodies", () => {
     });
   });
 
+  test("source closing before its end destroys the response and settles", async () => {
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    let res!: NodeServerResponse;
+    const handler: Handler = (_res) => {
+      res = _res;
+      let reads = 0;
+      stream = new Readable({
+        read() {
+          if (++reads === 1) {
+            this.push("x".repeat(1024));
+          } else {
+            setImmediate(() => this.destroy());
+          }
+        },
+      });
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      expect(await send("http/1.1", port)).not.toBe("x".repeat(1024));
+      expect(await settles(sent)).toBe(true);
+      expect(res.destroyed).toBe(true);
+      expect(res.writableFinished).toBe(false);
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
   test("respects backpressure from a slow client", async () => {
     let produced = 0;
     let stream!: Readable;
