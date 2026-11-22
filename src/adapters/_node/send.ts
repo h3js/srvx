@@ -1,5 +1,4 @@
 import { type Readable as NodeReadable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import type NodeHttp from "node:http";
 import type { NodeServerResponse } from "../../types.ts";
 import { disposeBody, type NodeResponse } from "./response.ts";
@@ -271,7 +270,7 @@ function pipeBody(
   }
 
   // HEAD responses must carry no body. Node's write() is a no-op that always
-  // returns true for HEAD, so pipeline() never sees backpressure and drains an
+  // returns true for HEAD, so pipe() never sees backpressure and drains an
   // unbounded body (e.g. an SSE stream) as fast as it is produced, starving the
   // event loop. Discard the source up front instead, mirroring streamBody.
   // Headers are still deferred here, so write them before ending.
@@ -282,14 +281,13 @@ function pipeBody(
   }
 
   // Duck-typed pipe objects (e.g. React's PipeableStream) only have .pipe()
-  // and don't support pipeline() — use the raw path.
+  // and can't be observed for errors or destroyed, so use the raw path.
   if (typeof stream.on !== "function" || typeof stream.destroy !== "function") {
     writeHead(nodeRes, status, statusText, headers);
     stream.pipe(nodeRes as unknown as NodeJS.WritableStream);
     return new Promise<void>((resolve) => nodeRes.on("close", resolve));
   }
 
-  // Real Node.js streams support pipeline() for proper error/abort propagation.
   // Wait for the first event (readable, end or error) before writing headers so that
   // if the stream errors before producing any data we can respond with 500
   // instead of committing to the original status code.
@@ -328,9 +326,32 @@ function pipeBody(
         return resolve();
       }
       writeHead(nodeRes, status, statusText, headers);
-      pipeline(stream, nodeRes as NodeHttp.ServerResponse)
-        .catch(() => {})
-        .then(() => resolve());
+      stream.on("error", onPipeDone);
+      nodeRes.on("error", onPipeDone);
+      nodeRes.on("finish", onPipeDone);
+      nodeRes.on("close", onPipeDone);
+      stream.pipe(nodeRes as NodeHttp.ServerResponse);
+    }
+    // `pipe()` neither forwards source errors to the response nor destroys the
+    // source when the response closes early.
+    function onPipeDone(error?: Error) {
+      stream.off("error", onPipeDone);
+      nodeRes.off("error", onPipeDone);
+      nodeRes.off("finish", onPipeDone);
+      nodeRes.off("close", onPipeDone);
+      stream.unpipe(nodeRes as NodeHttp.ServerResponse);
+      if (error) {
+        nodeRes.destroy(error);
+      }
+      if (!stream.readableEnded && !stream.closed) {
+        // A pending source error, or one from a failing `_destroy()`, would
+        // otherwise surface as an `uncaughtException`.
+        const ignoreError = () => {};
+        stream.on("error", ignoreError);
+        stream.once("close", () => stream.off("error", ignoreError));
+        stream.destroy();
+      }
+      resolve();
     }
     // An ended stream with nothing buffered emits 'end' without 'readable'.
     function onEnd() {
@@ -342,7 +363,7 @@ function pipeBody(
       (endNodeResponse(nodeRes) as Promise<void>).then(resolve);
     }
     // The client can vanish before the stream produces its first byte. Nothing
-    // else observes that here (`pipeline()` has not started yet), so the source
+    // else observes that here (`pipe()` has not started yet), so the source
     // — and whatever fd/socket backs it — would stay open forever.
     function onResClose() {
       cleanup();
