@@ -7,9 +7,10 @@ const SHORT_NAME_RE = /(?:^|\\)[^.\\]{1,6}~\d+(?:\.[^.\\]{1,3})?(?:\\|$)/;
  * is another spelling of `lex`, the root-relative path the request named,
  * rather than where a symlink led. The last `suffixLength` characters of `lex`
  * were appended by the middleware (`index.html`, `.html`, a variant's `.br`),
- * not taken from the URL, so their case is not checked. A case-only symlink
- * on a case-sensitive filesystem also yields a flagged pair; the caller tells
- * it apart with `departingPrefix`.
+ * not taken from the URL, so their case is not checked. Distinct names on a
+ * case-sensitive filesystem can also yield a flagged pair (a case-only symlink,
+ * or a link into a sibling directory named in another case); the caller tells
+ * them apart with `departingPrefixes`.
  *
  * On a case-insensitive filesystem (default macOS, Windows) `/ADMIN/x.txt`
  * opens `admin/x.txt`: a second URL for the file, which also gets past an
@@ -28,7 +29,7 @@ const SHORT_NAME_RE = /(?:^|\\)[^.\\]{1,6}~\d+(?:\.[^.\\]{1,3})?(?:\\|$)/;
  * - On Windows an 8.3 short name (`ADMINI~1`) is the same kind of alias, and
  *   `realpath()` expands it to the long name, so a path with a short-name
  *   segment is refused when it resolves elsewhere, unless that segment is
- *   itself a symlink (`v~1.txt` -> `sub/x.txt`).
+ *   itself a separate entry, such as a symlink (`v~1.txt` -> `sub/x.txt`).
  *
  * Not caught: a miscased segment that a followed symlink renames away
  * (`/LINK.txt` for `link.txt` -> `x.txt`), as `real` then differs in more than
@@ -64,15 +65,22 @@ export function isSpellingAlias(
 }
 
 /**
- * `lex` up to and including its first segment that differs from the same
- * segment of `real`, or `undefined` when no segment of `lex` does.
+ * `lex` and `real`, each up to and including the first segment where they
+ * differ, or `undefined` when they have no such segment pair.
  */
-export function departingPrefix(real: string, lex: string, sep: string): string | undefined {
+export function departingPrefixes(
+  real: string,
+  lex: string,
+  sep: string,
+): { lex: string; real: string } | undefined {
   const lexSegments = lex.split(sep);
   const realSegments = real.split(sep);
-  for (let i = 0; i < lexSegments.length; i++) {
+  for (let i = 0; i < lexSegments.length && i < realSegments.length; i++) {
     if (lexSegments[i] !== realSegments[i]) {
-      return lexSegments.slice(0, i + 1).join(sep);
+      return {
+        lex: lexSegments.slice(0, i + 1).join(sep),
+        real: realSegments.slice(0, i + 1).join(sep),
+      };
     }
   }
   return undefined;

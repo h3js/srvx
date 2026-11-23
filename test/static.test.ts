@@ -379,6 +379,40 @@ describe("staticMiddleware", () => {
       }
     });
 
+    test("serves a deeper link into a sibling named in another case", async ({ skip }) => {
+      // `lib/guide.txt` -> `../Lib/guide.txt` resolves to a path that departs
+      // from the request at `lib` vs `Lib`: two real directories on a
+      // case-sensitive filesystem, so a distinct name rather than an alias,
+      // although the departing segment itself is no symlink.
+      const upper = join(dir, "Lib");
+      const lower = join(dir, "lib");
+      await mkdir(join(upper, "img"), { recursive: true });
+      await writeFile(join(upper, "guide.txt"), "GUIDE");
+      await writeFile(join(upper, "img", "a.txt"), "IMG");
+      const created = await mkdir(lower).then(
+        () => true,
+        () => false, // EEXIST: this filesystem is case-insensitive
+      );
+      try {
+        if (!created) {
+          skip();
+        }
+        await symlink(join("..", "Lib", "guide.txt"), join(lower, "guide.txt"));
+        await symlink(join("..", "Lib", "img"), join(lower, "img"));
+        const res = await fetchStatic("/lib/guide.txt");
+        expect(res.status).toBe(200);
+        await expect(res.text()).resolves.toBe("GUIDE");
+        const viaDir = await fetchStatic("/lib/img/a.txt");
+        expect(viaDir.status).toBe(200);
+        await expect(viaDir.text()).resolves.toBe("IMG");
+      } finally {
+        if (created) {
+          await rm(lower, { recursive: true, force: true });
+        }
+        await rm(upper, { recursive: true, force: true });
+      }
+    });
+
     test("serves files when dir is itself a symlink", async () => {
       const res = await fetchStatic("/sub/inside.txt", { dir: linkedDir });
       expect(res.status).toBe(200);

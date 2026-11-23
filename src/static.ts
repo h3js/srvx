@@ -10,7 +10,7 @@ import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
-import { departingPrefix, isSpellingAlias } from "./_static-alias.ts";
+import { departingPrefixes, isSpellingAlias } from "./_static-alias.ts";
 
 export interface StaticMiddlewareOptions {
   /**
@@ -323,19 +323,36 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     return realDir;
   };
 
-  // Whether the first segment where the request's spelling `lex` departs from
-  // the resolved `real` is a symlink: a case-only link (`readme.md` ->
-  // `README.md`, kept for old URLs) is a separate name a case-sensitive
-  // directory can hold, not the alias a case-insensitive one makes. Asked only
-  // once `isSpellingAlias` has flagged the pair, so a normal hit pays nothing;
-  // and per path rather than per root, as case sensitivity can differ between
-  // directories (Windows sets it per directory). In a case-insensitive
-  // directory the departing segment cannot be such a link: everything before
-  // it matched, so the link would resolve onto its own name and loop.
-  const departsAtSymlink = async (real: string, lex: string): Promise<boolean> => {
-    const prefix = departingPrefix(real, lex, sep);
-    const linkStat = prefix === undefined ? null : await lstat(dir + prefix).catch(() => null);
-    return linkStat?.isSymbolicLink() === true;
+  // Whether the request's spelling `lex` and the resolved `real` name different
+  // directory entries at the first segment where they depart. A case-insensitive
+  // directory resolves a miscased (or 8.3 short) name to the very entry stored
+  // under the real name: the same inode, so the alias is refused. Different
+  // entries mean the names are genuinely distinct, which only a case-sensitive
+  // directory allows: a case-only link (`readme.md` -> `README.md`, kept for old
+  // URLs), or a deeper link back into a sibling named in another case
+  // (`docs/guide.txt` -> `../Docs/guide.txt` departs at `docs` vs `Docs`, two
+  // real directories). Asked only once `isSpellingAlias` has flagged the pair,
+  // so a normal hit pays nothing; and per path rather than per root, as case
+  // sensitivity can differ between directories (Windows sets it per directory).
+  // A failed `lstat`, or a filesystem that reports no inode numbers, compares
+  // equal or fails, and so refuses. Not caught: a miscased segment past the
+  // departing one, which only a case-insensitive directory under a
+  // case-sensitive one can open (`/docs/SUB/x` with a folding `docs/` holding
+  // `sub` -> `../Docs/sub`).
+  const departsToOtherEntry = async (real: string, lex: string): Promise<boolean> => {
+    const prefixes = departingPrefixes(real, lex, sep);
+    if (prefixes === undefined) {
+      return false;
+    }
+    const [lexStat, realStat] = await Promise.all([
+      lstat(dir + prefixes.lex).catch(() => null),
+      lstat((await getRealDir()) + prefixes.real).catch(() => null),
+    ]);
+    return (
+      lexStat !== null &&
+      realStat !== null &&
+      (lexStat.ino !== realStat.ino || lexStat.dev !== realStat.dev)
+    );
   };
 
   const statFile = async (candidate: string): Promise<Stats | null> => {
@@ -356,8 +373,8 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // would serve a file the checks never saw.
   //
   // The resolved path must also not be the same file under another letter case
-  // than the request named (see `isSpellingAlias`), unless a case-only symlink
-  // explains the difference (see `departsAtSymlink`). `candidate` always starts
+  // than the request named (see `isSpellingAlias`), unless the two spellings
+  // name distinct entries (see `departsToOtherEntry`). `candidate` always starts
   // with `dir` (the handler's pre-filter), so both sides are root-relative and a
   // `dir` option spelled in another case than the folder on disk still serves.
   // Its last `suffixLength` characters were added here, not by the URL.
@@ -381,7 +398,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           !isDeniedDotPath(realRel) &&
           !(
             isSpellingAlias(realRel, lex, suffixLength, sep) &&
-            !(await departsAtSymlink(realRel, lex))
+            !(await departsToOtherEntry(realRel, lex))
           )
         ) {
           const realStat = await stat(realPath).catch(() => null);

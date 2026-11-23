@@ -69,7 +69,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const { staticMiddleware } = await import("../src/static.ts");
-const { departingPrefix, isSpellingAlias } = await import("../src/_static-alias.ts");
+const { departingPrefixes, isSpellingAlias } = await import("../src/_static-alias.ts");
 type Options = Parameters<typeof staticMiddleware>[0];
 
 let tmp: string;
@@ -308,17 +308,23 @@ describe("isSpellingAlias", () => {
   });
 });
 
-describe("departingPrefix", () => {
+describe("departingPrefixes", () => {
   test.each([
-    // [real, lex, sep, prefix]
-    ["admin/x.txt", "ADMIN/x.txt", "/", "ADMIN"],
-    ["admin/x.txt", "admin/X.txt", "/", "admin/X.txt"],
-    ["sub/inside.txt", "SUB/inside.txt", "/", "SUB"],
-    ["sub/x.txt", "v~1.txt", "/", "v~1.txt"],
+    // [real, lex, sep, prefixes]
+    ["admin/x.txt", "ADMIN/x.txt", "/", { lex: "ADMIN", real: "admin" }],
+    ["admin/x.txt", "admin/X.txt", "/", { lex: "admin/X.txt", real: "admin/x.txt" }],
+    ["sub/inside.txt", "SUB/inside.txt", "/", { lex: "SUB", real: "sub" }],
+    ["sub/x.txt", "v~1.txt", "/", { lex: "v~1.txt", real: "sub" }],
+    ["Docs/guide.txt", "docs/guide.txt", "/", { lex: "docs", real: "Docs" }],
     ["admin/x.txt", "admin/x.txt", "/", undefined],
-    ["administrator\\x.txt", "ADMINI~1\\x.txt", "\\", "ADMINI~1"],
-    ["docs\\readme.md", "docs\\README.md", "\\", "docs\\README.md"],
-  ] as const)("%j vs %j (sep %j) -> %j", (real, lex, sep, prefix) => {
-    expect(departingPrefix(real, lex, sep)).toBe(prefix);
+    ["administrator\\x.txt", "ADMINI~1\\x.txt", "\\", { lex: "ADMINI~1", real: "administrator" }],
+    [
+      "docs\\readme.md",
+      "docs\\README.md",
+      "\\",
+      { lex: "docs\\README.md", real: "docs\\readme.md" },
+    ],
+  ] as const)("%j vs %j (sep %j) -> %j", (real, lex, sep, prefixes) => {
+    expect(departingPrefixes(real, lex, sep)).toEqual(prefixes);
   });
 });
