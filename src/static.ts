@@ -344,9 +344,11 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     if (prefixes === undefined) {
       return false;
     }
+    // `bigint`: an NTFS file ID (a 16-bit sequence number above a 48-bit index)
+    // rounds as a Number, so two entries could compare equal.
     const [lexStat, realStat] = await Promise.all([
-      lstat(dir + prefixes.lex).catch(() => null),
-      lstat((await getRealDir()) + prefixes.real).catch(() => null),
+      lstat(dir + prefixes.lex, { bigint: true }).catch(() => null),
+      lstat((await getRealDir()) + prefixes.real, { bigint: true }).catch(() => null),
     ]);
     return (
       lexStat !== null &&

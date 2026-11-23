@@ -33,8 +33,8 @@ const SHORT_NAME_RE = /(?:^|\\)[^.\\]{1,6}~\d+(?:\.[^.\\]{1,3})?(?:\\|$)/;
  *
  * Not caught: a miscased segment that a followed symlink renames away
  * (`/LINK.txt` for `link.txt` -> `x.txt`), as `real` then differs in more than
- * case; the rare characters a filesystem's own case table folds differently
- * from `toLowerCase()`; and any case-insensitive mount on Linux (casefold,
+ * case; the rare characters a filesystem's own case table folds where neither
+ * `toLowerCase()` nor `toUpperCase()` does; and any case-insensitive mount on Linux (casefold,
  * vfat/exFAT, SMB, WSL `/mnt/c`), where glibc `realpath(3)` returns the
  * spelling it was given, so `real` always equals `lex`.
  */
@@ -61,12 +61,24 @@ export function isSpellingAlias(
   if (r === l && l === lex) {
     return false; // normalization only, from a composed request
   }
-  return r.toLowerCase() === l.toLowerCase() || (sep === "\\" && SHORT_NAME_RE.test(lex));
+  // Both directions, as a filesystem's case table can fold a letter that only
+  // one of them maps: APFS and NTFS treat U+017F LONG S as `s` and NTFS treats
+  // U+0131 DOTLESS I as `i`, which `toUpperCase()` catches but `toLowerCase()`
+  // leaves alone. Flagging too much only costs the caller's entry comparison.
+  return (
+    r.toLowerCase() === l.toLowerCase() ||
+    r.toUpperCase() === l.toUpperCase() ||
+    (sep === "\\" && SHORT_NAME_RE.test(lex))
+  );
 }
 
 /**
  * `lex` and `real`, each up to and including the first segment where they
- * differ, or `undefined` when they have no such segment pair.
+ * differ, or `undefined` when they have no such segment pair. Segments are
+ * compared after NFC, so a segment that differs only in normalization (an NFC
+ * request for a name HFS+ or a macOS tool stored decomposed) is not mistaken
+ * for the departure: comparing its entries would find one directory, or a
+ * junction and its target, rather than the segment that tells them apart.
  */
 export function departingPrefixes(
   real: string,
@@ -76,7 +88,10 @@ export function departingPrefixes(
   const lexSegments = lex.split(sep);
   const realSegments = real.split(sep);
   for (let i = 0; i < lexSegments.length && i < realSegments.length; i++) {
-    if (lexSegments[i] !== realSegments[i]) {
+    if (
+      lexSegments[i] !== realSegments[i] &&
+      lexSegments[i].normalize("NFC") !== realSegments[i].normalize("NFC")
+    ) {
       return {
         lex: lexSegments.slice(0, i + 1).join(sep),
         real: realSegments.slice(0, i + 1).join(sep),

@@ -16,10 +16,17 @@ import type { ServerRequest } from "../src/types.ts";
 // That models APFS and NTFS, which keep each name as created. With `hfs` set,
 // `realpath` also returns every name decomposed (NFD), as HFS+ stores them.
 // With `foldFrom` set, only lookups inside that directory fold, as on Windows,
-// where case sensitivity is a per-directory setting.
-const fixture = { root: "", foldFrom: "", hfs: false, lstats: [] as string[] };
+// where case sensitivity is a per-directory setting. With `foldCase` off, a
+// lookup folds normalization only, as case-sensitive APFS does.
+const fixture = { root: "", foldFrom: "", hfs: false, foldCase: true, lstats: [] as string[] };
 
-const foldName = (s: string) => s.normalize("NFC").toLowerCase();
+// Folded by hand rather than with the middleware's own rule, so a gap in that
+// rule shows: APFS and NTFS also fold U+017F LONG S to `s`, and NTFS folds
+// U+0131 DOTLESS I to `i`, neither of which `toLowerCase()` maps.
+const foldName = (s: string) => {
+  const nfc = s.normalize("NFC");
+  return fixture.foldCase ? nfc.replace(/ſ/g, "s").replace(/ı/g, "i").toLowerCase() : nfc;
+};
 
 const resolveFolded = (path: string): string => {
   if (!fixture.root || !path.startsWith(fixture.root + sep)) {
@@ -83,6 +90,12 @@ beforeAll(async () => {
   await writeFile(join(dir, "admin", "x.txt"), "ADMIN_X");
   await mkdir(join(dir, "Key"), { recursive: true });
   await writeFile(join(dir, "Key", "x.txt"), "KEY_X");
+  await mkdir(join(dir, "secret"), { recursive: true });
+  await writeFile(join(dir, "secret", "x.txt"), "SECRET_X");
+  // `café/` stored decomposed, holding a case-only link.
+  await mkdir(join(dir, "café"), { recursive: true });
+  await writeFile(join(dir, "café", "README.txt"), "CAFE_README");
+  await symlink(join(dir, "café", "README.txt"), join(dir, "café", "readme.txt"));
   await writeFile(join(dir, "app.js"), "PLAIN_JS");
   await writeFile(join(dir, "app.js.br"), "BROTLI_JS");
   // A variant stored under another case than its identity file.
@@ -190,6 +203,26 @@ describe("static on a case-insensitive filesystem", () => {
     await expectNext(await fetchStatic("/%E2%84%AAey/x.txt"));
   });
 
+  test("falls through for letters the filesystem folds but toLowerCase() keeps", async () => {
+    await expectServed(await fetchStatic("/secret/x.txt"), "SECRET_X");
+    // U+017F LONG S for `s`, U+0131 DOTLESS I for `i`.
+    await expectNext(await fetchStatic("/%C5%BFecret/x.txt"));
+    await expectNext(await fetchStatic("/adm%C4%B1n/x.txt"));
+  });
+
+  test("serves a case-only link under a name stored in another normalization", async () => {
+    // Case-sensitive but normalization-insensitive, like case-sensitive APFS:
+    // the NFC request opens the NFD `café/`, so the departure is `readme.txt`
+    // (the link) vs `README.txt`, not `café` vs `café`.
+    fixture.foldCase = false;
+    try {
+      await expectServed(await fetchStatic("/caf%C3%A9/readme.txt"), "CAFE_README");
+      await expectServed(await fetchStatic("/caf%C3%A9/README.txt"), "CAFE_README");
+    } finally {
+      fixture.foldCase = true;
+    }
+  });
+
   test("serves a name under either Unicode normalization", async () => {
     // Stored decomposed: browsers send the composed form.
     await expectServed(await fetchStatic("/cafe%CC%81.txt"), "NFD_NAME");
@@ -290,6 +323,8 @@ describe("isSpellingAlias", () => {
     ["cafe\u0301.txt", "cafe\u0301.txt", 0, "/", false], // decomposed, exact
     ["caf\u00e9.txt", "cafe\u0301.txt", 0, "/", true], // decomposed request, composed disk
     ["Key/x.txt", "\u212Aey/x.txt", 0, "/", true], // KELVIN SIGN, which NFC maps to K
+    ["secret/x.txt", "\u017Fecret/x.txt", 0, "/", true], // LONG S, only toUpperCase() folds
+    ["admin/x.txt", "adm\u0131n/x.txt", 0, "/", true], // DOTLESS I, likewise
     // Windows
     ["admin\\x.txt", "admin\\x.txt", 0, "\\", false],
     ["admin\\x.txt", "ADMIN\\X.txt", 0, "\\", true],
@@ -317,6 +352,14 @@ describe("departingPrefixes", () => {
     ["sub/x.txt", "v~1.txt", "/", { lex: "v~1.txt", real: "sub" }],
     ["Docs/guide.txt", "docs/guide.txt", "/", { lex: "docs", real: "Docs" }],
     ["admin/x.txt", "admin/x.txt", "/", undefined],
+    // A segment that differs only in normalization is not the departure.
+    [
+      "café/README.txt",
+      "café/readme.txt",
+      "/",
+      { lex: "café/readme.txt", real: "café/README.txt" },
+    ],
+    ["Key/x.txt", "Key/x.txt", "/", undefined],
     ["administrator\\x.txt", "ADMINI~1\\x.txt", "\\", { lex: "ADMINI~1", real: "administrator" }],
     [
       "docs\\readme.md",
