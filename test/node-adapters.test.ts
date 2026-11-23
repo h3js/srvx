@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { connect, type AddressInfo } from "node:net";
 import http2 from "node:http2";
@@ -820,6 +820,31 @@ describe("adapters", () => {
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("data: 1\n\n");
     endStream();
     expect((await reader.read()).done).toBe(true);
+  });
+
+  // Express swaps the response's prototype for `app.response`, whose own header writers must still run.
+  test.skipIf(noBridge)("an Express app's `app.response` header writers run", async () => {
+    const app = express().get("/", (_req, res) => {
+      res.set("x-demo", "ok");
+      res.end("demo");
+    });
+    app.response.setHeader = function (this: ServerResponse, name: string, value: any) {
+      return ServerResponse.prototype.setHeader.call(
+        this,
+        name,
+        name === "x-demo" ? `app-${value}` : value,
+      );
+    } as any;
+    app.response.writeHead = function (this: ServerResponse, ...args: any[]) {
+      this.setHeader("x-head", "custom");
+      return (ServerResponse.prototype.writeHead as any).apply(this, args);
+    } as any;
+    for (const fetch of [(req: Request) => fetchNodeHandler(app, req), toFetchHandler(app)]) {
+      const res = await fetch(new Request("http://localhost/"));
+      expect(res.headers.get("x-demo")).toBe("app-ok");
+      expect(res.headers.get("x-head")).toBe("custom");
+      expect(await res.text()).toBe("demo");
+    }
   });
 
   test("connect-style middleware calling next(err) propagates as an error", async () => {
