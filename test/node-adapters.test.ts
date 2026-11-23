@@ -186,6 +186,22 @@ describe("adapters", () => {
     expect(await res.text()).toBe("ok");
   });
 
+  test.skipIf(noBridge)("toNodeHandler node stream body with an unread request body", async () => {
+    const nodeHandler = toNodeHandler(
+      () => new FastResponse(Readable.from(["a", "b"]) as unknown as BodyInit),
+    );
+    const req = new Request("http://localhost/", {
+      method: "POST",
+      body: new Uint8Array(8 * 1024 * 1024),
+    });
+    const res = await Promise.race([
+      fetchNodeHandler(nodeHandler, req),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("hung")), 2000)),
+    ]);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ab");
+  });
+
   test("toFetchHandler(toNodeHandler())", async () => {
     expect(toFetchHandler(toNodeHandler(simpleWebHandler))).toBe(simpleWebHandler);
   });

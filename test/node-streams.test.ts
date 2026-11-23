@@ -704,3 +704,269 @@ describe("sendNodeResponse buffered bodies", () => {
     });
   }
 });
+
+describe("sendNodeResponse node readable bodies", () => {
+  type Proto = "http/1.1" | "http/2";
+  type Handler = (res: NodeServerResponse) => void;
+
+  async function withServer(proto: Proto, handler: Handler, fn: (port: number) => Promise<void>) {
+    const listener = (_req: unknown, res: NodeServerResponse) => handler(res);
+    const server = proto === "http/1.1" ? createServer(listener) : http2.createServer(listener);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      await fn((server.address() as AddressInfo).port);
+    } finally {
+      (server as ReturnType<typeof createServer>).closeAllConnections?.();
+      await new Promise((r) => server.close(r));
+    }
+  }
+
+  /** Sends one request and resolves with the body text, or with the error code. */
+  async function send(proto: Proto, port: number): Promise<string> {
+    if (proto === "http/1.1") {
+      return fetch(`http://127.0.0.1:${port}`)
+        .then((res) => res.text())
+        .catch((error) => error.cause?.code ?? error.message);
+    }
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
+    try {
+      return await new Promise<string>((resolve) => {
+        const req = client.request({ ":path": "/" });
+        let text = "";
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (text += chunk));
+        req.on("end", () => resolve(text));
+        req.on("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? error.message));
+        req.end();
+      });
+    } finally {
+      client.close();
+    }
+  }
+
+  function listenerCounts(emitter: NodeJS.EventEmitter) {
+    return Object.fromEntries(
+      emitter.eventNames().map((name) => [name, emitter.listenerCount(name)]),
+    );
+  }
+
+  async function settles(promise: Promise<unknown>, ms = 2000): Promise<boolean> {
+    return Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((r) => setTimeout(() => r(false), ms)),
+    ]);
+  }
+
+  for (const proto of ["http/1.1", "http/2"] as const) {
+    describe(proto, () => {
+      test("adds at most two close listeners to the response and removes them", async () => {
+        let before!: Record<string | symbol, number>;
+        let closeWhilePiping = 0;
+        let stream!: Readable;
+        let sent!: Promise<void>;
+        let res!: NodeServerResponse;
+        const handler: Handler = (_res) => {
+          res = _res;
+          let reads = 0;
+          stream = new Readable({
+            read() {
+              if (++reads === 1) {
+                this.push("a");
+              } else {
+                closeWhilePiping = res.listenerCount("close");
+                this.push("b");
+                this.push(null);
+              }
+            },
+          });
+          before = listenerCounts(res);
+          sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+        };
+        await withServer(proto, handler, async (port) => {
+          expect(await send(proto, port)).toBe("ab");
+          expect(await settles(sent)).toBe(true);
+          expect(closeWhilePiping - (before.close ?? 0)).toBeGreaterThan(0);
+          expect(closeWhilePiping - (before.close ?? 0)).toBeLessThanOrEqual(2);
+          expect(listenerCounts(res)).toEqual(before);
+          expect(listenerCounts(stream)).toEqual({});
+        });
+      });
+
+      test("source error after the head destroys the response and settles", async () => {
+        let before!: Record<string | symbol, number>;
+        let stream!: Readable;
+        let sent!: Promise<void>;
+        let res!: NodeServerResponse;
+        const onError = vi.fn();
+        const handler: Handler = (_res) => {
+          res = _res;
+          let reads = 0;
+          stream = new Readable({
+            read() {
+              if (++reads <= 2) {
+                this.push("x".repeat(1024));
+              } else {
+                process.nextTick(() => this.destroy(new Error("mid error")));
+              }
+            },
+          });
+          stream.on("error", onError);
+          before = listenerCounts(res);
+          sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+        };
+        await withServer(proto, handler, async (port) => {
+          expect(await send(proto, port)).not.toBe("x".repeat(2048));
+          expect(await settles(sent)).toBe(true);
+          expect(onError).toHaveBeenCalledOnce();
+          const destroyed =
+            proto === "http/2"
+              ? (res as http2.Http2ServerResponse).stream.destroyed
+              : res.destroyed;
+          expect(destroyed).toBe(true);
+          expect(res.writableFinished).toBe(false);
+          expect(listenerCounts(res)).toEqual(before);
+          expect(listenerCounts(stream)).toEqual({ error: 1 });
+        });
+      });
+    });
+  }
+
+  test("client abort mid-stream destroys the source and settles", async () => {
+    let before!: Record<string | symbol, number>;
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    let res!: NodeServerResponse;
+    const handler: Handler = (_res) => {
+      res = _res;
+      stream = new Readable({
+        read() {
+          this.push("x".repeat(1024));
+        },
+      });
+      before = listenerCounts(res);
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      const socket = net.connect(port, "127.0.0.1", () =>
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+      );
+      socket.on("error", () => {});
+      socket.once("data", () => socket.destroy());
+      await vi.waitFor(() => expect(sent).toBeDefined());
+      expect(await settles(sent)).toBe(true);
+      expect(stream.destroyed).toBe(true);
+      expect(listenerCounts(res)).toEqual(before);
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
+  test("client abort with a failing source destroy does not throw", async () => {
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    const handler: Handler = (res) => {
+      stream = new Readable({
+        read() {
+          this.push("x".repeat(1024));
+        },
+        destroy(_error, callback) {
+          callback(new Error("destroy failed"));
+        },
+      });
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      const socket = net.connect(port, "127.0.0.1", () =>
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+      );
+      socket.on("error", () => {});
+      socket.once("data", () => socket.destroy());
+      await vi.waitFor(() => expect(sent).toBeDefined());
+      expect(await settles(sent)).toBe(true);
+      await vi.waitFor(() => expect(stream.closed).toBe(true));
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
+  test("source closing before its end destroys the response and settles", async () => {
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    let res!: NodeServerResponse;
+    const handler: Handler = (_res) => {
+      res = _res;
+      let reads = 0;
+      stream = new Readable({
+        read() {
+          if (++reads === 1) {
+            this.push("x".repeat(1024));
+          } else {
+            setImmediate(() => this.destroy());
+          }
+        },
+      });
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      expect(await send("http/1.1", port)).not.toBe("x".repeat(1024));
+      expect(await settles(sent)).toBe(true);
+      expect(res.destroyed).toBe(true);
+      expect(res.writableFinished).toBe(false);
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
+  test("source failing to destroy after its end does not throw", async () => {
+    let stream!: Readable;
+    let sent!: Promise<void>;
+    const handler: Handler = (res) => {
+      stream = new Readable({
+        read() {
+          this.push("ab");
+          this.push(null);
+        },
+        destroy(_error, callback) {
+          setTimeout(() => callback(new Error("destroy failed")), 50);
+        },
+      });
+      sent = sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      expect(await send("http/1.1", port)).toBe("ab");
+      expect(await settles(sent)).toBe(true);
+      await vi.waitFor(() => expect(stream.closed).toBe(true));
+      expect(listenerCounts(stream)).toEqual({});
+    });
+  });
+
+  test("respects backpressure from a slow client", async () => {
+    let produced = 0;
+    let stream!: Readable;
+    const handler: Handler = (res) => {
+      stream = new Readable({
+        read() {
+          setImmediate(() => {
+            produced += 16 * 1024;
+            this.push(Buffer.alloc(16 * 1024));
+          });
+        },
+      });
+      sendNodeResponse(res, new FastResponse(stream as unknown as BodyInit));
+    };
+    await withServer("http/1.1", handler, async (port) => {
+      const socket = net.connect(port, "127.0.0.1", () =>
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+      );
+      socket.on("error", () => {});
+      socket.pause();
+      await new Promise((r) => setTimeout(r, 300));
+      expect(produced).toBeGreaterThan(0);
+      // Bounded by the socket and stream buffers, not by the 300ms window.
+      expect(produced).toBeLessThan(32 * 1024 * 1024);
+      socket.destroy();
+      await vi.waitFor(() => expect(stream.destroyed).toBe(true));
+    });
+  });
+});
