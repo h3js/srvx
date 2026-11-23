@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
 
 export function addTests(opts: {
   url: (path: string) => string;
@@ -17,6 +18,12 @@ export function addTests(opts: {
   // Bun's `node:http` server never surfaces a client disconnect as a request
   // abort, so every abort-dependent expectation below is a runtime gap there.
   const isBunNodeCompat = opts.runtime === "bun-node-compat";
+
+  // srvx's Node adapter (`serve()` from `srvx/node`), under Node or a runtime's
+  // `node:http` compat layer. It sees the raw request-target, so it applies the
+  // request-target checks in `hasAmbiguousPath`; the native Bun/Deno adapters get
+  // a URL their runtime already parsed.
+  const isNodeAdapter = opts.runtime === "node" || opts.runtime.endsWith("-node-compat");
 
   let fetchCount = 0;
   const fetch = (...args: Parameters<typeof _fetch>) => {
@@ -367,26 +374,44 @@ export function addTests(opts: {
         client.close();
       }
     } else {
-      const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
-        const req = http.request({
-          method: "GET",
-          path: "/foo/../bar/baz",
-          hostname: "localhost",
-          port: _url.port,
-        });
-        req.end();
-        req.on("response", resolve);
-        req.on("error", reject);
+      // A raw request line: an HTTP client may resolve the dot segments itself
+      // before sending (Deno 2.7's `node:http` client does), and then the
+      // server would never see them.
+      const raw = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(Number(_url.port), _url.hostname.replace(/^\[|\]$/g, ""));
+        socket.on("connect", () =>
+          socket.write(
+            "GET /foo/../bar/baz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+          ),
+        );
+        let data = "";
+        socket.on("data", (chunk) => (data += chunk.toString("latin1")));
+        socket.on("end", () => resolve(data));
+        socket.on("error", reject);
       });
-      statusCode = res.statusCode;
-      body = await new Promise<string>((resolve, reject) => {
-        const chunks: Uint8Array[] = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-        res.on("error", reject);
-      });
+      const headEnd = raw.indexOf("\r\n\r\n");
+      const head = raw.slice(0, headEnd);
+      statusCode = Number(head.split(" ")[1]);
+      body = raw.slice(headEnd + 4);
+      if (/^transfer-encoding:\s*chunked/im.test(head)) {
+        let decoded = "";
+        for (let i = 0; ;) {
+          const lineEnd = body.indexOf("\r\n", i);
+          const size = Number.parseInt(body.slice(i, lineEnd), 16);
+          if (!size) break;
+          decoded += body.slice(lineEnd + 2, lineEnd + 2 + size);
+          i = lineEnd + 2 + size + 2;
+        }
+        body = decoded;
+      }
     }
 
+    // The Node adapter refuses dot segments (see `hasAmbiguousPath`); native
+    // Bun/Deno resolve them before the handler runs.
+    if (isNodeAdapter) {
+      expect(statusCode).toBe(400);
+      return;
+    }
     expect(statusCode).toBe(200);
     const data = JSON.parse(body);
     expect(data.pathname).toBe("/bar/baz");
@@ -417,16 +442,31 @@ export function addTests(opts: {
     }
   });
 
-  // Raw `\` in `:path`: see `hasBackslashInPath` (HTTP/1 cases in test/url.test.ts).
-  test.runIf(opts.http2)("raw backslash in :path is rejected with 400", async () => {
+  // Raw `\` or a dot segment in `:path`: see `hasAmbiguousPath` (HTTP/1 cases in
+  // test/url.test.ts).
+  test.runIf(opts.http2)("ambiguous :path is rejected with 400", async () => {
     const _url = new URL(url("/"));
     const client = http2.connect(_url.origin, { ca: opts.ca });
     try {
       for (const [path, status] of [
         [String.raw`/public\..\admin/secret`, 400],
-        // Reaches the app (unknown route): encoded `%5C` and `\` in the query are fine.
+        ["/public/../admin/secret", 400],
+        ["/public/%2e%2e/admin/secret", 400],
+        ["/public/.%2E/admin/secret", 400],
+        ["/public/%2E/admin", 400],
+        ["/a/..", 400],
+        ["/a/.", 400],
+        ["/..", 400],
+        ["/.", 400],
+        // Reach the app (unknown route): encoded `%5C`, dots inside a segment.
         ["/a%5Cb", 404],
+        ["/.well-known/x", 404],
+        ["/a/...", 404],
+        ["/a/..b", 404],
+        ["/a.b/c", 404],
+        // `\` and dot segments in the query are left alone.
         [String.raw`/?q=\a`, 200],
+        ["/?q=/../x", 200],
       ] as const) {
         const req = client.request({ ":path": path, ":authority": "localhost" });
         const headers = await new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {

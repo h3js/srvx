@@ -10,7 +10,7 @@ import type { TrustProxyOption } from "../../_trust-proxy.ts";
 import { fetchNodeHandler } from "../node.ts";
 import { NodeRequest } from "./request.ts";
 import { handleSendError, sendErrorResponse, sendNodeResponse } from "./send.ts";
-import { hasBackslashInPath } from "./url.ts";
+import { hasAmbiguousPath } from "./url.ts";
 
 export type AdapterMeta = {
   __nodeHandler?: NodeHttpHandler;
@@ -30,9 +30,10 @@ export function toNodeHandler(
 
   function convertedNodeHandler(nodeReq: NodeServerRequest, nodeRes: NodeServerResponse) {
     // Unlike `serve()`, other request-target shapes are left to
-    // `NodeRequestURL` here, but a raw `\` in the path would make the fetch
-    // handler and the host server's routing disagree (see `hasBackslashInPath`).
-    if (nodeReq.url && hasBackslashInPath(nodeReq.url)) {
+    // `NodeRequestURL` here, but a raw `\` or a dot segment in the path would
+    // make the fetch handler and the host server's routing disagree (see
+    // `hasAmbiguousPath`).
+    if (nodeReq.url && hasAmbiguousPath(nodeReq.url)) {
       nodeRes.statusCode = 400;
       nodeRes.end();
       return;

@@ -1,6 +1,6 @@
 import { sendErrorResponse, sendNodeResponseDetached } from "./_node/send.ts";
 import { NodeRequest } from "./_node/request.ts";
-import { hasBackslashInPath, isValidAbsoluteForm } from "./_node/url.ts";
+import { hasAmbiguousPath, isValidAbsoluteForm } from "./_node/url.ts";
 import {
   fmtURL,
   resolveTLSOptions,
@@ -70,18 +70,19 @@ class NodeServer implements Server {
       // Reject request-targets llhttp admits but that aren't valid Fetch URLs:
       // anything that isn't origin-form (/...), absolute-form, or the RFC 9110
       // §7.1 asterisk-form (`*`). Bun/Deno reject these at the parser layer;
-      // Node leaves it to us. (Hot path is a char compare plus one `indexOf`.)
+      // Node leaves it to us. (Hot path is a char compare plus three `indexOf`.)
       // Absolute-form must additionally name an http(s) authority: srvx is an
       // origin server, not a proxy, so `file://`/`ftp://`/`zzz://` targets —
       // which llhttp does deliver — are 400, per RFC 9110 §7.4. The ones that
       // pass are normalized in `NodeRequestURL` (transport scheme wins, the
       // authority is `isValidHost`-validated, userinfo is dropped).
-      // A raw `\` in the path is rejected too (see `hasBackslashInPath`).
+      // A raw `\` or a dot segment in the path is rejected too (see
+      // `hasAmbiguousPath`).
       const reqUrl = nodeReq.url;
       if (
         reqUrl &&
         ((reqUrl[0] !== "/" && reqUrl !== "*" && !isValidAbsoluteForm(reqUrl)) ||
-          hasBackslashInPath(reqUrl))
+          hasAmbiguousPath(reqUrl))
       ) {
         nodeRes.statusCode = 400;
         nodeRes.end();
