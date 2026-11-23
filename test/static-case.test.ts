@@ -25,7 +25,12 @@ const fixture = { root: "", foldFrom: "", hfs: false, foldCase: true, lstats: []
 // U+0131 DOTLESS I to `i`, neither of which `toLowerCase()` maps.
 const foldName = (s: string) => {
   const nfc = s.normalize("NFC");
-  return fixture.foldCase ? nfc.replace(/ſ/g, "s").replace(/ı/g, "i").toLowerCase() : nfc;
+  return fixture.foldCase
+    ? nfc
+        .replace(/\u017F/g, "s")
+        .replace(/\u0131/g, "i")
+        .toLowerCase()
+    : nfc;
 };
 
 const resolveFolded = (path: string): string => {
@@ -92,10 +97,9 @@ beforeAll(async () => {
   await writeFile(join(dir, "Key", "x.txt"), "KEY_X");
   await mkdir(join(dir, "secret"), { recursive: true });
   await writeFile(join(dir, "secret", "x.txt"), "SECRET_X");
-  // `café/` stored decomposed, holding a case-only link.
-  await mkdir(join(dir, "café"), { recursive: true });
-  await writeFile(join(dir, "café", "README.txt"), "CAFE_README");
-  await symlink(join(dir, "café", "README.txt"), join(dir, "café", "readme.txt"));
+  // `café/` stored decomposed; its case-only link is made by the test that needs it.
+  await mkdir(join(dir, "cafe\u0301"), { recursive: true });
+  await writeFile(join(dir, "cafe\u0301", "README.txt"), "CAFE_README");
   await writeFile(join(dir, "app.js"), "PLAIN_JS");
   await writeFile(join(dir, "app.js.br"), "BROTLI_JS");
   // A variant stored under another case than its identity file.
@@ -119,7 +123,6 @@ beforeAll(async () => {
   await symlink(join(dir, "admin", "x.txt"), join(dir, "link.txt"));
   await symlink(join(dir, "admin"), join(dir, "admin-link"));
   await writeFile(join(dir, "README.txt"), "README");
-  await symlink(join(dir, "README.txt"), join(dir, "Readme.txt"));
   await symlink(join(dir, ".env"), join(dir, "env-alias.txt"));
   await mkdir(join(tmp, "outside"), { recursive: true });
   await writeFile(join(tmp, "outside", "secret.txt"), "TOPSECRET");
@@ -136,6 +139,26 @@ const fetchStatic = (path: string, opts: Partial<Options> = {}, init?: RequestIn
     new Request(`http://localhost${path}`, init) as unknown as ServerRequest,
     () => new Response("next()", { status: 404 }),
   ) as Promise<Response>;
+
+// A link whose name differs from its target's only in case, which only a
+// case-sensitive host filesystem can hold beside the target. On a
+// case-insensitive host (default macOS, Windows) the link name already opens
+// the target, `symlink()` fails with EEXIST, and the calling test is skipped
+// rather than the whole file. Returns a function that removes the link.
+const caseOnlyLink = async (
+  target: string,
+  link: string,
+  skip: (note?: string) => never,
+): Promise<() => Promise<void>> => {
+  const created = await symlink(target, link).then(
+    () => true,
+    () => false,
+  );
+  if (!created) {
+    skip("the host filesystem is case-insensitive");
+  }
+  return () => rm(link, { force: true });
+};
 
 const expectServed = async (res: Response, body: string) => {
   expect(res.status).toBe(200);
@@ -174,9 +197,10 @@ describe("static on a case-insensitive filesystem", () => {
     }
   });
 
-  test("tells a case-only link from an alias per directory", async () => {
+  test("tells a case-only link from an alias per directory", async ({ skip }) => {
     // The root is case-sensitive and holds `Readme.txt` -> `README.txt`; only
     // `admin/` folds case.
+    const removeLink = await caseOnlyLink(join(dir, "README.txt"), join(dir, "Readme.txt"), skip);
     fixture.foldFrom = join(dir, "admin");
     try {
       await expectServed(await fetchStatic("/Readme.txt"), "README");
@@ -184,6 +208,7 @@ describe("static on a case-insensitive filesystem", () => {
       await expectNext(await fetchStatic("/admin/X.TXT"));
     } finally {
       fixture.foldFrom = "";
+      await removeLink();
     }
   });
 
@@ -210,16 +235,19 @@ describe("static on a case-insensitive filesystem", () => {
     await expectNext(await fetchStatic("/adm%C4%B1n/x.txt"));
   });
 
-  test("serves a case-only link under a name stored in another normalization", async () => {
+  test("serves a case-only link under a name stored in another normalization", async ({ skip }) => {
     // Case-sensitive but normalization-insensitive, like case-sensitive APFS:
     // the NFC request opens the NFD `café/`, so the departure is `readme.txt`
     // (the link) vs `README.txt`, not `café` vs `café`.
+    const cafe = join(dir, "cafe\u0301");
+    const removeLink = await caseOnlyLink(join(cafe, "README.txt"), join(cafe, "readme.txt"), skip);
     fixture.foldCase = false;
     try {
       await expectServed(await fetchStatic("/caf%C3%A9/readme.txt"), "CAFE_README");
       await expectServed(await fetchStatic("/caf%C3%A9/README.txt"), "CAFE_README");
     } finally {
       fixture.foldCase = true;
+      await removeLink();
     }
   });
 
@@ -354,12 +382,12 @@ describe("departingPrefixes", () => {
     ["admin/x.txt", "admin/x.txt", "/", undefined],
     // A segment that differs only in normalization is not the departure.
     [
-      "café/README.txt",
-      "café/readme.txt",
+      "cafe\u0301/README.txt",
+      "caf\u00e9/readme.txt",
       "/",
-      { lex: "café/readme.txt", real: "café/README.txt" },
+      { lex: "caf\u00e9/readme.txt", real: "cafe\u0301/README.txt" },
     ],
-    ["Key/x.txt", "Key/x.txt", "/", undefined],
+    ["Key/x.txt", "\u212Aey/x.txt", "/", undefined],
     ["administrator\\x.txt", "ADMINI~1\\x.txt", "\\", { lex: "ADMINI~1", real: "administrator" }],
     [
       "docs\\readme.md",
