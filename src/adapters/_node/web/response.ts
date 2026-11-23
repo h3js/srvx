@@ -92,6 +92,9 @@ export class WebServerResponse extends ServerResponse {
     });
 
     // Express can override prototype so we have to bind methods
+    // (the header writers too: they strip `Transfer-Encoding`, and `writeHead` releases `waitForResponseHead()`)
+    this.writeHead = this.writeHead.bind(this);
+    this.setHeader = this.setHeader.bind(this);
     this.waitToFinish = this.waitToFinish.bind(this);
     this.waitForResponseHead = this.waitForResponseHead.bind(this);
     this.toWebResponse = this.toWebResponse.bind(this);
@@ -108,10 +111,13 @@ export class WebServerResponse extends ServerResponse {
   // so this is where `waitForResponseHead()` is released and streaming/SSE
   // responses can be handed back before `end()`. See issue #248.
   override writeHead(statusCode: number, statusMessage?: any, headers?: any): this {
+    // Express swaps the prototype for `app.response`, whose `writeHead` may be the app's own.
+    const writeHead =
+      this instanceof WebServerResponse ? super.writeHead : Object.getPrototypeOf(this).writeHead;
     const result =
       typeof statusMessage === "string"
-        ? super.writeHead(statusCode, statusMessage, stripTransferEncoding(headers))
-        : super.writeHead(statusCode, stripTransferEncoding(headers ?? statusMessage));
+        ? writeHead.call(this, statusCode, statusMessage, stripTransferEncoding(headers))
+        : writeHead.call(this, statusCode, stripTransferEncoding(headers ?? statusMessage));
     this.#onHeadersSent?.();
     return result;
   }
@@ -120,7 +126,10 @@ export class WebServerResponse extends ServerResponse {
     if (typeof name === "string" && name.toLowerCase() === "transfer-encoding") {
       return this;
     }
-    return super.setHeader(name, value);
+    // Express swaps the prototype for `app.response`, whose `setHeader` may be the app's own.
+    return this instanceof WebServerResponse
+      ? super.setHeader(name, value)
+      : Object.getPrototypeOf(this).setHeader.call(this, name, value);
   }
 
   override appendHeader(name: string, value: string | readonly string[]): this {
