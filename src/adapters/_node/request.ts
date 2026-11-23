@@ -167,7 +167,11 @@ function drainUnreadBodyOnFinish(
     const tearDown = () => {
       stop();
       if (isH2) {
-        req.destroy();
+        if ("stream" in req && req.stream && !req.stream.destroyed) {
+          req.stream.destroy();
+        } else {
+          req.destroy();
+        }
       } else {
         req.socket?.destroy();
       }

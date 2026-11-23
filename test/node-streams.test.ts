@@ -4,7 +4,7 @@ import http2 from "node:http2";
 import net, { type AddressInfo } from "node:net";
 import { PassThrough, Readable } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { serve, FastResponse } from "../src/adapters/node.ts";
+import { serve, FastResponse, toNodeHandler } from "../src/adapters/node.ts";
 import { sendNodeResponse, streamBody } from "../src/adapters/_node/send.ts";
 import type { NodeServerResponse } from "../src/types.ts";
 
@@ -810,6 +810,83 @@ describe("node unread request.body keep-alive handling (#371)", () => {
     } finally {
       agent.destroy();
       await server.close(true);
+    }
+  });
+
+  test("destroys native HTTP/2 stream after drain timeout without breaking the session", async () => {
+    let serverStream: http2.ServerHttp2Stream | undefined;
+    let resolveClosed!: () => void;
+    const streamClosed = new Promise<boolean>((r) => {
+      resolveClosed = () => r(true);
+    });
+
+    const handler = toNodeHandler((req) => {
+      void req.body;
+      const path = new URL(req.url).pathname;
+      if (path === "/stall") {
+        return new Response("rejected", { status: 413 });
+      }
+      return new Response("ok");
+    });
+
+    const server = http2.createServer((req, res) => {
+      if (req.url === "/stall") {
+        serverStream = req.stream;
+        serverStream.once("close", resolveClosed);
+      }
+      void (handler as (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => unknown)(
+        req,
+        res,
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+
+    try {
+      // Send a POST whose request body stays open after the server responds 413.
+      const first = await new Promise<{ status: number; body: string }>((res, rej) => {
+        const req = client.request({ ":method": "POST", ":path": "/stall" });
+        let status = 0;
+        let body = "";
+        req.on("error", () => {});
+        req.on("response", (headers) => {
+          status = Number(headers[":status"]);
+        });
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => res({ status, body }));
+        req.write("partial-body");
+        // Intentionally do not call req.end() so the drain timeout fires.
+        setTimeout(() => rej(new Error("timed out waiting for 413")), 2000).unref();
+      });
+      expect(first).toEqual({ status: 413, body: "rejected" });
+
+      const closed = await Promise.race([
+        streamClosed,
+        new Promise<boolean>((r) => setTimeout(() => r(false), 2500)),
+      ]);
+      expect(closed).toBe(true);
+      expect(serverStream?.closed || serverStream?.destroyed).toBe(true);
+
+      // Session itself must still be usable for subsequent requests.
+      const second = await new Promise<{ status: number; body: string }>((res, rej) => {
+        const req = client.request({ ":method": "GET", ":path": "/ok" });
+        let status = 0;
+        let body = "";
+        req.on("error", rej);
+        req.on("response", (headers) => {
+          status = Number(headers[":status"]);
+        });
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => res({ status, body }));
+        req.end();
+      });
+      expect(second).toEqual({ status: 200, body: "ok" });
+    } finally {
+      client.close();
+      await new Promise<void>((r) => server.close(() => r()));
     }
   });
 });
