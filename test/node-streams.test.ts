@@ -704,3 +704,43 @@ describe("sendNodeResponse buffered bodies", () => {
     });
   }
 });
+
+describe("node unread request.body keep-alive handling (#371)", () => {
+  test("accessing request.body without reading does not stall subsequent keep-alive requests", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        // Touching `req.body` wraps the IncomingMessage via Readable.toWeb without reading it.
+        void req.body;
+        await new Promise((r) => setTimeout(r, 30));
+        const path = new URL(req.url).pathname;
+        return new Response(path, { status: path === "/big" ? 413 : 200 });
+      },
+    });
+    await server.ready();
+
+    try {
+      const base = server.url!.replace(/\/$/, "");
+      for (const [name, size] of [
+        ["small", 64 * 1024],
+        ["empty", 0],
+        ["big", 2 * 1024 * 1024],
+        ["empty", 0],
+        ["empty", 0],
+        ["empty", 0],
+      ] as const) {
+        const init: RequestInit = { signal: AbortSignal.timeout(3000) };
+        if (size > 0) {
+          init.method = "POST";
+          init.body = "x".repeat(size);
+        }
+        const res = await fetch(`${base}/${name}`, init);
+        const text = await res.text();
+        expect(res.status).toBe(name === "big" ? 413 : 200);
+        expect(text).toBe(`/${name}`);
+      }
+    } finally {
+      await server.close(true);
+    }
+  });
+});
