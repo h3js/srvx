@@ -143,7 +143,10 @@ function drainUnreadBodyOnFinish(
     return;
   }
   const onFinish = () => {
-    if (stream.locked || req.destroyed || req.readableEnded || !req.isPaused()) {
+    // Do not require `req.isPaused()`: `Readable.toWeb()` resumes `req` inside
+    // `pull()`, so an unread upload still in flight is flowing when the response
+    // finishes and only pauses once the web stream's queue fills.
+    if (stream.locked || req.destroyed || req.readableEnded) {
       return;
     }
     if (req.complete && req.readableLength === 0) {
@@ -185,10 +188,13 @@ function drainUnreadBodyOnFinish(
     req.once("error", stop);
     req.resume();
   };
-  if (res.writableFinished) {
+  // On HTTP/2, `Http2ServerResponse` only emits `finish` when the underlying
+  // stream closes, so listen on `res.stream`'s writable `finish` instead.
+  const finishTarget = "stream" in res && res.stream ? res.stream : res;
+  if (finishTarget.writableFinished) {
     onFinish();
   } else {
-    res.once("finish", onFinish);
+    finishTarget.once("finish", onFinish);
   }
 }
 

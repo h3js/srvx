@@ -743,4 +743,73 @@ describe("node unread request.body keep-alive handling (#371)", () => {
       await server.close(true);
     }
   });
+
+  test("drains unread body that arrives after the response finishes without stalling keep-alive", async () => {
+    const server = serve({
+      port: 0,
+      fetch(req) {
+        void req.body;
+        const path = new URL(req.url).pathname;
+        return new Response(path, { status: path === "/delayed" ? 413 : 200 });
+      },
+    });
+    await server.ready();
+
+    const agent = new (await import("node:http")).Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const { port } = server.node!.server!.address() as AddressInfo;
+      const payload = Buffer.alloc(128 * 1024, 0x78);
+
+      // Send headers immediately, wait for the 413 response to finish, then write the body.
+      const firstStatus = await new Promise<number>((resolve, reject) => {
+        const req = request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/delayed",
+            method: "POST",
+            agent,
+            headers: { "content-length": String(payload.byteLength) },
+          },
+          (res) => {
+            res.resume();
+            res.once("end", () => {
+              req.end(payload);
+              resolve(res.statusCode!);
+            });
+          },
+        );
+        req.once("error", reject);
+        req.flushHeaders();
+      });
+      expect(firstStatus).toBe(413);
+
+      // Next request on the same keep-alive agent must complete promptly.
+      const second = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/next",
+            method: "GET",
+            agent,
+            signal: AbortSignal.timeout(3000),
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c) => chunks.push(c));
+            res.once("end", () =>
+              resolve({ status: res.statusCode!, body: Buffer.concat(chunks).toString() }),
+            );
+          },
+        );
+        req.once("error", reject);
+        req.end();
+      });
+      expect(second).toEqual({ status: 200, body: "/next" });
+    } finally {
+      agent.destroy();
+      await server.close(true);
+    }
+  });
 });
