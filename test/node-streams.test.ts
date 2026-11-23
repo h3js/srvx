@@ -4,7 +4,7 @@ import http2 from "node:http2";
 import net, { type AddressInfo } from "node:net";
 import { PassThrough, Readable } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { serve, FastResponse } from "../src/adapters/node.ts";
+import { serve, FastResponse, toNodeHandler } from "../src/adapters/node.ts";
 import { sendNodeResponse, streamBody } from "../src/adapters/_node/send.ts";
 import type { NodeServerResponse } from "../src/types.ts";
 
@@ -703,4 +703,190 @@ describe("sendNodeResponse buffered bodies", () => {
       });
     });
   }
+});
+
+describe("node unread request.body keep-alive handling (#371)", () => {
+  test("accessing request.body without reading does not stall subsequent keep-alive requests", async () => {
+    const server = serve({
+      port: 0,
+      async fetch(req) {
+        // Touching `req.body` wraps the IncomingMessage via Readable.toWeb without reading it.
+        void req.body;
+        await new Promise((r) => setTimeout(r, 30));
+        const path = new URL(req.url).pathname;
+        return new Response(path, { status: path === "/big" ? 413 : 200 });
+      },
+    });
+    await server.ready();
+
+    try {
+      const base = server.url!.replace(/\/$/, "");
+      for (const [name, size] of [
+        ["small", 64 * 1024],
+        ["empty", 0],
+        ["big", 2 * 1024 * 1024],
+        ["empty", 0],
+        ["empty", 0],
+        ["empty", 0],
+      ] as const) {
+        const init: RequestInit = { signal: AbortSignal.timeout(3000) };
+        if (size > 0) {
+          init.method = "POST";
+          init.body = "x".repeat(size);
+        }
+        const res = await fetch(`${base}/${name}`, init);
+        const text = await res.text();
+        expect(res.status).toBe(name === "big" ? 413 : 200);
+        expect(text).toBe(`/${name}`);
+      }
+    } finally {
+      await server.close(true);
+    }
+  });
+
+  test("drains unread body that arrives after the response finishes without stalling keep-alive", async () => {
+    const server = serve({
+      port: 0,
+      fetch(req) {
+        void req.body;
+        const path = new URL(req.url).pathname;
+        return new Response(path, { status: path === "/delayed" ? 413 : 200 });
+      },
+    });
+    await server.ready();
+
+    const agent = new (await import("node:http")).Agent({ keepAlive: true, maxSockets: 1 });
+    try {
+      const { port } = server.node!.server!.address() as AddressInfo;
+      const payload = Buffer.alloc(128 * 1024, 0x78);
+
+      // Send headers immediately, wait for the 413 response to finish, then write the body.
+      const firstStatus = await new Promise<number>((resolve, reject) => {
+        const req = request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/delayed",
+            method: "POST",
+            agent,
+            headers: { "content-length": String(payload.byteLength) },
+          },
+          (res) => {
+            res.resume();
+            res.once("end", () => {
+              req.end(payload);
+              resolve(res.statusCode!);
+            });
+          },
+        );
+        req.once("error", reject);
+        req.flushHeaders();
+      });
+      expect(firstStatus).toBe(413);
+
+      // Next request on the same keep-alive agent must complete promptly.
+      const second = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: "/next",
+            method: "GET",
+            agent,
+            signal: AbortSignal.timeout(3000),
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c) => chunks.push(c));
+            res.once("end", () =>
+              resolve({ status: res.statusCode!, body: Buffer.concat(chunks).toString() }),
+            );
+          },
+        );
+        req.once("error", reject);
+        req.end();
+      });
+      expect(second).toEqual({ status: 200, body: "/next" });
+    } finally {
+      agent.destroy();
+      await server.close(true);
+    }
+  });
+
+  test("destroys native HTTP/2 stream after drain timeout without breaking the session", async () => {
+    let serverStream: http2.ServerHttp2Stream | undefined;
+    let resolveClosed!: () => void;
+    const streamClosed = new Promise<boolean>((r) => {
+      resolveClosed = () => r(true);
+    });
+
+    const handler = toNodeHandler((req) => {
+      void req.body;
+      const path = new URL(req.url).pathname;
+      if (path === "/stall") {
+        return new Response("rejected", { status: 413 });
+      }
+      return new Response("ok");
+    });
+
+    const server = http2.createServer((req, res) => {
+      if (req.url === "/stall") {
+        serverStream = req.stream;
+        serverStream.once("close", resolveClosed);
+      }
+      void (handler as (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => unknown)(
+        req,
+        res,
+      );
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+
+    try {
+      // Send a POST whose request body stays open after the server responds 413.
+      const first = await new Promise<{ status: number; body: string }>((res, rej) => {
+        const req = client.request({ ":method": "POST", ":path": "/stall" });
+        let status = 0;
+        let body = "";
+        req.on("error", () => {});
+        req.on("response", (headers) => {
+          status = Number(headers[":status"]);
+        });
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => res({ status, body }));
+        req.write("partial-body");
+        // Intentionally do not call req.end() so the drain timeout fires.
+        setTimeout(() => rej(new Error("timed out waiting for 413")), 2000).unref();
+      });
+      expect(first).toEqual({ status: 413, body: "rejected" });
+
+      const closed = await Promise.race([
+        streamClosed,
+        new Promise<boolean>((r) => setTimeout(() => r(false), 2500)),
+      ]);
+      expect(closed).toBe(true);
+      expect(serverStream?.closed || serverStream?.destroyed).toBe(true);
+
+      // Session itself must still be usable for subsequent requests.
+      const second = await new Promise<{ status: number; body: string }>((res, rej) => {
+        const req = client.request({ ":method": "GET", ":path": "/ok" });
+        let status = 0;
+        let body = "";
+        req.on("error", rej);
+        req.on("response", (headers) => {
+          status = Number(headers[":status"]);
+        });
+        req.setEncoding("utf8");
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => res({ status, body }));
+        req.end();
+      });
+      expect(second).toEqual({ status: 200, body: "ok" });
+    } finally {
+      client.close();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
 });

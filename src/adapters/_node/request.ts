@@ -121,6 +121,87 @@ function isBodySourceFinished(req: NodeServerRequest): boolean {
   return isClientGone(req) || req.destroyed || req.readableEnded;
 }
 
+const UNREAD_BODY_DRAIN_CAP = 1024 * 1024; // 1 MiB
+const UNREAD_BODY_DRAIN_TIMEOUT_MS = 1000;
+
+/**
+ * Node's `resOnFinish` only dumps an unread body when `req._consuming` is false.
+ * Calling `Readable.toWeb(req)` flips `_consuming` to true and pauses `req` when
+ * nothing reads the web stream, leaving unread bytes on the HTTP/1.1 socket so
+ * the next keep-alive request stalls until `keepAliveTimeout` (#371).
+ *
+ * When the response finishes with an unread, unlocked web stream, drain up to a
+ * bounded byte/time cap so keep-alive can reuse the connection for small bodies,
+ * and tear down the connection (or HTTP/2 stream) if the client keeps sending.
+ */
+function drainUnreadBodyOnFinish(
+  req: NodeServerRequest,
+  res: NodeServerResponse | undefined,
+  stream: ReadableStream,
+): void {
+  if (!res) {
+    return;
+  }
+  const onFinish = () => {
+    // Do not require `req.isPaused()`: `Readable.toWeb()` resumes `req` inside
+    // `pull()`, so an unread upload still in flight is flowing when the response
+    // finishes and only pauses once the web stream's queue fills.
+    if (stream.locked || req.destroyed || req.readableEnded) {
+      return;
+    }
+    if (req.complete && req.readableLength === 0) {
+      req.removeAllListeners("data");
+      req.removeAllListeners("readable");
+      req.read(0);
+      return;
+    }
+    const isH2 = req.httpVersion === "2.0";
+    let drained = 0;
+    const stop = () => {
+      clearTimeout(timer);
+      req.off("data", onData);
+      req.off("end", stop);
+      req.off("close", stop);
+      req.off("error", stop);
+    };
+    const tearDown = () => {
+      stop();
+      if (isH2) {
+        if ("stream" in req && req.stream && !req.stream.destroyed) {
+          req.stream.destroy();
+        } else {
+          req.destroy();
+        }
+      } else {
+        req.socket?.destroy();
+      }
+    };
+    const onData = (chunk: Buffer | string) => {
+      drained += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
+      if (drained > UNREAD_BODY_DRAIN_CAP) {
+        tearDown();
+      }
+    };
+    const timer = setTimeout(tearDown, UNREAD_BODY_DRAIN_TIMEOUT_MS);
+    timer.unref?.();
+    req.removeAllListeners("data");
+    req.removeAllListeners("readable");
+    req.on("data", onData);
+    req.once("end", stop);
+    req.once("close", stop);
+    req.once("error", stop);
+    req.resume();
+  };
+  // On HTTP/2, `Http2ServerResponse` only emits `finish` when the underlying
+  // stream closes, so listen on `res.stream`'s writable `finish` instead.
+  const finishTarget = "stream" in res && res.stream ? res.stream : res;
+  if (finishTarget.writableFinished) {
+    onFinish();
+  } else {
+    finishTarget.once("finish", onFinish);
+  }
+}
+
 /** Request-target checks (e.g. `hasBackslashInPath`) run in `serve()`/`toNodeHandler()`, not here. */
 export const NodeRequest: {
   new (nodeCtx: NodeRequestContext): ServerRequest;
@@ -322,6 +403,7 @@ export const NodeRequest: {
         // already-consumed IncomingMessage (the fast path leaves it ended, so a
         // fresh `Readable.toWeb` would produce a stream whose `end` never fires).
         let stream: ReadableStream | null = null;
+        let wrappedLiveReq = false;
         if (this.#hasBody() && !this.#bodyUsed) {
           // A body already buffered on `req.rawBody` (e.g. by Google Cloud
           // Functions, which drains the stream first) is served from it, as
@@ -346,6 +428,7 @@ export const NodeRequest: {
             stream = Readable.toWeb(
               this.#req as NodeJS.ReadableStream,
             ) as unknown as ReadableStream;
+            wrappedLiveReq = true;
           }
         }
         // Enforce `maxRequestBodySize` at the single choke point every stream
@@ -354,6 +437,9 @@ export const NodeRequest: {
         // stream is in play — and streaming). Direct reads enforce it in `readBody()`.
         if (stream && this.#maxRequestBodySize !== undefined) {
           stream = limitBodyStream(stream, this.#maxRequestBodySize);
+        }
+        if (wrappedLiveReq && stream) {
+          drainUnreadBodyOnFinish(this.#req, this.runtime?.node?.res, stream);
         }
         this.#bodyStream = stream;
       }
