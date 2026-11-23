@@ -25,6 +25,7 @@ export default defineBuildConfig({
           "generic",
           "service-worker",
           "aws-lambda",
+          "scriptc",
         ].map((adapter) => `src/adapters/${adapter}.ts`),
       ],
       rolldown: {

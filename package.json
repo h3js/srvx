@@ -24,6 +24,7 @@
     "./generic": "./dist/adapters/generic.mjs",
     "./service-worker": "./dist/adapters/service-worker.mjs",
     "./aws-lambda": "./dist/adapters/aws-lambda.mjs",
+    "./scriptc": "./dist/adapters/scriptc.mjs",
     "./cli": "./dist/cli.mjs",
     "./mtls": "./dist/mtls.mjs",
     "./static": "./dist/static.mjs",
@@ -37,6 +38,7 @@
       "bun": "./dist/adapters/bun.mjs",
       "workerd": "./dist/adapters/cloudflare.mjs",
       "browser": "./dist/adapters/service-worker.mjs",
+      "scriptc": "./dist/adapters/scriptc.mjs",
       "node": "./dist/adapters/node.mjs",
       "default": "./dist/adapters/generic.mjs"
     }
