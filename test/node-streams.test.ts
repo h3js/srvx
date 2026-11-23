@@ -885,7 +885,7 @@ describe("node unread request.body keep-alive handling (#371)", () => {
       });
       expect(second).toEqual({ status: 200, body: "ok" });
     } finally {
-      client.close();
+      client.destroy();
       await new Promise<void>((r) => server.close(() => r()));
     }
   });
