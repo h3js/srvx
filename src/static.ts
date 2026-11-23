@@ -5,11 +5,12 @@ import type { Transform } from "node:stream";
 
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
+import { departingPrefixes, isSpellingAlias } from "./_static-alias.ts";
 
 export interface StaticMiddlewareOptions {
   /**
@@ -322,6 +323,40 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     return realDir;
   };
 
+  // Whether the request's spelling `lex` and the resolved `real` name different
+  // directory entries at the first segment where they depart. A case-insensitive
+  // directory resolves a miscased (or 8.3 short) name to the very entry stored
+  // under the real name: the same inode, so the alias is refused. Different
+  // entries mean the names are genuinely distinct, which only a case-sensitive
+  // directory allows: a case-only link (`readme.md` -> `README.md`, kept for old
+  // URLs), or a deeper link back into a sibling named in another case
+  // (`docs/guide.txt` -> `../Docs/guide.txt` departs at `docs` vs `Docs`, two
+  // real directories). Asked only once `isSpellingAlias` has flagged the pair,
+  // so a normal hit pays nothing; and per path rather than per root, as case
+  // sensitivity can differ between directories (Windows sets it per directory).
+  // A failed `lstat`, or a filesystem that reports no inode numbers, compares
+  // equal or fails, and so refuses. Not caught: a miscased segment past the
+  // departing one, which only a case-insensitive directory under a
+  // case-sensitive one can open (`/docs/SUB/x` with a folding `docs/` holding
+  // `sub` -> `../Docs/sub`).
+  const departsToOtherEntry = async (real: string, lex: string): Promise<boolean> => {
+    const prefixes = departingPrefixes(real, lex, sep);
+    if (prefixes === undefined) {
+      return false;
+    }
+    // `bigint`: an NTFS file ID (a 16-bit sequence number above a 48-bit index)
+    // rounds as a Number, so two entries could compare equal.
+    const [lexStat, realStat] = await Promise.all([
+      lstat(dir + prefixes.lex, { bigint: true }).catch(() => null),
+      lstat((await getRealDir()) + prefixes.real, { bigint: true }).catch(() => null),
+    ]);
+    return (
+      lexStat !== null &&
+      realStat !== null &&
+      (lexStat.ino !== realStat.ino || lexStat.dev !== realStat.dev)
+    );
+  };
+
   const statFile = async (candidate: string): Promise<Stats | null> => {
     const fileStat = await stat(candidate).catch(() => null);
     return fileStat?.isFile() ? fileStat : null;
@@ -338,7 +373,17 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
   // comparison pins that fd to the path that passed the checks — with a
   // check-then-`createReadStream(path)` sequence, a symlink swap in between
   // would serve a file the checks never saw.
-  const openServable = async (candidate: string): Promise<ServableFile | null> => {
+  //
+  // The resolved path must also not be the same file under another letter case
+  // than the request named (see `isSpellingAlias`), unless the two spellings
+  // name distinct entries (see `departsToOtherEntry`). `candidate` always starts
+  // with `dir` (the handler's pre-filter), so both sides are root-relative and a
+  // `dir` option spelled in another case than the folder on disk still serves.
+  // Its last `suffixLength` characters were added here, not by the URL.
+  const openServable = async (
+    candidate: string,
+    suffixLength: number,
+  ): Promise<ServableFile | null> => {
     const handle = await open(candidate, OPEN_FLAGS).catch(() => null);
     if (handle === null) {
       return null;
@@ -348,7 +393,16 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       const realPath = fileStat.isFile() ? await realpath(candidate).catch(() => null) : null;
       if (realPath !== null) {
         const root = await getRealDir();
-        if (realPath.startsWith(root) && !isDeniedDotPath(realPath.slice(root.length))) {
+        const realRel = realPath.slice(root.length);
+        const lex = candidate.slice(dir.length);
+        if (
+          realPath.startsWith(root) &&
+          !isDeniedDotPath(realRel) &&
+          !(
+            isSpellingAlias(realRel, lex, suffixLength, sep) &&
+            !(await departsToOtherEntry(realRel, lex))
+          )
+        ) {
           const realStat = await stat(realPath).catch(() => null);
           if (realStat && realStat.ino === fileStat.ino && realStat.dev === fileStat.dev) {
             return { handle, size: fileStat.size, mtimeMs: fileStat.mtimeMs };
@@ -430,6 +484,9 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
     let rangeRequest: string | undefined;
     for (const candidate of paths) {
       const filePath = join(dir, candidate);
+      // What this middleware appended to the URL's path (`index.html`, `.html`),
+      // whose case on disk is not the URL's to check.
+      const suffixLength = candidate.length - path.length;
       // Cheap lexical pre-filter — `isServable` is the real boundary. Also
       // guarantees `slice(dir.length)` yields an actual relative path.
       if (!filePath.startsWith(dir) || isDeniedDotPath(filePath.slice(dir.length))) {
@@ -475,7 +532,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           }
           // An unservable variant (escapes the root, or resolves onto a denied
           // dot path) is skipped, not fatal: the identity file can still serve.
-          const variant = await openServable(variantPath);
+          const variant = await openServable(variantPath, suffixLength + spec.ext.length);
           if (variant) {
             encoding = spec.name;
             servePath = variantPath;
@@ -485,7 +542,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
         }
       }
       // Only the bytes actually sent need checking; a winning variant already was.
-      file ??= await openServable(filePath);
+      file ??= await openServable(filePath, suffixLength);
       if (!file) {
         continue;
       }

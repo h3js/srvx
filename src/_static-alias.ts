@@ -1,0 +1,102 @@
+// An 8.3 short-name segment (`ADMINI~1`, `LONGFI~1.TXT`): a base of at most six
+// characters, `~` and a number, then an extension of at most three.
+const SHORT_NAME_RE = /(?:^|\\)[^.\\]{1,6}~\d+(?:\.[^.\\]{1,3})?(?:\\|$)/;
+
+/**
+ * Whether `real`, a served file's root-relative path as `realpath()` reports it,
+ * is another spelling of `lex`, the root-relative path the request named,
+ * rather than where a symlink led. The last `suffixLength` characters of `lex`
+ * were appended by the middleware (`index.html`, `.html`, a variant's `.br`),
+ * not taken from the URL, so their case is not checked. Distinct names on a
+ * case-sensitive filesystem can also yield a flagged pair (a case-only symlink,
+ * or a link into a sibling directory named in another case); the caller tells
+ * them apart with `departingPrefixes`.
+ *
+ * On a case-insensitive filesystem (default macOS, Windows) `/ADMIN/x.txt`
+ * opens `admin/x.txt`: a second URL for the file, which also gets past an
+ * earlier `startsWith("/admin")` check in the app, like the encoded spellings
+ * `NON_CANONICAL_PATH_RE` refuses. The native `realpath()` returns the name
+ * stored on disk on both (macOS `realpath(3)`, Windows
+ * `GetFinalPathNameByHandleW`), so a `real` that differs from `lex` only by
+ * letter case marks the alias. Any other difference means a symlink was
+ * followed, and in-root links are served.
+ *
+ * - A difference in Unicode normalization alone is tolerated when the request
+ *   is already NFC: HFS+ stores (and `realpath()` returns) every name
+ *   decomposed, while browsers send composed URLs. A request that is not NFC
+ *   must match the disk exactly, or it could reach a name through a singleton
+ *   such as U+212A KELVIN SIGN, which NFC maps to `K`.
+ * - On Windows an 8.3 short name (`ADMINI~1`) is the same kind of alias, and
+ *   `realpath()` expands it to the long name, so a path with a short-name
+ *   segment is refused when it resolves elsewhere, unless that segment is
+ *   itself a separate entry, such as a symlink (`v~1.txt` -> `sub/x.txt`).
+ *
+ * Not caught: a miscased segment that a followed symlink renames away
+ * (`/LINK.txt` for `link.txt` -> `x.txt`), as `real` then differs in more than
+ * case; the rare characters a filesystem's own case table folds where neither
+ * `toLowerCase()` nor `toUpperCase()` does; and any case-insensitive mount on Linux (casefold,
+ * vfat/exFAT, SMB, WSL `/mnt/c`), where glibc `realpath(3)` returns the
+ * spelling it was given, so `real` always equals `lex`.
+ */
+export function isSpellingAlias(
+  real: string,
+  lex: string,
+  suffixLength: number,
+  sep: string,
+): boolean {
+  if (real === lex) {
+    return false;
+  }
+  if (suffixLength > 0) {
+    // The suffix is ASCII, so a case-only difference keeps its length.
+    const realSuffix = real.slice(-suffixLength);
+    if (realSuffix.toLowerCase() !== lex.slice(-suffixLength).toLowerCase()) {
+      return false; // renamed by a symlink
+    }
+    real = real.slice(0, -suffixLength);
+    lex = lex.slice(0, -suffixLength);
+  }
+  const r = real.normalize("NFC");
+  const l = lex.normalize("NFC");
+  if (r === l && l === lex) {
+    return false; // normalization only, from a composed request
+  }
+  // Both directions, as a filesystem's case table can fold a letter that only
+  // one of them maps: APFS and NTFS treat U+017F LONG S as `s` and NTFS treats
+  // U+0131 DOTLESS I as `i`, which `toUpperCase()` catches but `toLowerCase()`
+  // leaves alone. Flagging too much only costs the caller's entry comparison.
+  return (
+    r.toLowerCase() === l.toLowerCase() ||
+    r.toUpperCase() === l.toUpperCase() ||
+    (sep === "\\" && SHORT_NAME_RE.test(lex))
+  );
+}
+
+/**
+ * `lex` and `real`, each up to and including the first segment where they
+ * differ, or `undefined` when they have no such segment pair. Segments are
+ * compared after NFC, so a segment that differs only in normalization (an NFC
+ * request for a name HFS+ or a macOS tool stored decomposed) is not mistaken
+ * for the departure: comparing its entries would find one directory, or a
+ * junction and its target, rather than the segment that tells them apart.
+ */
+export function departingPrefixes(
+  real: string,
+  lex: string,
+  sep: string,
+): { lex: string; real: string } | undefined {
+  const lexSegments = lex.split(sep);
+  const realSegments = real.split(sep);
+  for (let i = 0; i < lexSegments.length && i < realSegments.length; i++) {
+    if (
+      lexSegments[i] !== realSegments[i] &&
+      lexSegments[i].normalize("NFC") !== realSegments[i].normalize("NFC")
+    ) {
+      return {
+        lex: lexSegments.slice(0, i + 1).join(sep),
+        real: realSegments.slice(0, i + 1).join(sep),
+      };
+    }
+  }
+  return undefined;
+}
