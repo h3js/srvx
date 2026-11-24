@@ -6,7 +6,7 @@ import type { Transform } from "node:stream";
 import { extname, join, resolve, sep } from "node:path";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import { pipeline } from "node:stream";
+import { Readable, pipeline } from "node:stream";
 import { constants as zlibConstants, createBrotliCompress, createGzip } from "node:zlib";
 import { FastResponse } from "srvx";
 import { FastURL } from "./_url.ts";
@@ -236,6 +236,14 @@ const TRAILING_DOT_OR_SPACE = String.raw`(?:[^/.]\.+|\.{3,}| )(?:\/|$)`;
 const ALIASED_NAME_RE = new RegExp(
   sep === "\\" ? `:|${TRAILING_DOT_OR_SPACE}` : TRAILING_DOT_OR_SPACE,
 );
+
+// On Bun, `FastResponse` is the native `Response`, which reads a Node stream body
+// through its own wrapper: cancelling the response (the client hung up) never
+// destroys the stream, so its `FileHandle` is left to GC, which Bun treats as a
+// fatal error. `Readable.toWeb()` destroys the source when its web stream is
+// cancelled. Other runtimes keep the Node stream (srvx's `NodeResponse` pipes
+// it directly).
+const toBody = (stream: Readable): any => ("Bun" in globalThis ? Readable.toWeb(stream) : stream);
 
 // Append `sep` so prefix checks only match at a segment boundary (`/srv/www`
 // must not also match `/srv/www-backup`). Roots already end with `sep`.
@@ -653,7 +661,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
           if (parsed) {
             // Node's `end` is inclusive, matching the byte range's own bounds.
             const stream = file.handle.createReadStream({ start: parsed.start, end: parsed.end });
-            return new FastResponse(stream as any, {
+            return new FastResponse(toBody(stream), {
               status: 206,
               headers: {
                 ...headers,
@@ -676,7 +684,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // The stream closes the handle when it ends or errors (`autoClose`).
       const stream = file.handle.createReadStream();
       if (!compressor) {
-        return new FastResponse(stream as any, { headers });
+        return new FastResponse(toBody(stream), { headers });
       }
       // `pipeline` rather than `stream.pipe(encoded)`: `pipe` leaves the source
       // running if the destination errors or is destroyed, so a client that
@@ -686,7 +694,7 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // body — the response headers are long gone by then.
       const encoded = compressor(file.size);
       pipeline(stream, encoded, () => {});
-      return new FastResponse(encoded as any, { headers });
+      return new FastResponse(toBody(encoded), { headers });
     }
     return next();
   };
