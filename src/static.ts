@@ -583,8 +583,10 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       if (lastModified) {
         headers["Last-Modified"] = new Date(lastModifiedMs).toUTCString();
       }
-      // A conditional request that still matches needs no body. `If-None-Match`
-      // takes precedence over `If-Modified-Since` (RFC 9110 §13.2.2): its very
+      // Failed `If-Match` / `If-Unmodified-Since` preconditions take precedence
+      // over cache validators and ranges (RFC 9110 §13.2.2). `If-Match` also
+      // suppresses `If-Unmodified-Since`. `If-None-Match` takes precedence over
+      // `If-Modified-Since`: its very
       // presence suppresses the date check — even with `etag` off, where no tag
       // is emitted so only `*` can match — and a match answers GET/HEAD with
       // `304` but any other configured method with `412` (precondition failed).
@@ -592,14 +594,26 @@ export const staticMiddleware = (options: StaticMiddlewareOptions): ServerMiddle
       // it is never evaluated for the other methods.
       const conditionalGet = req.method === "GET" || req.method === "HEAD";
       let conditionalStatus = 0;
-      const ifNoneMatch = req.headers.get("if-none-match");
-      if (ifNoneMatch !== null) {
-        if (matchesIfNoneMatch(ifNoneMatch, etagValue)) {
-          conditionalStatus = conditionalGet ? 304 : 412;
+      const ifMatch = req.headers.get("if-match");
+      if (ifMatch !== null) {
+        if (!matchesIfMatch(ifMatch, etagValue)) conditionalStatus = 412;
+      } else {
+        const ifUnmodifiedSince = req.headers.get("if-unmodified-since");
+        if (ifUnmodifiedSince !== null) {
+          const since = isHttpDate(ifUnmodifiedSince) ? Date.parse(ifUnmodifiedSince) : Number.NaN;
+          if (!Number.isNaN(since) && lastModifiedMs > since) conditionalStatus = 412;
         }
-      } else if (lastModified && conditionalGet) {
-        if (matchesIfModifiedSince(req.headers.get("if-modified-since"), lastModifiedMs)) {
-          conditionalStatus = 304;
+      }
+      if (!conditionalStatus) {
+        const ifNoneMatch = req.headers.get("if-none-match");
+        if (ifNoneMatch !== null) {
+          if (matchesIfNoneMatch(ifNoneMatch, etagValue)) {
+            conditionalStatus = conditionalGet ? 304 : 412;
+          }
+        } else if (lastModified && conditionalGet) {
+          if (matchesIfModifiedSince(req.headers.get("if-modified-since"), lastModifiedMs)) {
+            conditionalStatus = 304;
+          }
         }
       }
       if (conditionalStatus) {
@@ -736,6 +750,14 @@ function computeETag(size: number, mtimeMs: number, encoding: string): string {
   return `W/"${encoding ? `${tag}-${encoding}` : tag}"`;
 }
 
+// If-Match uses strong comparison. The ETags emitted here are weak, so only
+// the wildcard can match a file that exists.
+function matchesIfMatch(header: string, etag: string): boolean {
+  if (header.trim() === "*") return true;
+  if (!etag || etag.startsWith("W/")) return false;
+  return header.split(",").some((candidate) => candidate.trim() === etag);
+}
+
 // RFC 9110 §13.1.2 — a weak comparison, since our tags are weak, so an optional
 // `W/` prefix is stripped from each candidate before matching. `*` matches any
 // current representation. With ETags off (`etag` empty) there is no tag to
@@ -749,6 +771,13 @@ function matchesIfNoneMatch(header: string, etag: string): boolean {
   }
   const bare = etag.replace(/^W\//, "");
   return header.split(",").some((candidate) => candidate.trim().replace(/^W\//, "") === bare);
+}
+
+// Accept all three HTTP-date forms while rejecting dates outside HTTP syntax.
+function isHttpDate(value: string): boolean {
+  return /^(?:[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]+, \d{2}-[A-Z][a-z]{2}-\d{2} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})$/.test(
+    value,
+  );
 }
 
 // The file is unchanged if its mtime is at or before the client's copy.
