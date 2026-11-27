@@ -81,17 +81,25 @@ export function limitRequestBody<T extends Request>(
   // A `Response` fronts the size-limited stream so every read method resolves
   // through one shared, already-spec-compliant body implementation. Built lazily
   // so an unconsumed limited request stays allocation-light, and cached so
-  // repeated `body` / read-method access observes one consistent body.
+  // repeated `body` / read-method access observes one consistent body. It carries
+  // the request's `Content-Type` so `formData()` can find the multipart boundary
+  // and `blob()` keeps its type.
   let limited: Response | undefined;
   // Native Request served for `_request` (see the trap below), cached alongside
   // `limited` so the size-limited body is only ever handed out once.
   let nativeRequest: globalThis.Request | undefined;
-  const limitedBody = (): Response =>
-    (limited ??= new Response(
-      overLimit
-        ? erroredStream(createError(maxRequestBodySize))
-        : limitBodyStream(request.body!, maxRequestBodySize, options),
-    ));
+  const limitedBody = (): Response => {
+    if (!limited) {
+      const contentType = request.headers.get("content-type");
+      limited = new Response(
+        overLimit
+          ? erroredStream(createError(maxRequestBodySize))
+          : limitBodyStream(request.body!, maxRequestBodySize, options),
+        contentType ? { headers: { "content-type": contentType } } : undefined,
+      );
+    }
+    return limited;
+  };
 
   return new Proxy(request, {
     get(target, prop) {
