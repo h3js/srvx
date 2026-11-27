@@ -8,6 +8,7 @@ import {
   resolveTLSOptions,
   toNativeResponse,
 } from "../_utils.ts";
+import { serveWithCompletion } from "../_completed.ts";
 import { wrapFetch } from "../_middleware.ts";
 import { gracefulShutdownPlugin } from "../_plugins.ts";
 import { trustProxyPlugin } from "../_trust-proxy.ts";
@@ -15,6 +16,8 @@ import { limitRequestBody } from "../body-limit.ts";
 
 export { FastURL } from "../_url.ts";
 export const FastResponse: typeof globalThis.Response = Response;
+
+const noop = () => {};
 
 export function serve(options: ServerOptions): DenoServer {
   return new DenoServer(options);
@@ -81,6 +84,19 @@ class DenoServer implements Server<DenoFetchHandler> {
             return info?.remoteAddr?.hostname;
           },
         },
+      });
+      const nativeCompleted = info?.completed;
+      if (!nativeCompleted) {
+        // No `info` (direct `server.fetch()` call) or an older Deno: track the
+        // response body instead.
+        return serveWithCompletion(request, fetchHandler);
+      }
+      // `info.completed` settles once the response is delivered, and rejects
+      // on some interruptions; `request.completed` never rejects.
+      let completed: Promise<void> | undefined;
+      Object.defineProperty(request, "completed", {
+        enumerable: true,
+        get: () => (completed ||= nativeCompleted.then(noop, noop)),
       });
       // Deno.serve strictly requires a native Response; normalize node-adapter
       // NodeResponse (see toNativeResponse). Cheap no-op for native responses.

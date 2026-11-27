@@ -25,6 +25,9 @@ export const fixture: (
     reason: string;
   }> = [];
 
+  // `request.completed` settlements, keyed by the `id` query param.
+  const completed = new Set<string>();
+
   return {
     ...opts,
     hostname: "localhost",
@@ -311,6 +314,34 @@ export const fixture: (
         }
         case "/abort-log": {
           return _Response.json(aborts);
+        }
+        case "/completed": {
+          const id = url.searchParams.get("id")!;
+          const chunks = +url.searchParams.get("chunks")! || 0;
+          req.completed?.then(() => completed.add(id));
+          if (!chunks) {
+            return new _Response("ok");
+          }
+          // `chunks=-1` streams until the client goes away.
+          let i = 0;
+          return new _Response(
+            new ReadableStream({
+              async pull(controller) {
+                await new Promise((resolve) => setTimeout(resolve, TEST_DELAY));
+                if (chunks > 0 && completed.has(id)) {
+                  throw new Error(`completed before chunk ${i}`);
+                }
+                if (chunks > 0 && i >= chunks) {
+                  controller.close();
+                } else {
+                  controller.enqueue(new TextEncoder().encode(`chunk${i++}\n`));
+                }
+              },
+            }),
+          );
+        }
+        case "/completed-log": {
+          return _Response.json([...completed]);
         }
         case "/node-inspect": {
           return _Response.json({
